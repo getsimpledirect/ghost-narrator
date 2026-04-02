@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""Qwen3-TTS engine wrapper — replaces Fish Speech v1.5."""
+"""Qwen3-TTS engine wrapper with voice cloning and pre-computed reference caching."""
 
 from __future__ import annotations
 

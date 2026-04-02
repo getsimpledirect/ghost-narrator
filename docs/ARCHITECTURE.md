@@ -369,12 +369,12 @@ Expected response:
 - Runs as a Docker container (2 GB RAM limit, ~200–800 MB typical usage)
 - Free, open-source, self-hosted
 
-**How it works in this pipeline:** n8n acts as the "traffic controller." It receives the webhook from Ghost, calls Ollama (using an HTTP Request node), calls the TTS service, and then uploads to storage — all wired together visually.
+**How it works in this pipeline:** n8n acts as the "traffic controller." It receives the webhook from Ghost, fetches the article text, submits it to the TTS service, and then embeds the audio player back in Ghost — all wired together visually.
 
 **Workflows:**
-1. **ghost-audio-pipeline.json**: Main synthesis workflow (Ghost webhook → Ollama → TTS → Storage)
+1. **ghost-audio-pipeline.json**: Main trigger workflow (Ghost webhook → fetch article → submit to TTS)
 2. **ghost-audio-callback.json**: Callback embedder workflow (TTS complete → Ghost update)
-3. **static-content-audio-pipeline.json**: Static content workflow (manual webhook → Ollama → TTS → Storage, no Ghost embed)
+3. **static-content-audio-pipeline.json**: Static content workflow (manual webhook → submit to TTS, no Ghost embed)
 
 ---
 
@@ -417,11 +417,11 @@ The TTS service uses a `JobStore` abstraction layer that automatically falls bac
 2. **Semantic Generation**: Text2Semantic model converts input text to semantic tokens using the reference as conditioning
 3. **Audio Decoding**: DAC decoder synthesizes final audio from semantic tokens with your cloned voice
 
-**Implementation approach:** CLI-based inference via subprocess calls:
-1. Reference audio encoded once during initialization to VQ tokens (fake.npy)
-2. Each synthesis request generates semantic tokens (codes_0.npy) from text
-3. Semantic tokens decoded to high-quality audio (44.1kHz WAV)
-4. All file operations handled in working directory with proper cleanup
+**Implementation approach:** Native Python API via the `qwen-tts` package:
+1. Reference audio loaded once at startup and cached in memory (pre-computed voice embedding)
+2. Each synthesis call uses the cached reference — no per-job file I/O for voice loading
+3. Audio generated directly to WAV via `model.synthesize()` and `model.save_wav()`
+4. Thread-safe with synthesis lock for GPU memory management
 
 **Performance Characteristics:**
 - **Initialization**: 30-60 seconds (one-time reference encoding + transcription)
@@ -487,36 +487,53 @@ See the [Storage Backends](#storage-backends) section for setup details.
 
 The TTS service implements a sophisticated multi-stage pipeline:
 
+**Stage 0: LLM Narration**
+- Receives raw article text from n8n
+- Sends to bundled Ollama LLM for article-to-narration conversion
+- Removes URLs, expands abbreviations, adds transitions, converts markdown to spoken form
+- Validates entity preservation (numbers, dates, names, quotes)
+- On HIGH_VRAM: runs a second LLM completeness check
+
 **Stage 1: Text Preparation**
-- Split text into chunks at sentence boundaries (MAX_CHUNK_WORDS=200)
+- Cleans narration output (strips markdown, smart quotes, expands abbreviations)
+- Splits into chunks at sentence/clause boundaries (MAX_CHUNK_WORDS=200)
 - Preserves context and flow between chunks
 
 **Stage 2: Parallel/Sequential Synthesis**
 - **CPU Mode**: Parallel synthesis using ThreadPoolExecutor (MAX_WORKERS=4 default)
 - **GPU Mode**: Sequential synthesis (optimal for CUDA memory management)
+- **HIGH_VRAM**: 2 parallel workers with fp32 precision
 - Each chunk synthesized independently using Qwen3-TTS
+- Voice reference pre-cached at startup (skips per-job load)
 
-**Stage 3: LUFS Normalization**
+**Stage 3: Quality Check (HIGH_VRAM)**
+- Checks each chunk for excessive silence, clipping, or low energy
+- Automatically re-synthesizes failed chunks
+
+**Stage 4: LUFS Normalization**
 - Each chunk normalized to -23 LUFS (broadcast standard)
-- Ensures consistent volume across all chunks
+- Skips very short chunks (<10s) — final mastering handles them
 - Parallel normalization for speed
 
-**Stage 4: Dynamic Gap Insertion**
+**Stage 5: Dynamic Gap Insertion + Crossfade**
 - Analyzes chunk endings to determine appropriate pause duration
+- 15ms crossfade at chunk boundaries eliminates clicks/pops
+- Trims leading/trailing silence from each chunk
 - Inserts natural-sounding gaps between sentences/paragraphs
-- Prevents robotic, run-together speech
 
-**Stage 5: Streaming Concatenation**
+**Stage 6: Streaming Concatenation**
 - For large files (>10 chunks): Uses streaming to reduce memory usage by 80%
 - Progressive MP3 encoding prevents OOM errors on 5000+ word articles
 - Standard concatenation for small files (faster)
 
-**Stage 6: Final Mastering**
+**Stage 7: Final Mastering**
+- Two-pass EBU R128 loudness normalization (measure then apply)
 - Target: -16 LUFS (podcast/streaming standard)
-- Resample to 44.1kHz, 128kbps MP3 (or 48kHz 256kbps on High tier)
+- True peak limiting to -1.0 dBFS
+- Resample to 44.1kHz, 192kbps MP3 (or 48kHz 256kbps on High tier)
 - Quality validation (non-fatal, logs only)
 
-**Stage 7: Upload & Notify**
+**Stage 8: Upload & Notify**
 - Upload to configured storage backend
 - Send callback webhook to n8n
 - Cleanup temporary files
