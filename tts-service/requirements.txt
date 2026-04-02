@@ -32,7 +32,7 @@ torchmetrics==1.4.0
 
 # ── Gradio (Pinned to avoid resolution conflicts) ─────────────────────────────
 gradio==5.1.0
-gradio-client==1.4.0
+gradio-client==2.4.0
 
 # ── Core TTS Engine ───────────────────────────────────────────────────────────
 qwen-tts>=0.1.0
