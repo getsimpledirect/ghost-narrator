@@ -40,7 +40,12 @@ from typing import Final
 
 from pydub import AudioSegment
 
-from app.config import MP3_BITRATE, STREAMING_THRESHOLD_MS
+from app.config import (
+    MP3_BITRATE,
+    STREAMING_THRESHOLD_MS,
+    AUDIO_SAMPLE_RATE,
+    TARGET_LUFS,
+)
 from app.core.exceptions import AudioProcessingError
 from app.utils.text import get_pause_ms_after_chunk
 
@@ -94,7 +99,7 @@ def normalize_chunk_to_target_lufs(
                 "-af",
                 f"loudnorm=I={target_lufs}:TP=-1.5:LRA=7",
                 "-ar",
-                "44100",  # Optimized for Fish Speech high-fidelity output
+                str(AUDIO_SAMPLE_RATE),  # From ENGINE_CONFIG tier
                 "-ac",
                 "1",
                 normalized_path,
@@ -156,18 +161,18 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
                     # Step 1: Remove leading silence (max 0.2s pre-roll)
                     "silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,"
                     # Step 2: EBU R128 loudness normalization
-                    "loudnorm=I=-16:TP=-1.0:LRA=8:print_format=none,"
+                    f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:print_format=none,"
                     # Step 3: Hard limiter as safety net
                     "alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled"
                 ),
                 "-ar",
-                "44100",  # Upsample to standard 44.1kHz
+                str(AUDIO_SAMPLE_RATE),  # From ENGINE_CONFIG tier
                 "-ac",
                 "1",  # Keep mono (voice narration)
                 "-codec:a",
                 "libmp3lame",
                 "-b:a",
-                "128k",  # 128kbps
+                MP3_BITRATE,  # From ENGINE_CONFIG tier
                 "-q:a",
                 "2",  # High quality VBR as backup
                 output_mp3_path,
