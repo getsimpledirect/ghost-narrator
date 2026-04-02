@@ -436,7 +436,7 @@ Ghost Narrator bundles **Ollama** for local LLM inference. Ollama runs Qwen3 mod
 
 **Why does this matter?** Articles are written to be read visually. If you feed raw article text to TTS, you get things like "Click here to read more" or "See Figure 3" being read aloud. The LLM rewrite step transforms the text into something that sounds natural as speech.
 
-**External vLLM override:** If you already have a vLLM instance running a larger model (e.g., Qwen3-14B), set `VLLM_BASE_URL` in your `.env` to point to it. The bundled Ollama will be skipped in favor of your external endpoint.
+**External LLM override:** To use a different OpenAI-compatible API (e.g., a remote endpoint running a larger model), set `LLM_BASE_URL` in your `.env`. The bundled Ollama will be skipped in favour of your external endpoint.
 
 ---
 
@@ -801,7 +801,7 @@ In n8n UI → **Settings** → **Credentials**:
 **Storage credential (if using GCS/S3):**
 - Configure based on your `STORAGE_BACKEND` setting
 
-**Note on Ollama URL:** In the "Convert to Narration" node, the default URL is `http://ollama:11434/v1/chat/completions`. If using an external vLLM instance, set `VLLM_BASE_URL` in your `.env`.
+**Note on LLM URL:** In the "Convert to Narration" node, the default URL is `http://ollama:11434/v1/chat/completions` (bundled Ollama). To override, set `LLM_BASE_URL` in your `.env`.
 
 ### Step 7: Set Environment Variables in n8n Workflow
 
@@ -902,7 +902,7 @@ Rules:
 
 **Timeout is set to 300,000ms (5 min)** — Qwen3 can take ~30–90 seconds for a short article and up to 4–5 minutes for a long one when generating a full-length narration script.
 
-**Configuration:** The LLM URL defaults to Ollama at `http://ollama:11434/v1`. Set `VLLM_BASE_URL` in `.env` to use an external vLLM instance instead.
+**Configuration:** The LLM URL defaults to Ollama at `http://ollama:11434/v1`. Set `LLM_BASE_URL` in `.env` to use a different endpoint.
 
 ---
 
@@ -1171,9 +1171,8 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 
 **n8n can't reach Ollama:**
 - Check container names with `docker ps`
-- Verify `OLLAMA_BASE_URL` environment variable in docker-compose.yml
-- Default: `http://ollama:11434/v1` (Docker network)
-- For external vLLM: set `VLLM_BASE_URL` in `.env`
+- Default URL: `http://ollama:11434/v1` (bundled Ollama on Docker network)
+- To use a different endpoint: set `LLM_BASE_URL` in `.env`
 
 **Audio quality is poor:**
 - Check reference WAV format: `ffprobe tts-service/voices/default/reference.wav`

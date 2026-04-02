@@ -62,9 +62,8 @@ Go to **Settings → Variables** in the n8n UI and add them there. The workflows
 ### Required Variables
 
 **Core Services:**
-*   `OLLAMA_BASE_URL`: URL to the bundled Ollama API (default: `http://ollama:11434/v1`).
-*   `OLLAMA_MODEL_NAME`: Ollama model to use for narration rewriting (default: `qwen3:8b`).
-*   `VLLM_BASE_URL`: *(Optional)* Override URL to an external vLLM instance. If set, this takes precedence over the bundled Ollama. Example: `http://host.docker.internal:8001/v1`.
+*   `LLM_BASE_URL`: URL to the narration LLM API (default: `http://ollama:11434/v1` — bundled Ollama).
+*   `LLM_MODEL_NAME`: Model name to use for narration rewriting (default: auto-selected from hardware tier).
 *   `TTS_SERVICE_URL`: URL to TTS service (e.g., `http://tts-service:8020`). *Pre-configured in docker-compose.yml.*
 
 **Storage:**
@@ -265,7 +264,7 @@ site1-com-pid-69a9a6c97a9d08bae126a199-my-article-title-1234567890
 - Verify Ollama is running: `docker ps | grep ollama`
 - Check `OLLAMA_BASE_URL` in `.env` (default: `http://ollama:11434/v1`)
 - Verify the model is downloaded: `docker exec ollama ollama list`
-- If using external vLLM instead, set `VLLM_BASE_URL` in `.env`
+- To use a different LLM endpoint, set `LLM_BASE_URL` in `.env`
 
 ---
 

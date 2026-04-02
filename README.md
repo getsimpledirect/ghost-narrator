@@ -156,13 +156,13 @@ See [`.env.example`](.env.example) for the full list.
 
 ### LLM Override
 
-Ghost Narrator bundles Ollama for narration rewriting. To use an external LLM instead:
+Ghost Narrator bundles Ollama for narration rewriting. No external LLM needed. To override with a different OpenAI-compatible endpoint, set `LLM_BASE_URL` in `.env`:
 
 | Provider | `LLM_BASE_URL` | `LLM_MODEL_NAME` |
 |----------|------------------|--------------------|
 | Bundled Ollama (default) | `http://ollama:11434/v1` | *(auto from tier)* |
-| External vLLM | `http://host.docker.internal:8001/v1` | `Qwen/Qwen3-14B-AWQ` |
 | OpenAI API | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| Any OpenAI-compatible API | `http://host.docker.internal:PORT/v1` | model name |
 
 ---
 
