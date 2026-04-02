@@ -6,15 +6,15 @@ This guide explains how to import and configure the three n8n workflows that pow
 
 The pipeline is split into asynchronous workflows:
 
-1.  **`ghost-audio-pipeline.json` (The Synthesizer)**
+1.  **`ghost-audio-pipeline.json` (The Trigger)**
     *   **Trigger:** Triggered when a Ghost post is published or updated (via `ghost-published` webhook).
-    *   **Action:** Fetches the article text, rewrites it into a podcast narration script using the bundled Ollama model, and submits a text-to-speech job to the TTS service.
+    *   **Action:** Fetches the article text and submits it to the TTS service. The TTS service handles LLM narration (rewriting article text into a spoken podcast script) and audio synthesis internally.
 2.  **`ghost-audio-callback.json` (The Embedder)**
     *   **Trigger:** Triggered by the TTS service when it finishes generating the audio and uploading it to the configured storage backend (via `tts-callback` webhook).
     *   **Action:** Receives the storage audio URL, fetches the original Ghost article HTML, prepends an HTML5 audio player to the top, and updates the live post with the Ghost Admin API.
-3.  **`static-content-audio-pipeline.json` (The Static Synthesizer)**
+3.  **`static-content-audio-pipeline.json` (The Static Trigger)**
     *   **Trigger:** Triggered manually or programmatically via the `static-content-audio` webhook.
-    *   **Action:** Accepts pre-extracted plain text (for books, series pages, or non-Ghost content), rewrites it via Ollama, and submits a TTS job with a custom output path. The TTS callback then handles uploading directly — no Ghost embed step.
+    *   **Action:** Accepts pre-extracted plain text (for books, series pages, or non-Ghost content) and submits it to the TTS service with a custom output path. The TTS service handles narration and synthesis internally. No Ghost embed step.
 
 ---
 
@@ -62,9 +62,9 @@ Go to **Settings → Variables** in the n8n UI and add them there. The workflows
 ### Required Variables
 
 **Core Services:**
-*   `LLM_BASE_URL`: URL to the narration LLM API (default: `http://ollama:11434/v1` — bundled Ollama).
-*   `LLM_MODEL_NAME`: Model name to use for narration rewriting (default: auto-selected from hardware tier).
 *   `TTS_SERVICE_URL`: URL to TTS service (e.g., `http://tts-service:8020`). *Pre-configured in docker-compose.yml.*
+
+> **Note:** `LLM_BASE_URL` and `LLM_MODEL_NAME` are no longer used by n8n. The TTS service handles LLM narration internally — these variables are configured on the `tts-service` container in `docker-compose.yml`.
 
 **Storage:**
 *   `STORAGE_BACKEND`: Storage backend — `local`, `gcs`, or `s3` (default: `local`).
@@ -256,15 +256,15 @@ site1-com-pid-69a9a6c97a9d08bae126a199-my-article-title-1234567890
 
 ---
 
-### Ollama Connection Issues
+### Ollama / LLM Connection Issues
 
-**Symptoms:** "Convert to Narration" node fails with connection error.
+**Symptoms:** TTS service logs show narration failures or fallback to raw text.
 
 **Solution:**
 - Verify Ollama is running: `docker ps | grep ollama`
-- Check `OLLAMA_BASE_URL` in `.env` (default: `http://ollama:11434/v1`)
+- Check `LLM_BASE_URL` on the `tts-service` container in `docker-compose.yml` (default: `http://ollama:11434/v1`)
 - Verify the model is downloaded: `docker exec ollama ollama list`
-- To use a different LLM endpoint, set `LLM_BASE_URL` in `.env`
+- The TTS service handles narration internally — if Ollama is unavailable, it falls back to synthesizing raw article text
 
 ---
 
@@ -302,5 +302,5 @@ To generate audio for content that isn't a Ghost post (e.g., book chapters, seri
 
 - `plain_text` must be at least 50 words
 - `storage_path` controls where the output audio is stored
-- `chapter_title` is optional — used in the LLM narration prompt only, not sent to the TTS service
+- `chapter_title` is optional metadata
 - The TTS callback will fire when complete, but no Ghost embed step runs — the audio is simply uploaded to the specified path

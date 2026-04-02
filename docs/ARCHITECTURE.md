@@ -35,12 +35,13 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 
 1. **Detects** the new article via a Ghost webhook
 2. **Fetches** the full article text using the Ghost Content API
-3. **Rewrites** the article into podcast-style narration using **Ollama** (bundled Qwen3 model)
-4. **Synthesises** audio using **Qwen3-TTS** with your **cloned voice** (from your reference sample)
+3. **Submits** the raw article text to the TTS service
+4. **Narrates** — the TTS service rewrites the article into podcast-style narration using **Ollama** (bundled Qwen3 model)
+5. **Synthesises** audio using **Qwen3-TTS** with your **cloned voice** (from your reference sample)
    - **CPU Mode**: Parallel synthesis with configurable workers (default: 4 workers, ~50-60s for 2000 words)
    - **GPU Mode**: Sequential synthesis (~20-30s for 2000 words)
-5. **Uploads** the MP3 to your configured **storage backend** (local, GCS, or S3) at a predictable path
-6. **Embeds** an HTML5 audio player back into the Ghost post (optional)
+6. **Uploads** the MP3 to your configured **storage backend** (local, GCS, or S3) at a predictable path
+7. **Embeds** an HTML5 audio player back into the Ghost post (optional)
 
 **Key Features:**
 - Zero-shot voice cloning from a short reference audio sample
@@ -81,8 +82,9 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
              │  Orchestration Flow
              │
              │  Ghost Webhook → n8n Pipeline (POST /webhook/ghost-published)
-             │  n8n Pipeline → Ollama (convert article to narration script)
-             │  n8n Pipeline → TTS   (synthesize MP3 with cloned voice)
+             │  n8n Pipeline → TTS Service (POST /tts/generate with raw article text)
+             │  TTS Service → Ollama (convert article to narration script, internally)
+             │  TTS Service → TTS Engine (synthesize MP3 with cloned voice)
              │  TTS Service → Storage (upload MP3)
              │  TTS Service → n8n Callback (POST /webhook/tts-callback)
              │  n8n Callback → Ghost (embed audio player in post via Admin API)
@@ -130,25 +132,25 @@ Ghost Publish
     │
     ▼
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  1. Webhook  │────▶│  2. Fetch   │────▶│  3. Rewrite  │
-│  Receive     │     │  Article    │     │  via Ollama  │
+│  1. Webhook  │────▶│  2. Fetch   │────▶│  3. Submit  │
+│  Receive     │     │  Article    │     │  to TTS     │
 └─────────────┘     └─────────────┘     └──────┬──────┘
                                                │
-                    ┌─────────────┐     ┌──────▼──────┐
-                    │  5. Upload  │◀────│  4. TTS     │
-                    │  to Storage │     │  Synthesize │
-                    └──────┬──────┘     └─────────────┘
-                           │
-                    ┌──────▼──────┐     ┌─────────────┐
-                    │  6. Callback│────▶│  7. Embed   │
-                    │  to n8n     │     │  in Ghost   │
-                    └─────────────┘     └─────────────┘
+                  ┌─────────────┐     ┌────────▼────────┐
+                  │  5. Upload  │◀────│  4. Narrate +   │
+                  │  to Storage │     │  Synthesize     │
+                  └──────┬──────┘     │  (TTS Service)  │
+                         │            └─────────────────┘
+                  ┌──────▼──────┐     ┌─────────────┐
+                  │  6. Callback│────▶│  7. Embed   │
+                  │  to n8n     │     │  in Ghost   │
+                  └─────────────┘     └─────────────┘
 ```
 
 1. **Webhook Receive** — n8n catches the Ghost `post.published` event
 2. **Fetch Article** — Ghost Content API returns full plaintext
-3. **Rewrite via Ollama** — Bundled Qwen3 model converts article text to spoken narration script (removes URLs, expands abbreviations, adds transitions)
-4. **TTS Synthesize** — Qwen3-TTS generates audio chunks, normalizes LUFS, concatenates
+3. **Submit to TTS** — n8n sends raw article text to the TTS service
+4. **Narrate + Synthesize** — TTS service internally: (a) rewrites article to spoken narration via Ollama (removes URLs, expands abbreviations, adds transitions), (b) synthesizes audio chunks with Qwen3-TTS, normalizes LUFS, concatenates
 5. **Upload to Storage** — MP3 uploaded to configured backend (local/GCS/S3)
 6. **Callback to n8n** — TTS service notifies n8n that audio is ready
 7. **Embed in Ghost** — n8n patches the Ghost post with an `<audio>` player
@@ -876,55 +878,31 @@ return [{ json: {
 
 ### Node 3: Skip if Not Published (IF)
 
-A simple branch node. If `skip === true`, the workflow ends silently. If false, it continues to the LLM step. This prevents the pipeline from processing draft saves or unpublished test posts.
+A simple branch node. If `skip === true`, the workflow ends silently. If false, it continues to fetch the article. This prevents the pipeline from processing draft saves or unpublished test posts.
 
 ---
 
-### Node 4: Convert to Narration — Ollama (HTTP Request)
+### Node 4: Fetch Full Article (HTTP Request)
 
-This is where the bundled Ollama model earns its keep. The node sends a POST to Ollama's OpenAI-compatible endpoint.
-
-**The system prompt is carefully engineered:**
-```
-You are a professional podcast script writer.
-Rules:
-- Write in warm, conversational tone
-- Expand abbreviations on first use
-- Replace bullet points with flowing sentences
-- Remove URLs and image captions
-- Add verbal transitions
-- Start with an engaging hook
-- End with a brief closing thought
-- Output ONLY the narration text
-```
-
-**Why "Output ONLY the narration text"?** Without this, the LLM often adds things like "Here's the narration:" or "Sure, here is the script:" at the start, which would get read aloud in the audio. We strip that with the instruction.
-
-**Timeout is set to 300,000ms (5 min)** — Qwen3 can take ~30–90 seconds for a short article and up to 4–5 minutes for a long one when generating a full-length narration script.
-
-**Configuration:** The LLM URL defaults to Ollama at `http://ollama:11434/v1`. Set `LLM_BASE_URL` in `.env` to use a different endpoint.
+Fetches the full article text from the Ghost Content API using the post slug. The response includes `plaintext` — Ghost's pre-stripped clean text with no HTML.
 
 ---
 
-### Node 5: Extract Narration Script (Code)
+### Node 5: Prepare Article Text (Code)
 
-The LLM response is an OpenAI-format JSON:
-```json
-{ "choices": [{ "message": { "content": "The narration script text..." } }] }
-```
-This node digs into `choices[0].message.content` and passes it forward along with the post metadata (which was in a previous node).
-
-**Why a separate node for this?** In n8n, each HTTP Request node only outputs the raw response. You need a Code node to parse and reshape the JSON into what the next node expects.
+Cleans up the fetched plaintext (normalizes whitespace, trims) and packages it with metadata for the TTS submission.
 
 ---
 
-### Node 6: Synthesize Audio (HTTP Request)
+### Node 6: Submit TTS Job (HTTP Request)
 
-Calls your TTS service:
+Sends the **raw article text** to the TTS service:
 ```
 POST http://tts-service:8020/tts/generate
-Body: { "text": "..narration script..", "job_id": "site-pid-{postId}-{slug}-{timestamp}", "site_slug": "site1-com" }
+Body: { "text": "..raw article text..", "job_id": "site-pid-{postId}-{slug}-{timestamp}", "site_slug": "site1-com" }
 ```
+
+The TTS service handles **both** LLM narration (rewriting article → podcast script) and audio synthesis internally. n8n no longer does any LLM processing.
 
 The TTS service returns immediately with job queued status:
 ```json
@@ -934,9 +912,7 @@ The TTS service returns immediately with job queued status:
 }
 ```
 
-**Timeout: 1,800,000ms (30 minutes)** — This seems extreme but a 10,000-word article on CPU can genuinely take 15–20 minutes to synthesise across 100+ chunks. Since the workflow is fully async, this is fine.
-
-**Note:** The TTS service processes audio asynchronously. The n8n workflow waits for completion by polling `/tts/status/{job_id}` or waiting for the callback webhook.
+**Timeout: 600,000ms (10 minutes)** — The TTS service processes audio asynchronously. The n8n workflow completes after submission; the callback workflow handles the result.
 
 ### Node 7: Log Result (Code)
 
