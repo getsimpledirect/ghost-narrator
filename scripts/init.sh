@@ -628,7 +628,7 @@ if [ -n "${BUCKET_NAME}" ]; then
     else
         echo "⚠ Cannot access gs://${BUCKET_NAME}"
         echo "  Ensure the VM's Service Account is attached and has Storage Object Admin"
-        echo "  on the bucket. Run scripts/setup-gcp.sh if you haven't already."
+        echo "  on the bucket. Run scripts/setup-storage.sh if you haven't already."
         echo "  Continuing anyway — GCS uploads will fail until this is resolved."
     fi
 else
@@ -748,7 +748,7 @@ done
 
 if [ "$STATUS" != "healthy" ]; then
     echo ""
-    echo "  The service is downloading Fish Speech v1.5 + Whisper weights (~4GB)"
+        echo "  The service is downloading Qwen3-TTS + Whisper weights (~4GB)"
 fi
 
 # ─── Display summary ─────────────────────────────────────────────────────────

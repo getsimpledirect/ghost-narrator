@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.0] — 2026-04-02
+
+### Added
+- Hardware auto-detection: CPU_ONLY / LOW_VRAM / MID_VRAM / HIGH_VRAM tiers
+- Qwen3-TTS engine (replaces Fish Speech v1.5)
+- Bundled Ollama LLM service (replaces external vLLM dependency)
+- Tiered narration pipeline: ChunkedStrategy + SingleShotStrategy
+- NarrationValidator: entity-level information preservation check
+- Voice profiles: named profiles, runtime upload, backward-compatible default
+- Storage backends: local (default), GCS, AWS S3
+- Tiered audio quality: 192kbps/44.1kHz standard, 256kbps/48kHz on HIGH_VRAM
+- docker-compose.gpu.yml overlay + start.sh auto GPU detection
+
+### Changed
+- Callback payload: `gcs_uri` → `audio_uri` (gcs_uri kept for backward compat)
+- `VLLM_BASE_URL` default now points to bundled Ollama at `http://ollama:11434/v1`
+- `scripts/setup-gcp.sh` renamed to `scripts/setup-storage.sh`
+
+### Removed
+- Fish Speech v1.5 dependency
+- External vLLM requirement (now optional override)
+
+---
+
 ## [Unreleased]
 
 ### Added — Audio Backfill Scripts (2026-03-19)
@@ -161,5 +185,6 @@ See `docs/ARCHITECTURE.md` for technical details.
 
 ---
 
-[Unreleased]: https://github.com/getsimpledirect/workos-mvp/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/getsimpledirect/workos-mvp/releases/tag/v1.0.0
+[Unreleased]: https://github.com/getsimpledirect/ghost-narrator/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/getsimpledirect/ghost-narrator/compare/v1.0.0...v2.0.0
+[1.0.0]: https://github.com/getsimpledirect/ghost-narrator/releases/tag/v1.0.0

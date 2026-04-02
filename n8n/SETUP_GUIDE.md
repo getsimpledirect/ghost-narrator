@@ -8,19 +8,19 @@ The pipeline is split into asynchronous workflows:
 
 1.  **`ghost-audio-pipeline.json` (The Synthesizer)**
     *   **Trigger:** Triggered when a Ghost post is published or updated (via `ghost-published` webhook).
-    *   **Action:** Fetches the article text, rewrites it into a podcast narration script using vLLM (Qwen3-14B), and submits a text-to-speech job to the TTS service.
+    *   **Action:** Fetches the article text, rewrites it into a podcast narration script using the bundled Ollama model, and submits a text-to-speech job to the TTS service.
 2.  **`ghost-audio-callback.json` (The Embedder)**
-    *   **Trigger:** Triggered by the TTS service when it finishes generating the audio and uploading it to Google Cloud Storage (via `tts-callback` webhook).
-    *   **Action:** Receives the GCS audio URL, fetches the original Ghost article HTML, prepends an HTML5 audio player to the top, and updates the live post with the Ghost Admin API.
+    *   **Trigger:** Triggered by the TTS service when it finishes generating the audio and uploading it to the configured storage backend (via `tts-callback` webhook).
+    *   **Action:** Receives the storage audio URL, fetches the original Ghost article HTML, prepends an HTML5 audio player to the top, and updates the live post with the Ghost Admin API.
 3.  **`static-content-audio-pipeline.json` (The Static Synthesizer)**
     *   **Trigger:** Triggered manually or programmatically via the `static-content-audio` webhook.
-    *   **Action:** Accepts pre-extracted plain text (for books, series pages, or non-Ghost content), rewrites it via vLLM, and submits a TTS job with a custom GCS output path. The TTS callback then handles uploading directly — no Ghost embed step.
+    *   **Action:** Accepts pre-extracted plain text (for books, series pages, or non-Ghost content), rewrites it via Ollama, and submits a TTS job with a custom output path. The TTS callback then handles uploading directly — no Ghost embed step.
 
 ---
 
 ## Step 1: Import the Workflows
 
-1.  Open your n8n UI (e.g., `http://YOUR_VM_IP:5678`) and log in.
+1.  Open your n8n UI (e.g., `http://YOUR_IP:5678`) and log in.
 2.  Click **Workflows** in the left sidebar.
 3.  Click the **Add Workflow** button (or **+**).
 4.  Opening the top-right menu (the `...` or settings gear depending on n8n version), select **Import from File**.
@@ -62,11 +62,15 @@ Go to **Settings → Variables** in the n8n UI and add them there. The workflows
 ### Required Variables
 
 **Core Services:**
-*   `VLLM_BASE_URL`: URL to your vLLM API. Match this to your actual vLLM server — the path matters:
-    - If vLLM serves at the root: `http://host.docker.internal:8001`
-    - If vLLM serves under `/v1`: `http://host.docker.internal:8001/v1`
-*   `VLLM_MODEL_NAME`: Model name (e.g., `Qwen/Qwen3-14B`).
+*   `OLLAMA_BASE_URL`: URL to the bundled Ollama API (default: `http://ollama:11434/v1`).
+*   `OLLAMA_MODEL_NAME`: Ollama model to use for narration rewriting (default: `qwen3:8b`).
+*   `VLLM_BASE_URL`: *(Optional)* Override URL to an external vLLM instance. If set, this takes precedence over the bundled Ollama. Example: `http://host.docker.internal:8001/v1`.
 *   `TTS_SERVICE_URL`: URL to TTS service (e.g., `http://tts-service:8020`). *Pre-configured in docker-compose.yml.*
+
+**Storage:**
+*   `STORAGE_BACKEND`: Storage backend — `local`, `gcs`, or `s3` (default: `local`).
+*   `GCS_BUCKET_NAME`: GCS bucket name (if using `gcs`).
+*   `S3_BUCKET_NAME`: S3 bucket name (if using `s3`).
 
 **Ghost Site 1:**
 *   `GHOST_KEY_SITE1`: **Content API Key** (read-only, used to fetch article text).
@@ -94,7 +98,7 @@ Go to **Settings → Variables** in the n8n UI and add them there. The workflows
     - **Content API Key** → Use for `GHOST_KEY_SITE1` or `GHOST_KEY_SITE2`
     - **Admin API Key** → Use for `GHOST_SITE1_ADMIN_API_KEY` or `GHOST_SITE2_ADMIN_API_KEY`
 
-⚠️ **CRITICAL: Admin API Key Format**
+**CRITICAL: Admin API Key Format**
 
 The Admin API key MUST be in this exact format:
 ```
@@ -104,20 +108,15 @@ key_id:secret
 Example: `a7b8c9d0e1f2g3h4i5j6k7l8m9n0o1p2:q3r4s5t6u7v8w9x0y1z2a3b4c5d6e7f8...`
 
 **DO NOT**:
-- ❌ Use only the secret part (without the key_id)
-- ❌ Add spaces around the colon
-- ❌ Include extra characters or newlines
+- Use only the secret part (without the key_id)
+- Add spaces around the colon
+- Include extra characters or newlines
 
 **The workflow WILL FAIL with "Invalid token" error if the format is wrong.**
 
 ### Multi-Site Detection
 
 The workflow automatically detects which Ghost site to use by matching the post's URL hostname against your configured `GHOST_SITE1_URL` and `GHOST_SITE2_URL` environment variables.
-
-**How it works:**
-1. Extract the hostname from the incoming webhook's post URL (e.g., `ghost.mysite.com`)
-2. Compare against the hostnames derived from `GHOST_SITE1_URL` and `GHOST_SITE2_URL`
-3. Automatically select the matching site's credentials
 
 **Required configuration in `.env`:**
 ```env
@@ -143,7 +142,7 @@ For **each** of your Ghost websites, you must tell them to alert n8n when an art
 4.  **Name:** `Audio Pipeline Trigger - Published`
 5.  **Event:** Select `Post published`.
 6.  **Target URL:** Enter the Webhook URL from your *first* workflow.
-    *   It will look something like: `http://YOUR_VM_IP:5678/webhook/ghost-published`
+    *   It will look something like: `http://YOUR_IP:5678/webhook/ghost-published`
 7.  Save the integration.
 8.  Click **Add webhook** again.
 9.  **Name:** `Audio Pipeline Trigger - Updated`
@@ -177,7 +176,7 @@ To test the entire flow:
 
 If the audio isn't appearing:
 *   Check the n8n **Executions** tab. If either workflow failed, click into the execution log to see exactly which node failed and the error message (e.g., `401 Unauthorized` means your Ghost API keys are incorrect or missing).
-*   Check the TTS service logs (`docker compose logs tts-service`) to ensure it successfully synthesized the audio and uploaded it to GCS. If the TTS service failed, it might not send the callback, or it will send a callback with `status: failed` (which the second workflow is configured to ignore).
+*   Check the TTS service logs (`docker compose logs tts-service`) to ensure it successfully synthesized the audio and uploaded to storage. If the TTS service failed, it might not send the callback, or it will send a callback with `status: failed` (which the second workflow is configured to ignore).
 *   HTTP requests in the workflow have built-in retry logic: Ghost content fetches retry 3 times (5s apart), TTS job submissions retry 3 times (10s apart). A failure shown in Executions means all retries were exhausted.
 
 ---
@@ -240,17 +239,7 @@ site1-com-pid-69a9a6c97a9d08bae126a199-my-article-title-1234567890
    GHOST_KEY_SITE2=<Content API Key for Site 2>
    GHOST_SITE2_ADMIN_API_KEY=<Admin API Key for Site 2>
    ```
-2. Test each site's Admin API key independently:
-   ```bash
-   # Get a post from Site 1
-   curl -H "Authorization: Ghost YOUR_ADMIN_KEY_SITE1" \
-     https://ghost.your-site-1.com/ghost/api/admin/posts/latest/
-
-   # Get a post from Site 2
-   curl -H "Authorization: Ghost YOUR_ADMIN_KEY_SITE2" \
-     https://ghost.your-site-2.com/ghost/api/admin/posts/latest/
-   ```
-3. Both should return JSON with post data. If one fails, regenerate that site's Admin API key.
+2. Regenerate the Admin API key in Ghost Admin → Settings → Integrations if needed.
 
 ---
 
@@ -265,6 +254,18 @@ site1-com-pid-69a9a6c97a9d08bae126a199-my-article-title-1234567890
 - You MUST use Admin API keys for embedding audio
 - Admin API keys are longer and include both `key_id:secret`
 - Regenerate the Admin API key in Ghost Admin → Settings → Integrations
+
+---
+
+### Ollama Connection Issues
+
+**Symptoms:** "Convert to Narration" node fails with connection error.
+
+**Solution:**
+- Verify Ollama is running: `docker ps | grep ollama`
+- Check `OLLAMA_BASE_URL` in `.env` (default: `http://ollama:11434/v1`)
+- Verify the model is downloaded: `docker exec ollama ollama list`
+- If using external vLLM instead, set `VLLM_BASE_URL` in `.env`
 
 ---
 
@@ -283,42 +284,24 @@ To support additional Ghost sites:
     - Add additional conditions for your third domain using the same hostname matching pattern
     - Update URL mappings to include your third site's URL
 
-Example (for adding Site 3):
-```javascript
-const postHostname = new URL(postUrl).hostname;
-const site3Url = $env.GHOST_SITE3_URL || '';
-const site3Hostname = site3Url ? new URL(site3Url).hostname : '';
-const isSite3 = postHostname.includes(site3Hostname);
-
-const adminApiKey = isSite1 ? adminApiKey1 : isSite2 ? adminApiKey2 : isSite3 ? adminApiKey3 : null;
-const ghostUrl = isSite1 ? site1Url : isSite2 ? site2Url : isSite3 ? site3Url : null;
-```
-
-Then add these to your `.env`:
-```env
-GHOST_SITE3_URL=https://ghost.site3.com
-GHOST_KEY_SITE3=<content-api-key-3>
-GHOST_SITE3_ADMIN_API_KEY=<admin-key-3>
-```
-
 ---
 
 ### Using the Static Content Workflow
 
 To generate audio for content that isn't a Ghost post (e.g., book chapters, series pages):
 
-**POST** `http://YOUR_VM_IP:5678/webhook/static-content-audio`
+**POST** `http://YOUR_IP:5678/webhook/static-content-audio`
 
 ```json
 {
   "plain_text": "The full article text goes here...",
   "job_id": "my-book-chapter-1",
-  "gcs_path": "audio/books/my-book/chapter-1.wav",
+  "storage_path": "audio/books/my-book/chapter-1.mp3",
   "chapter_title": "Chapter 1: Introduction"
 }
 ```
 
 - `plain_text` must be at least 50 words
-- `gcs_path` controls where the output audio is stored in GCS
+- `storage_path` controls where the output audio is stored
 - `chapter_title` is optional — used in the LLM narration prompt only, not sent to the TTS service
-- The TTS callback will fire when complete, but no Ghost embed step runs — the audio is simply uploaded to the specified GCS path
+- The TTS callback will fire when complete, but no Ghost embed step runs — the audio is simply uploaded to the specified path

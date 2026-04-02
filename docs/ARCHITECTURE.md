@@ -1,6 +1,6 @@
 # Ghost Narrator — Complete Architecture & Setup Guide
 
-> **Automated voice-narrated audio from your Ghost CMS articles, powered by Fish Speech v1.5 voice cloning and parallel CPU synthesis.**
+> **Automated voice-narrated audio from your Ghost CMS articles, powered by Qwen3-TTS voice cloning and bundled Ollama LLM inference.**
 
 ---
 
@@ -8,19 +8,24 @@
 
 1. [What This Pipeline Does](#what-this-pipeline-does)
 2. [Architecture Overview](#architecture-overview)
-3. [Build & Deployment](#build--deployment)
-4. [TTS Service Overview](#tts-service-overview)
-5. [Component Deep Dive](#component-deep-dive)
-6. [VRAM Budget & Resource Planning](#vram-budget--resource-planning)
-7. [Directory Structure](#directory-structure)
-8. [Step-by-Step Setup](#step-by-step-setup)
-9. [n8n Workflow — Node-by-Node Explanation](#n8n-workflow--node-by-node-explanation)
-10. [Ghost Webhook Configuration](#ghost-webhook-configuration)
-11. [Voice Clone Preparation](#voice-clone-preparation)
-12. [GCS Bucket & IAM Setup](#gcs-bucket--iam-setup)
-13. [Testing & Troubleshooting](#testing--troubleshooting)
-14. [Backfilling Audio for Existing Posts](#backfilling-audio-for-existing-posts)
-15. [Cost Analysis](#cost-analysis)
+3. [Hardware Tier Detection](#hardware-tier-detection)
+4. [Narration Pipeline](#narration-pipeline)
+5. [Build & Deployment](#build--deployment)
+6. [TTS Service Overview](#tts-service-overview)
+7. [Component Deep Dive](#component-deep-dive)
+8. [Storage Backends](#storage-backends)
+9. [Voice Profiles](#voice-profiles)
+10. [VRAM Budget & Resource Planning](#vram-budget--resource-planning)
+11. [Service Startup Sequence](#service-startup-sequence)
+12. [Directory Structure](#directory-structure)
+13. [Step-by-Step Setup](#step-by-step-setup)
+14. [n8n Workflow — Node-by-Node Explanation](#n8n-workflow--node-by-node-explanation)
+15. [Ghost Webhook Configuration](#ghost-webhook-configuration)
+16. [Voice Clone Preparation](#voice-clone-preparation)
+17. [Storage Setup](#storage-setup)
+18. [Testing & Troubleshooting](#testing--troubleshooting)
+19. [Backfilling Audio for Existing Posts](#backfilling-audio-for-existing-posts)
+20. [Cost Analysis](#cost-analysis)
 
 ---
 
@@ -30,15 +35,15 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 
 1. **Detects** the new article via a Ghost webhook
 2. **Fetches** the full article text using the Ghost Content API
-3. **Rewrites** the article into podcast-style narration using your existing **Qwen3-14B** model via vLLM
-4. **Synthesises** audio using **Fish Speech v1.5** with your **cloned voice** (from your 45-second sample)
+3. **Rewrites** the article into podcast-style narration using **Ollama** (bundled Qwen3 model)
+4. **Synthesises** audio using **Qwen3-TTS** with your **cloned voice** (from your reference sample)
    - **CPU Mode**: Parallel synthesis with configurable workers (default: 4 workers, ~50-60s for 2000 words)
    - **GPU Mode**: Sequential synthesis (~20-30s for 2000 words)
-5. **Uploads** the MP3 to your **GCS bucket** at a predictable path
+5. **Uploads** the MP3 to your configured **storage backend** (local, GCS, or S3) at a predictable path
 6. **Embeds** an HTML5 audio player back into the Ghost post (optional)
 
 **Key Features:**
-- Zero-shot voice cloning from 6-60 seconds of reference audio
+- Zero-shot voice cloning from a short reference audio sample
 - Professional audio mastering (-23 LUFS normalization, -16 LUFS final output)
 - Dynamic gap insertion between chunks for natural pacing
 - Streaming concatenation for memory-efficient processing of long articles (5000+ words)
@@ -51,26 +56,24 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                     GCP Compute Engine (L4 GPU VM)                       │
-│                     4 vCPUs · 16GB RAM · 16GB VRAM · 300GB SSD          │
+│                         Docker Host Machine                              │
+│                         4+ vCPUs · 8GB+ RAM                              │
 │                                                                           │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
 │  │                        Docker Network                             │    │
 │  │                                                                   │    │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │    │
-│  │  │   Open WebUI │  │   vLLM API   │  │   TTS Service        │   │    │
-│  │  │  (with Web   │  │  Qwen3-14B   │  │   Fish Speech v1.5   │   │    │
-│  │  │   Search via │  │  :8001       │  │   :8020              │   │    │
-│  │  │   SearXNG)   │  │  ~8GB VRAM   │  │   CPU: ~1GB RAM      │   │    │
-│  │  │   :3000      │  │              │  │   GPU: ~3GB VRAM     │   │    │
-│  │  └──────────────┘  └──────────────┘  └──────────────────────┘   │    │
-│  │                                                                   │    │
-│  │  ┌──────────────┐  ┌──────────────┐                             │    │
-│  │  │    n8n       │  │  Redis       │                             │    │
-│  │  │  Workflow    │  │  Job Store   │                             │    │
-│  │  │  :5678       │  │  :6379       │                             │    │
-│  │  └──────┬───────┘  └──────┬───────┘                             │    │
+│  │  │   n8n        │  │   Ollama     │  │   TTS Service        │   │    │
+│  │  │  Workflow     │  │  Qwen3       │  │   Qwen3-TTS         │   │    │
+│  │  │  :5678       │  │  :11434      │  │   :8020              │   │    │
+│  │  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘   │    │
 │  │         │                                                         │    │
+│  │  ┌──────────────┐  ┌──────────────┐                             │    │
+│  │  │    Redis      │  │  ChromaDB    │                             │    │
+│  │  │  Job Store    │  │  (optional)  │                             │    │
+│  │  │  :6379        │  │  :8000       │                             │    │
+│  │  └──────────────┘  └──────────────┘                             │    │
+│  │                                                                   │    │
 │  └─────────┼───────────────────────────────────────────────────────┘    │
 │            │                                                              │
 └────────────┼──────────────────────────────────────────────────────────── ┘
@@ -78,9 +81,9 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
              │  Orchestration Flow
              │
              │  Ghost Webhook → n8n Pipeline (POST /webhook/ghost-published)
-             │  n8n Pipeline → vLLM  (convert article to narration script)
+             │  n8n Pipeline → Ollama (convert article to narration script)
              │  n8n Pipeline → TTS   (synthesize MP3 with cloned voice)
-             │  TTS Service → GCS   (upload MP3)
+             │  TTS Service → Storage (upload MP3)
              │  TTS Service → n8n Callback (POST /webhook/tts-callback)
              │  n8n Callback → Ghost (embed audio player in post via Admin API)
              │
@@ -90,16 +93,65 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 │                                                                           │
 │  ┌──────────────────────┐       ┌──────────────────────┐                │
 │  │  Ghost CMS Site 1    │       │  Ghost CMS Site 2    │                │
-│  │  ghost-site-1.com  │       │  ghost-site-2.com│                │
+│  │  ghost-site-1.com    │       │  ghost-site-2.com    │                │
 │  │  (sends webhooks)    │       │  (sends webhooks)    │                │
 │  └──────────────────────┘       └──────────────────────┘                │
 │                                                                           │
 │  ┌──────────────────────────────────────────────────────────────┐       │
-│  │  Google Cloud Storage                                          │       │
-│  │  gs://YOUR_BUCKET/audio/articles/site/slug.mp3               │       │
+│  │  Storage Backend (local / GCS / S3)                           │       │
+│  │  audio/articles/site/slug.mp3                                │       │
 │  └──────────────────────────────────────────────────────────────┘       │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Hardware Tier Detection
+
+Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS model and output settings.
+
+| Tier | VRAM | TTS Model | Output Quality | Notes |
+|---|---|---|---|---|
+| CPU only | None | Qwen3-TTS-0.6B | 192kbps, 44.1kHz | Parallel workers, any machine |
+| Low | 4–8 GB | Qwen3-TTS-0.6B | 192kbps, 44.1kHz | T4 / older GPUs |
+| Mid | 10–16 GB | Qwen3-TTS-1.7B | 192kbps, 44.1kHz | L4 / RTX 3060+ |
+| High | 20+ GB | Qwen3-TTS-1.7B | 256kbps, 48kHz, −14 LUFS | A100 / RTX 4090 |
+
+Detection is performed by `scripts/detect-hardware.sh` which inspects `nvidia-smi` output and sets `TTS_MODEL`, `TTS_DEVICE`, and `AUDIO_QUALITY` in the `.env` file. You can override any of these manually.
+
+---
+
+## Narration Pipeline
+
+The end-to-end narration pipeline has seven stages:
+
+```
+Ghost Publish
+    │
+    ▼
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  1. Webhook  │────▶│  2. Fetch   │────▶│  3. Rewrite  │
+│  Receive     │     │  Article    │     │  via Ollama  │
+└─────────────┘     └─────────────┘     └──────┬──────┘
+                                               │
+                    ┌─────────────┐     ┌──────▼──────┐
+                    │  5. Upload  │◀────│  4. TTS     │
+                    │  to Storage │     │  Synthesize │
+                    └──────┬──────┘     └─────────────┘
+                           │
+                    ┌──────▼──────┐     ┌─────────────┐
+                    │  6. Callback│────▶│  7. Embed   │
+                    │  to n8n     │     │  in Ghost   │
+                    └─────────────┘     └─────────────┘
+```
+
+1. **Webhook Receive** — n8n catches the Ghost `post.published` event
+2. **Fetch Article** — Ghost Content API returns full plaintext
+3. **Rewrite via Ollama** — Bundled Qwen3 model converts article text to spoken narration script (removes URLs, expands abbreviations, adds transitions)
+4. **TTS Synthesize** — Qwen3-TTS generates audio chunks, normalizes LUFS, concatenates
+5. **Upload to Storage** — MP3 uploaded to configured backend (local/GCS/S3)
+6. **Callback to n8n** — TTS service notifies n8n that audio is ready
+7. **Embed in Ghost** — n8n patches the Ghost post with an `<audio>` player
 
 ---
 
@@ -112,7 +164,7 @@ The TTS service uses a **modern uv-based Dockerfile** for deterministic and ligh
 **Build Strategy:**
 - Utilizes `uv` for rust-based, parallel dependency resolution and installation.
 - Eliminates legacy O(n!) pip resolution timeouts.
-- Pre-downloads Fish Speech and Whisper weights during the image build for faster cold starts.
+- Pre-downloads Qwen3-TTS and Whisper weights during the image build for faster cold starts.
 - Integrates comprehensive health checks validating critical library imports (PyTorch, librosa).
 - Total build time: 2-5 minutes (first build), <30 seconds (cached)
 
@@ -121,7 +173,7 @@ The TTS service uses a **modern uv-based Dockerfile** for deterministic and ligh
 **Minimum for Build:**
 - **RAM**: 8GB allocated to Docker Desktop
 - **Disk Space**: 20GB free (includes base images, layers, models)
-- **Network**: Stable connection (~7GB download for models + packages)
+- **Network**: Stable connection (~3GB download for models + packages)
 - **Time**: 2-5 minutes first build, model download can add 2-3 minutes
 
 **Runtime Resources (per docker-compose.yml):**
@@ -133,34 +185,22 @@ The TTS service uses a **modern uv-based Dockerfile** for deterministic and ligh
   - Sequential synthesis
   - ~20-30s for 2000-word article
 
-### Deployment via init.sh
+### Service Startup
 
-The `scripts/init.sh` script handles production deployment with:
+Use `start.sh` to bring up all services:
 
-**Features:**
-- Automatic GCP secret retrieval and .env synchronization
-- Docker resource validation (memory, disk space)
-- Build retry logic (up to 2 attempts with cache cleanup)
-- Image validation after build
-- Service health monitoring with 5-minute timeout
-- Detailed error messages and troubleshooting guidance
-
-**Usage:**
 ```bash
-cd ghost-narrator
-bash scripts/init.sh
+./start.sh up -d        # Start all services in background
+./start.sh down          # Stop all services
+./start.sh logs          # Tail logs from all services
+./start.sh restart tts   # Restart a single service
 ```
 
-The script will:
-1. ✓ Detect and sync GCP secrets to `.env`
-2. ✓ Validate environment variables
-3. ✓ Check Docker resources (memory, disk)
-4. ✓ Build TTS service with retry on failure
-5. ✓ Start all services (Redis → n8n → TTS)
-6. ✓ Wait for health checks (up to 5 minutes)
-7. ✓ Display service URLs and next steps
-
-**Note:** The `scripts/init.sh` script is designed for Linux/Unix environments. For Windows deployment, use Docker Compose directly or WSL2.
+`start.sh` handles:
+1. Hardware detection and model selection
+2. `.env` validation
+3. Docker Compose orchestration
+4. Health check polling
 
 ### Common Build Issues & Solutions
 
@@ -218,7 +258,7 @@ Could not fetch URL
 
 #### 5. Model Download Warnings
 ```
-⚠ Fish Speech model download failed - will download on first use
+⚠ Qwen3-TTS model download failed - will download on first use
 ```
 
 **Impact:** This is a warning, not a fatal error. Models download automatically when the service starts.
@@ -226,7 +266,7 @@ Could not fetch URL
 **To pre-download during build:**
 - Ensure stable internet connection during build
 - Models are cached in Docker volume `tts_model_cache`
-- Total download: ~7GB (Fish Speech v1.5 ~4GB + Whisper models ~75MB + dependencies)
+- Total download: ~3GB (Qwen3-TTS ~2GB + Whisper models ~75MB + dependencies)
 
 ### Manual Build (Advanced)
 
@@ -238,12 +278,8 @@ cd tts-service
 # Build with full progress output
 docker build --progress=plain --no-cache -t ghost-tts-service:latest .
 
-# Test specific stage (e.g., stage 6 - Gradio installation)
-docker build --target=gradio_stage -t test-build .
-
 # Validate built image
 docker run --rm ghost-tts-service:latest python -c "
-import fish_speech
 import torch
 import fastapi
 print('✓ All critical imports successful')
@@ -254,32 +290,15 @@ print('✓ All critical imports successful')
 
 Before deploying to production:
 
-- [ ] GCP secrets configured and synced to `.env`
-- [ ] Voice reference file prepared (`tts-service/voices/reference.wav`)
+- [ ] Environment variables configured in `.env`
+- [ ] Voice reference file prepared (`tts-service/voices/default/reference.wav`)
 - [ ] Docker Desktop allocated 8GB+ RAM
 - [ ] 20GB+ free disk space available
 - [ ] Stable internet connection for initial build
-- [ ] Firewall allows ports: 5678 (n8n), 8020 (TTS), 6379 (Redis)
+- [ ] Firewall allows ports: 5678 (n8n), 8020 (TTS), 6379 (Redis), 11434 (Ollama)
 - [ ] Ghost webhook URLs configured in Ghost admin
-- [ ] GCS bucket created with proper IAM permissions
-- [ ] VLLM service running and accessible at configured URL
-
-### Build Performance
-
-**Measured Build Times (GCP L4 VM):**
-- First build (no cache): 18-22 minutes
-- Rebuild with cache (code changes only): 45-90 seconds
-- Model download on first run: 5-8 minutes
-
-**Build Stages Most Likely to Timeout:**
-- Stage 6 (Gradio): Complex dependency resolution
-- Stage 17 (modelscope/funasr): Large package downloads
-- Stage 20 (fish-speech): GitHub clone and setup
-
-**Optimization Tips:**
-- Use `--cache-from` to leverage CI/CD build cache
-- Pre-pull base image: `docker pull pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime`
-- Keep Docker in good health: `docker system prune` weekly
+- [ ] Storage backend configured (local, GCS, or S3)
+- [ ] Ollama service running and accessible at configured URL
 
 ### Verifying Successful Build
 
@@ -287,26 +306,17 @@ After build completes, verify the installation:
 
 ```bash
 # Quick validation
-docker run --rm ghost-tts-service:latest python -c "import fish_speech; print('OK')"
-
-# Full validation
-docker run --rm ghost-tts-service:latest python -c "
-packages = ['fish_speech', 'torch', 'transformers', 'fastapi', 'google.cloud.storage', 'redis', 'librosa']
-for pkg in packages:
-    __import__(pkg)
-    print(f'✓ {pkg}')
-print('✓ All packages validated')
-"
+docker run --rm ghost-tts-service:latest python -c "import torch; print('OK')"
 
 # Check service starts
-docker compose up tts-service
+./start.sh up -d
 # Wait 2-3 minutes for startup
 curl http://localhost:8020/health
 ```
 
 Expected response:
 ```json
-{"status": "healthy", "device": "cpu", "model": "fish-speech-1.5", "voice_sample": true, "model_loaded": true, "reference_audio_present": true, "reference_tokens_present": true, "tts_engine_ready": true, "job_store": "redis", "jobs_count": 0, "max_workers": 4, "executor_active": true, "gcs_client_active": true}
+{"status": "healthy", "device": "cpu", "model": "qwen3-tts-0.6b", "voice_sample": true, "model_loaded": true, "reference_audio_present": true, "reference_tokens_present": true, "tts_engine_ready": true, "job_store": "redis", "jobs_count": 0, "max_workers": 4, "executor_active": true, "storage_client_active": true}
 ```
 
 ---
@@ -314,12 +324,12 @@ Expected response:
 ## TTS Service Overview
 
 ### Technology Stack
-- **Engine**: Fish Speech v1.5 (state-of-the-art zero-shot TTS)
+- **Engine**: Qwen3-TTS (state-of-the-art zero-shot TTS with voice cloning)
 - **Framework**: FastAPI + Uvicorn
 - **Audio Processing**: librosa, soundfile, pydub, pytorch
-- **Storage**: Google Cloud Storage (GCS)
+- **Storage**: Local folder, Google Cloud Storage, or AWS S3
 - **Job Queue**: Redis for async job tracking with AOF persistence
-- **Synthesis Strategy**: 
+- **Synthesis Strategy**:
   - **CPU Mode**: Parallel chunk synthesis with ThreadPoolExecutor (configurable workers)
   - **GPU Mode**: Sequential chunk synthesis (optimal for CUDA)
 - **Audio Mastering**: LUFS normalization (-23 LUFS per chunk, -16 LUFS final output)
@@ -330,7 +340,7 @@ Expected response:
 - Automatic fallback to in-memory storage if Redis is unavailable
 - Parallel synthesis on CPU (configurable worker count)
 - Professional audio mastering (EBU R128 loudness normalization)
-- Exponential-backoff retry on GCS uploads and n8n callbacks
+- Exponential-backoff retry on storage uploads and n8n callbacks
 
 ---
 
@@ -341,18 +351,18 @@ Expected response:
 **Why n8n?** Visual workflow automation that's self-hosted and open-source:
 
 - **Native webhook triggers** — Ghost POSTs to a URL, no polling needed
-- **Built-in Google Cloud Storage node** — no custom code to upload files
+- **Built-in storage nodes** — upload files without custom code
 - **Visual workflow editor** — debug, replay, and modify without touching code
 - **Execution history** — see exactly what happened for every article processed
 - Runs as a Docker container (2 GB RAM limit, ~200–800 MB typical usage)
 - Free, open-source, self-hosted
 
-**How it works in this pipeline:** n8n acts as the "traffic controller." It receives the webhook from Ghost, calls your vLLM API (using an HTTP Request node), calls the TTS service, and then uploads to GCS using its built-in GCS node — all wired together visually.
+**How it works in this pipeline:** n8n acts as the "traffic controller." It receives the webhook from Ghost, calls Ollama (using an HTTP Request node), calls the TTS service, and then uploads to storage — all wired together visually.
 
 **Workflows:**
-1. **ghost-audio-pipeline.json**: Main synthesis workflow (Ghost webhook → vLLM → TTS → GCS)
+1. **ghost-audio-pipeline.json**: Main synthesis workflow (Ghost webhook → Ollama → TTS → Storage)
 2. **ghost-audio-callback.json**: Callback embedder workflow (TTS complete → Ghost update)
-3. **static-content-audio-pipeline.json**: Static content workflow (manual webhook → vLLM → TTS → GCS, no Ghost embed)
+3. **static-content-audio-pipeline.json**: Static content workflow (manual webhook → Ollama → TTS → Storage, no Ghost embed)
 
 ---
 
@@ -380,17 +390,17 @@ The TTS service uses a `JobStore` abstraction layer that automatically falls bac
 
 ---
 
-### 2. Fish Speech v1.5 — The Voice Engine
+### 2. Qwen3-TTS — The Voice Engine
 
-**Why Fish Speech v1.5?** State-of-the-art open-source voice cloning:
+**Why Qwen3-TTS?** State-of-the-art open-source voice cloning with automatic hardware adaptation:
 
-- Clones a voice from **6–60 seconds** of reference audio (your 45s sample is ideal)
+- Clones a voice from a short reference audio sample
 - Produces **high-fidelity, natural speech** with excellent prosody
-- Supports **multiple languages** out of the box (13+ languages)
-- Runs on **CPU or GPU** — optimized for L4 GPU or CPU-only deployment
-- Uses **CLI-based inference** for maximum stability and compatibility
+- Supports **multiple languages** out of the box
+- Runs on **CPU or GPU** — auto-selects the right model size for your hardware
+- **Model sizes**: 0.6B (CPU/low VRAM) and 1.7B (mid/high VRAM)
 
-**How voice cloning works:** Fish Speech v1.5 uses a three-step inference pipeline:
+**How voice cloning works:** Qwen3-TTS uses a three-step inference pipeline:
 1. **Reference Encoding**: DAC codec encodes your voice sample into VQ (vector-quantized) tokens representing voice characteristics
 2. **Semantic Generation**: Text2Semantic model converts input text to semantic tokens using the reference as conditioning
 3. **Audio Decoding**: DAC decoder synthesizes final audio from semantic tokens with your cloned voice
@@ -414,9 +424,9 @@ For a typical article synthesis: ~50-60 seconds total on CPU (4 workers). Refere
 
 ---
 
-### 3. Qwen3-14B via vLLM — The Script Writer
+### 3. Ollama — The Script Writer
 
-You already have this running. We simply call its **OpenAI-compatible API** (`/v1/chat/completions`) with a carefully designed prompt that instructs it to:
+Ghost Narrator bundles **Ollama** for local LLM inference. Ollama runs Qwen3 models (1.7B, 4B, or 8B) and exposes an **OpenAI-compatible API** (`/v1/chat/completions`). The narration prompt instructs it to:
 
 - Convert bullet points/lists into flowing sentences
 - Remove URLs and image references
@@ -425,6 +435,8 @@ You already have this running. We simply call its **OpenAI-compatible API** (`/v
 - Add an engaging opening hook and closing thought
 
 **Why does this matter?** Articles are written to be read visually. If you feed raw article text to TTS, you get things like "Click here to read more" or "See Figure 3" being read aloud. The LLM rewrite step transforms the text into something that sounds natural as speech.
+
+**External vLLM override:** If you already have a vLLM instance running a larger model (e.g., Qwen3-14B), set `VLLM_BASE_URL` in your `.env` to point to it. The bundled Ollama will be skipped in favor of your external endpoint.
 
 ---
 
@@ -440,19 +452,22 @@ Ghost webhooks send a POST request to your n8n URL the moment you click "Publish
 
 ---
 
-### 5. GCS — Audio Storage
+### 5. Storage Backends
 
 Audio files are stored at a predictable path:
 ```
-gs://YOUR_BUCKET/audio/articles/site/slug.mp3
+audio/articles/site/slug.mp3
 ```
 
-Public CDN URL:
-```
-https://storage.googleapis.com/YOUR_BUCKET/audio/articles/site/slug.mp3
-```
+The path is the same across all backends — only the prefix changes:
 
-This URL is embedded in an `<audio>` tag injected into the Ghost post. GCS is configured with CORS headers so browsers can stream the audio directly.
+| Backend | Path Format | Example |
+|---|---|---|
+| Local | `./output/audio/articles/site/slug.mp3` | Served by n8n or a reverse proxy |
+| GCS | `gs://YOUR_BUCKET/audio/articles/site/slug.mp3` | `https://storage.googleapis.com/YOUR_BUCKET/audio/articles/site/slug.mp3` |
+| S3 | `s3://YOUR_BUCKET/audio/articles/site/slug.mp3` | `https://YOUR_BUCKET.s3.amazonaws.com/audio/articles/site/slug.mp3` |
+
+See the [Storage Backends](#storage-backends) section for setup details.
 
 ---
 
@@ -467,7 +482,7 @@ The TTS service implements a sophisticated multi-stage pipeline:
 **Stage 2: Parallel/Sequential Synthesis**
 - **CPU Mode**: Parallel synthesis using ThreadPoolExecutor (MAX_WORKERS=4 default)
 - **GPU Mode**: Sequential synthesis (optimal for CUDA memory management)
-- Each chunk synthesized independently using Fish Speech v1.5
+- Each chunk synthesized independently using Qwen3-TTS
 
 **Stage 3: LUFS Normalization**
 - Each chunk normalized to -23 LUFS (broadcast standard)
@@ -486,57 +501,154 @@ The TTS service implements a sophisticated multi-stage pipeline:
 
 **Stage 6: Final Mastering**
 - Target: -16 LUFS (podcast/streaming standard)
-- Resample to 44.1kHz, 128kbps MP3
+- Resample to 44.1kHz, 128kbps MP3 (or 48kHz 256kbps on High tier)
 - Quality validation (non-fatal, logs only)
 
 **Stage 7: Upload & Notify**
-- Upload to GCS (if configured)
+- Upload to configured storage backend
 - Send callback webhook to n8n
 - Cleanup temporary files
 
 ---
 
+## Storage Backends
+
+Ghost Narrator supports three storage backends, configured via `STORAGE_BACKEND` in `.env`.
+
+### Local (default)
+
+```env
+STORAGE_BACKEND=local
+LOCAL_STORAGE_PATH=./output
+```
+
+MP3 files are saved to `./output/audio/articles/site/slug.mp3`. No cloud account required. Suitable for development or when serving files via a reverse proxy.
+
+### Google Cloud Storage
+
+```env
+STORAGE_BACKEND=gcs
+GCS_BUCKET_NAME=your-bucket-name
+GCS_AUDIO_PREFIX=audio/articles
+GCP_SA_KEY_PATH=/path/to/service-account.json
+```
+
+Run guided setup: `bash scripts/setup-storage.sh gcs`
+
+### AWS S3
+
+```env
+STORAGE_BACKEND=s3
+S3_BUCKET_NAME=your-bucket-name
+S3_AUDIO_PREFIX=audio/articles
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_REGION=us-east-1
+```
+
+Run guided setup: `bash scripts/setup-storage.sh s3`
+
+---
+
+## Voice Profiles
+
+Ghost Narrator supports multiple voice profiles stored in `tts-service/voices/`. Each profile is a subdirectory containing a `reference.wav` file.
+
+```
+tts-service/voices/
+├── default/
+│   └── reference.wav      # Default voice (used when no profile specified)
+├── host/
+│   └── reference.wav      # Alternative voice for host intros
+└── guest/
+    └── reference.wav      # Guest narrator voice
+```
+
+Set the default voice in `.env`:
+```env
+VOICE_PROFILE=default
+```
+
+Override per-request via the `voice_profile` field in the TTS API:
+```json
+{
+  "text": "Your article text...",
+  "voice_profile": "host"
+}
+```
+
+**Voice sample requirements:**
+- Format: WAV, PCM 16-bit, 22050 Hz mono
+- Duration: 5–60 seconds (longer = better quality)
+- Content: Clear speech, no background noise
+
+---
+
 ## VRAM Budget & Resource Planning
 
-This is the most critical concern. Here's the breakdown:
+This is the most critical concern. Here's the breakdown by hardware tier:
+
+| Tier | VRAM | Components | Total VRAM | Total RAM | Notes |
+|---|---|---|---|---|---|
+| CPU only | 0 GB | Ollama (CPU) + TTS (CPU) + n8n + Redis | 0 GB | ~4 GB | Any machine with 4+ cores |
+| Low (4–8 GB) | 4–8 GB | Ollama (GPU) + TTS-0.6B (GPU) + n8n + Redis | ~4–6 GB | ~6 GB | T4 / older GPUs |
+| Mid (10–16 GB) | 10–16 GB | Ollama (GPU) + TTS-1.7B (GPU) + n8n + Redis | ~8–12 GB | ~8 GB | L4 / RTX 3060+ |
+| High (20+ GB) | 20+ GB | Ollama (GPU) + TTS-1.7B (GPU) + n8n + Redis | ~12–18 GB | ~10 GB | A100 / RTX 4090 |
+
+**Component breakdown:**
 
 | Component | VRAM Usage | RAM Usage | Notes |
 |---|---|---|---|
-| Qwen3-14B (AWQ 4-bit) | ~7–8 GB | ~2 GB | Already running in your vLLM setup |
-| Fish Speech v1.5 (GPU mode) | ~2–3 GB | ~6 GB | CLI-based inference with DAC + text2semantic |
+| Ollama (Qwen3-8B, GPU) | ~5–6 GB | ~2 GB | Bundled LLM for narration rewrite |
+| Ollama (Qwen3-4B, GPU) | ~3 GB | ~1.5 GB | Lighter model option |
+| Qwen3-TTS-1.7B (GPU) | ~2–3 GB | ~6 GB | Mid/high tier TTS model |
+| Qwen3-TTS-0.6B (GPU) | ~1–2 GB | ~3 GB | Low tier / CPU fallback |
+| Qwen3-TTS (CPU mode) | 0 GB VRAM | ~1 GB | **Recommended for most setups** |
 | Redis | 0 GB VRAM | ~50 MB | Persistent job storage |
 | n8n | 0 GB VRAM | up to 2 GB | Workflow orchestration (2 GB container limit) |
-| **Total (GPU mode)** | **~10–11 GB** | **~8.3 GB** | Fits in L4 with headroom |
-| Fish Speech v1.5 (CPU mode) | 0 GB VRAM | ~1 GB | **Recommended - parallel synthesis** |
-| **Total (CPU mode)** | **~8 GB VRAM** | **~2.3 GB** | **vLLM on GPU, TTS on CPU - optimal** |
 
-**Recommendation:** Set `TTS_DEVICE=cpu` and `MAX_WORKERS=4` (or match your CPU core count) in your `.env`. 
+**Recommendation:** For most setups, run TTS on CPU with `MAX_WORKERS=4` and Ollama on GPU. This gives fast LLM inference while keeping TTS stable and memory-efficient.
 
-**Why CPU Mode?**
-- **Resource Isolation**: TTS runs on CPU, leaving full GPU for vLLM
-- **Parallel Processing**: Multiple chunks synthesized simultaneously
-- **Memory Efficient**: Streaming concatenation uses ~80% less memory
-- **Good Performance**: ~50-60s for 2000-word article (4 workers)
-
-**Performance Benchmarks:**
-- **CPU (4 workers)**: ~50-60 seconds for 2000-word article
-- **CPU (8 workers)**: ~30-40 seconds for 2000-word article  
-- **GPU mode**: ~20-30 seconds for 2000-word article (sequential only)
-
-Since this is a **background async pipeline** (not real-time), CPU mode offers the best balance of speed, resource efficiency, and system stability.
-
-**RAM budget:** 
-- n8n: ~200MB
-- Redis: ~50MB
-- TTS service (CPU mode): ~1GB (with streaming optimization)
-- Total new services: ~1.3GB RAM
+**RAM budget (CPU TTS mode):**
+- Ollama: ~2 GB (GPU) or ~4 GB (CPU)
+- n8n: ~200 MB
+- Redis: ~50 MB
+- TTS service (CPU mode): ~1 GB (with streaming optimization)
+- Total: ~3.3–7.3 GB depending on Ollama mode
 
 **Configuration Variables:**
 - `TTS_DEVICE=cpu` — Use CPU with parallel processing (recommended)
 - `TTS_DEVICE=cuda` — Use GPU with sequential processing
 - `MAX_WORKERS=4` — Thread pool size for parallel synthesis (CPU mode only)
+- `TTS_MODEL=qwen3-tts-0.6b` — Override auto-detected model
 - `REDIS_URL=redis://redis:6379/0` — Redis connection URL
 - `REDIS_JOB_TTL=86400` — Job retention in seconds (24 hours)
+- `OLLAMA_MODEL=qwen3:4b` — Ollama model for narration rewrite
+
+---
+
+## Service Startup Sequence
+
+Services must start in a specific order to satisfy dependencies:
+
+```
+1. Redis          (no dependencies)
+2. Ollama         (no dependencies, but pulls model on first start)
+3. TTS Service    (depends on Redis)
+4. n8n            (depends on TTS Service, Ollama)
+```
+
+`./start.sh up -d` handles this automatically via Docker Compose `depends_on` directives. If starting manually:
+
+```bash
+docker compose up -d redis
+docker compose up -d ollama
+# Wait for Ollama to pull model (~2 min first time)
+docker compose up -d tts-service
+docker compose up -d n8n
+```
+
+Health checks gate each service — n8n won't start until TTS reports healthy, and TTS won't start until Redis is reachable.
 
 ---
 
@@ -548,8 +660,15 @@ ghost-narrator/
 ├── .env.example                   # Environment variable template
 ├── .gitignore
 ├── CHANGELOG.md
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
 ├── docker-compose.yml             # Main Docker Compose for pipeline services
+├── docker-compose.gpu.yml         # GPU override for CUDA deployments
+├── LICENSE                        # MIT License
+├── NOTICE                         # Third-party attribution
 ├── README.md                      # Project overview
+├── SECURITY.md
+├── start.sh                       # Service startup script
 │
 ├── docs/
 │   └── ARCHITECTURE.md            # This architecture document
@@ -562,9 +681,8 @@ ghost-narrator/
 │       └── static-content-audio-pipeline.json # Static/non-Ghost content synthesis
 │
 ├── scripts/
-│   ├── init.sh                    # Production initialization script
-│   ├── setup-gcp.sh               # GCP resources setup (bucket, IAM, SA)
-│   ├── validate-build.sh          # Docker image validation and smoke tests
+│   ├── detect-hardware.sh         # Hardware tier detection
+│   ├── setup-storage.sh           # Storage backend setup (GCS/S3)
 │   ├── backfill-audio.sh          # Backfill audio for existing posts (Linux/macOS)
 │   └── backfill-audio.ps1         # Backfill audio for existing posts (Windows)
 │
@@ -574,8 +692,6 @@ ghost-narrator/
     ├── QUICKSTART.md              # Quick start guide
     ├── README.md                  # TTS service documentation
     ├── requirements.txt           # Python dependencies
-    ├── run-docker.ps1             # Windows Docker runner
-    ├── run-docker.sh              # Linux/Mac Docker runner
     │
     ├── app/                       # FastAPI application
     │   ├── __init__.py
@@ -590,7 +706,7 @@ ghost-narrator/
     │   │
     │   ├── core/
     │   │   ├── exceptions.py      # Custom exceptions (SynthesisError, TTSEngineError)
-    │   │   └── tts_engine.py      # Fish Speech v1.5 wrapper (singleton, thread-safe)
+    │   │   └── tts_engine.py      # Qwen3-TTS wrapper (singleton, thread-safe)
     │   │
     │   ├── models/
     │   │   └── schemas.py         # Pydantic request/response models
@@ -599,7 +715,7 @@ ghost-narrator/
     │   │   ├── audio.py           # WAV concatenation, LUFS normalization, mastering
     │   │   ├── job_store.py       # Redis + in-memory job storage with fallback
     │   │   ├── notification.py    # Webhook callbacks (n8n) with retry logic
-    │   │   ├── storage.py         # GCS upload service
+    │   │   ├── storage.py         # Storage upload service (local/GCS/S3)
     │   │   ├── synthesis.py       # Chunk synthesis orchestration (parallel/sequential)
     │   │   └── tts_job.py         # Complete TTS pipeline runner
     │   │
@@ -607,39 +723,36 @@ ghost-narrator/
     │       └── text.py            # Text chunking at sentence boundaries
     │
     └── voices/
-        └── reference.wav          # Your voice sample (not in git)
+        └── default/
+            └── reference.wav      # Your voice sample (not in git)
 ```
 
 ---
 
 ## Step-by-Step Setup
 
-### Step 1: Clone / Copy Files to Your VM
+### Step 1: Clone / Copy Files to Your Machine
 
 ```bash
-# On your GCP VM
-mkdir -p ~/ghost-narrator
-cd ~/ghost-narrator
-
-# Copy all the files from this guide into this directory
-# (or git clone if you put them in a repo)
+git clone <repo-url> ghost-narrator
+cd ghost-narrator
 ```
 
 ### Step 2: Prepare Your Reference Voice
 
-Your 45-second voice recording needs to be in WAV format:
+Your voice recording needs to be in WAV format:
 
 ```bash
 # If your recording is an MP3:
 sudo apt-get install -y ffmpeg
 ffmpeg -i your-voice-recording.mp3 \
-    -ar 22050 \        # 22050 Hz sample rate (Fish Speech v1.5 native)
+    -ar 22050 \        # 22050 Hz sample rate (Qwen3-TTS native)
     -ac 1 \            # mono channel
     -c:a pcm_s16le \   # 16-bit PCM (uncompressed WAV)
-    tts-service/voices/reference.wav
+    tts-service/voices/default/reference.wav
 
 # Verify it looks right
-ffprobe tts-service/voices/reference.wav
+ffprobe tts-service/voices/default/reference.wav
 # Should show: Audio: pcm_s16le, 22050 Hz, mono, s16, 352 kb/s
 ```
 
@@ -654,50 +767,53 @@ ffprobe tts-service/voices/reference.wav
 ```bash
 cp .env.example .env
 nano .env
-# Fill in: GCS_BUCKET_NAME, GCP_SA_KEY_PATH, N8N_HOST, N8N_PASSWORD,
-#          GHOST_SITE1_URL, GHOST_KEY_SITE1, etc.
+# Fill in: STORAGE_BACKEND, Ghost API keys, server IP
+# The start script will auto-detect your hardware tier
 ```
 
-### Step 4: Create GCP Service Account
-
-This can be done using the `scripts/setup-gcp.sh` script or manually.
-
-### Step 5: Start the Services
-
-The `scripts/init.sh` script will handle building the Docker images and starting the services.
+### Step 4: Start the Services
 
 ```bash
-bash scripts/init.sh
+./start.sh up -d
 ```
 
-### Step 6: Import n8n Workflow
+This will:
+1. Detect your hardware and select the right TTS model
+2. Pull the Ollama model on first run
+3. Start all services in dependency order
+4. Wait for health checks to pass
 
-1. Open `http://YOUR_VM_IP:5678` in your browser
+### Step 5: Import n8n Workflow
+
+1. Open `http://YOUR_IP:5678` in your browser
 2. Login with your N8N_USER/N8N_PASSWORD
 3. Go to **Workflows** → **Import from File**
 4. Upload `n8n/workflows/ghost-audio-pipeline.json` and `n8n/workflows/ghost-audio-callback.json`
 5. The workflows will appear with all nodes connected
 
-### Step 7: Set Up n8n Credentials
+### Step 6: Set Up n8n Credentials
 
 In n8n UI → **Settings** → **Credentials**:
 
-**Google Cloud Storage credential:**
-- Type: `Google Cloud Storage OAuth2 API`
-- Or use Service Account: paste your JSON key contents
-- Test it by running the GCS node manually
+**Storage credential (if using GCS/S3):**
+- Configure based on your `STORAGE_BACKEND` setting
 
-**Note on vLLM API URL:** In the "Convert to Narration" node, the URL is `http://localhost:8001/v1/chat/completions`. If your vLLM container is named differently (e.g., `vllm`), change it to `http://vllm:8001/v1/chat/completions`. Check with `docker ps` what your vLLM container is called.
+**Note on Ollama URL:** In the "Convert to Narration" node, the default URL is `http://ollama:11434/v1/chat/completions`. If using an external vLLM instance, set `VLLM_BASE_URL` in your `.env`.
 
-### Step 8: Set Environment Variables in n8n Workflow
+### Step 7: Set Environment Variables in n8n Workflow
 
-In the workflow, find the **"Build GCS Path"** Code node and verify these match your `.env`:
+In the workflow, find the **"Build Storage Path"** Code node and verify these match your `.env`:
 ```javascript
-const gcsBucket = process.env.GCS_BUCKET_NAME || 'your-audio-bucket';
-const gcsFolder = process.env.GCS_FOLDER || 'podcasts';
+const storageBackend = process.env.STORAGE_BACKEND || 'local';
+const bucketName = process.env.GCS_BUCKET_NAME || process.env.S3_BUCKET_NAME || '';
+const audioPrefix = process.env.GCS_AUDIO_PREFIX || process.env.S3_AUDIO_PREFIX || 'audio/articles';
 ```
 
 n8n containers can read from environment variables set in docker-compose.
+
+### Step 8: Configure Ghost Webhooks
+
+For each Ghost site, add a webhook pointing to `http://YOUR_IP:5678/webhook/ghost-published` on the `post.published` event.
 
 ---
 
@@ -711,7 +827,7 @@ Path: /webhook/ghost-published
 Method: POST
 ```
 
-This is the entry point. When you publish an article in Ghost, Ghost sends a POST request to `http://YOUR_VM_IP:5678/webhook/ghost-published`. n8n receives it and starts the workflow.
+This is the entry point. When you publish an article in Ghost, Ghost sends a POST request to `http://YOUR_IP:5678/webhook/ghost-published`. n8n receives it and starts the workflow.
 
 **What the payload looks like:**
 ```json
@@ -761,9 +877,9 @@ A simple branch node. If `skip === true`, the workflow ends silently. If false, 
 
 ---
 
-### Node 4: Convert to Narration — vLLM (HTTP Request)
+### Node 4: Convert to Narration — Ollama (HTTP Request)
 
-This is where your existing Qwen3-14B model earns its keep. The node sends a POST to your vLLM's OpenAI-compatible endpoint.
+This is where the bundled Ollama model earns its keep. The node sends a POST to Ollama's OpenAI-compatible endpoint.
 
 **The system prompt is carefully engineered:**
 ```
@@ -781,15 +897,15 @@ Rules:
 
 **Why "Output ONLY the narration text"?** Without this, the LLM often adds things like "Here's the narration:" or "Sure, here is the script:" at the start, which would get read aloud in the audio. We strip that with the instruction.
 
-**Timeout is set to 300,000ms (5 min)** — Qwen3-14B can take ~30–90 seconds for a short article and up to 4–5 minutes for a long one when generating a full-length narration script.
+**Timeout is set to 300,000ms (5 min)** — Qwen3 can take ~30–90 seconds for a short article and up to 4–5 minutes for a long one when generating a full-length narration script.
 
-**Configuration:** The vLLM URL is passed via environment variable `VLLM_BASE_URL` (default: `http://host.docker.internal:8001/v1`) allowing easy switching between local and remote vLLM instances.
+**Configuration:** The LLM URL defaults to Ollama at `http://ollama:11434/v1`. Set `VLLM_BASE_URL` in `.env` to use an external vLLM instance instead.
 
 ---
 
 ### Node 5: Extract Narration Script (Code)
 
-The vLLM response is an OpenAI-format JSON:
+The LLM response is an OpenAI-format JSON:
 ```json
 { "choices": [{ "message": { "content": "The narration script text..." } }] }
 ```
@@ -833,7 +949,7 @@ Listens for `POST /webhook/tts-callback` from the TTS service.
 
 ### Node 2: Check Status & Parse Job ID (Code)
 
-Verifies the status is `completed`, extracts the generated `gcs_uri`, converts it to a public URL, and parses the Ghost Post ID out of the job_id.
+Verifies the status is `completed`, extracts the generated `storage_uri`, converts it to a public URL, and parses the Ghost Post ID out of the job_id.
 
 ### Node 3: Should Embed Audio? (IF)
 
@@ -845,13 +961,11 @@ Fetches the original article's HTML from the Ghost Admin API to prepare for inje
 
 ### Node 5: Prepend Audio Player (Code)
 
-Creates an HTML `<audio>` tag targeting the public GCS URL and prepends it to the article HTML.
+Creates an HTML `<audio>` tag targeting the public storage URL and prepends it to the article HTML.
 
 ### Node 6: Update Ghost Post (HTTP Request)
 
 Uses `PUT /ghost/api/admin/posts/{id}/` to update the live article on Ghost with the newly injected audio player.
-
-─
 
 ---
 
@@ -867,10 +981,10 @@ For **each** of your Ghost websites:
 6. Scroll down to **Webhooks** → **Add webhook**
    - Name: `Audio Pipeline Trigger`
    - Event: **Post published**
-   - Target URL: `http://YOUR_VM_IP:5678/webhook/ghost-published`
+   - Target URL: `http://YOUR_IP:5678/webhook/ghost-published`
 7. Save
 
-**For both sites using the same n8n webhook:** Both Ghost sites can POST to the same URL. The `Parse Ghost Payload` node extracts the `post_url` which contains the domain, so the `Build GCS Path` node correctly separates them into different GCS folders.
+**For both sites using the same n8n webhook:** Both Ghost sites can POST to the same URL. The `Parse Ghost Payload` node extracts the `post_url` which contains the domain, so the `Build Storage Path` node correctly separates them into different storage folders.
 
 ---
 
@@ -878,7 +992,7 @@ For **each** of your Ghost websites:
 
 ### Requirements
 - **Format**: WAV (PCM 16-bit, 22050 Hz mono)
-- **Duration**: 6–60 seconds (your 45 seconds is ideal)
+- **Duration**: 5–60 seconds (longer is better)
 - **Content**: Clear speech, your natural speaking voice
 - **Quality**: No background music, no echoes, minimal room noise
 
@@ -889,13 +1003,13 @@ ffmpeg -i your_voice.mp3 \
     -ar 22050 \
     -ac 1 \
     -c:a pcm_s16le \
-    voices/reference.wav
+    tts-service/voices/default/reference.wav
 
 # Verify
 ffprobe -v quiet -show_entries \
     stream=codec_name,sample_rate,channels \
     -of default=noprint_wrappers=1 \
-    voices/reference.wav
+    tts-service/voices/default/reference.wav
 # Expected: codec_name=pcm_s16le, sample_rate=22050, channels=1
 ```
 
@@ -920,9 +1034,14 @@ curl -o test-voice.mp3 http://localhost:8020/tts/download/test-voice-clone
 
 ---
 
-## GCS Bucket & IAM Setup
+## Storage Setup
 
-### Create Service Account
+### Local Storage (Default)
+
+No setup required. Files are saved to `./output/audio/articles/`. Set `STORAGE_BACKEND=local` in `.env`.
+
+### Google Cloud Storage
+
 ```bash
 # Create service account
 gcloud iam service-accounts create ghost-audio-pipeline \
@@ -940,11 +1059,8 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 gcloud iam service-accounts keys create \
     ~/gcp-keys/ghost-audio-sa.json \
     --iam-account=$SA_EMAIL
-```
 
-### Create Bucket
-```bash
-# Create in northamerica-northeast2 (Toronto) — choose a region close to your users
+# Create bucket
 gsutil mb -p $PROJECT_ID -l northamerica-northeast2 gs://YOUR_BUCKET_NAME/
 
 # Make objects publicly readable
@@ -957,6 +1073,39 @@ EOF
 gsutil cors set /tmp/cors.json gs://YOUR_BUCKET_NAME/
 ```
 
+Or run: `bash scripts/setup-storage.sh gcs`
+
+### AWS S3
+
+```bash
+# Create bucket
+aws s3 mb s3://your-bucket-name --region us-east-1
+
+# Set public read for audio files
+aws s3api put-bucket-policy --bucket your-bucket-name --policy '{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "PublicReadAudio",
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::your-bucket-name/audio/*"
+  }]
+}'
+
+# Set CORS
+aws s3api put-bucket-cors --bucket your-bucket-name --cors-configuration '{
+  "CORSRules": [{
+    "AllowedOrigins": ["*"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "MaxAgeSeconds": 3600
+  }]
+}'
+```
+
+Or run: `bash scripts/setup-storage.sh s3`
+
 ---
 
 ## Testing & Troubleshooting
@@ -964,7 +1113,7 @@ gsutil cors set /tmp/cors.json gs://YOUR_BUCKET_NAME/
 ### Test 1: TTS Service Health
 ```bash
 curl http://localhost:8020/health
-# Expected: {"status":"healthy","device":"cpu","model":"fish-speech-1.5","voice_sample":true,"model_loaded":true,"reference_audio_present":true,"reference_tokens_present":true,"tts_engine_ready":true,"job_store":"redis","jobs_count":0,"max_workers":4,"executor_active":true,"gcs_client_active":true}
+# Expected: {"status":"healthy","device":"cpu","model":"qwen3-tts-0.6b","voice_sample":true,...}
 
 # Readiness check (engine fully initialized):
 curl http://localhost:8020/health/ready
@@ -988,11 +1137,10 @@ curl http://localhost:8020/tts/status/manual-test
 curl -o test.mp3 http://localhost:8020/tts/download/manual-test
 ```
 
-### Test 3: vLLM Connection (from n8n container)
+### Test 3: Ollama Connection
 ```bash
-docker exec n8n wget -qO- \
-    http://host.docker.internal:8001/v1/models
-# Replace with your VLLM_BASE_URL if different
+curl http://localhost:11434/v1/models
+# Should list available models
 ```
 
 ### Test 4: End-to-End Trigger
@@ -1014,33 +1162,27 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 
 ### Common Issues
 
-**TTS service takes too long to start:** Fish Speech v1.5 downloads ~4GB on first run. Check logs: `docker logs tts-service`
+**TTS service takes too long to start:** Qwen3-TTS downloads ~2GB on first run. Check logs: `docker logs tts-service`
 - Normal startup time: 2-5 minutes (includes model download)
 - If stuck >10 minutes: Check internet connection and disk space
 
-**n8n can't reach vLLM:** 
+**n8n can't reach Ollama:**
 - Check container names with `docker ps`
-- Verify `VLLM_BASE_URL` environment variable in docker-compose.yml
-- Default: `http://host.docker.internal:8001/v1` (connects to host machine)
-- For Docker network: `http://vllm-container:8001/v1`
+- Verify `OLLAMA_BASE_URL` environment variable in docker-compose.yml
+- Default: `http://ollama:11434/v1` (Docker network)
+- For external vLLM: set `VLLM_BASE_URL` in `.env`
 
-**Audio quality is poor:** 
-- Check reference WAV format: `ffprobe voices/reference.wav`
+**Audio quality is poor:**
+- Check reference WAV format: `ffprobe tts-service/voices/default/reference.wav`
 - Expected: Audio: pcm_s16le, 22050 Hz, mono, s16, 352 kb/s
 - Ensure 45+ seconds of clear speech with no background noise
 - Reduce `MAX_CHUNK_WORDS` to 150 for better pronunciation
 
-**GCS upload fails:** 
-- Verify service account has `roles/storage.objectCreator`
-- Check credentials in n8n: `docker exec n8n ls /gcp/`
-- Test GCS access from container: 
-  ```bash
-  docker exec tts-service python -c "
-  from google.cloud import storage
-  client = storage.Client()
-  print(list(client.list_buckets()))
-  "
-  ```
+**Storage upload fails:**
+- Verify `STORAGE_BACKEND` is set correctly in `.env`
+- For GCS: check service account has `roles/storage.objectCreator`
+- For S3: check IAM user has `s3:PutObject` permission
+- For local: check `LOCAL_STORAGE_PATH` directory exists
 
 **TTS synthesis is slow:**
 - Check if parallel synthesis is active: Look for "parallel" in logs
@@ -1106,7 +1248,7 @@ The script walks you through configuration step by step:
 
 | Prompt | Default | Notes |
 |---|---|---|
-| n8n webhook URL | `http://YOUR_VM_IP:5678/webhook/ghost-published` | Your VM's public IP — change if different |
+| n8n webhook URL | `http://YOUR_IP:5678/webhook/ghost-published` | Your machine's public IP — change if different |
 | Number of Ghost sites | `1` | Enter `2` to process both sites in one run |
 | Ghost URL | *(required)* | e.g. `https://ghost.your-site.com` |
 | Content API key | *(required)* | From Ghost Admin → Integrations |
@@ -1142,10 +1284,10 @@ While the script runs, monitor the pipeline in parallel:
 
 ```bash
 # n8n workflow executions
-open http://YOUR_VM_IP:5678
+open http://YOUR_IP:5678
 
 # TTS job status
-curl http://YOUR_VM_IP:8020/health
+curl http://YOUR_IP:8020/health
 
 # Live TTS logs
 docker logs -f tts-service
@@ -1180,18 +1322,20 @@ The script will list every post that needs audio along with the estimated proces
 
 | Component | Cost | Notes |
 |---|---|---|
-| Compute Engine (L4 GPU) | Existing | Already paying for it |
+| Compute | Existing | Your machine or VM |
 | n8n | $0 | Open source, runs in Docker |
-| Fish Speech v1.5 | $0 | Open source, runs locally |
-| vLLM + Qwen3-14B | $0 | Already running |
-| GCS Storage | ~$0.02/GB/month | 1000 articles × 5MB avg = 5GB = $0.10/month |
-| GCS Egress | ~$0.08/GB | Pay for bandwidth when people listen |
+| Qwen3-TTS | $0 | Open source, runs locally |
+| Ollama + Qwen3 | $0 | Bundled, runs locally |
+| Storage (local) | $0 | Files on disk |
+| Storage (GCS) | ~$0.02/GB/month | 1000 articles × 5MB avg = 5GB = $0.10/month |
+| Storage (S3) | ~$0.023/GB/month | Similar to GCS |
+| Egress | ~$0.08/GB | Pay for bandwidth when people listen |
 | Redis | $0 | Open source, runs in Docker |
-| **Total new monthly cost** | **~$0.10–$2.00** | Depends on traffic |
+| **Total new monthly cost** | **~$0–$2.00** | Depends on storage backend and traffic |
 
 Compare to alternatives:
 - ElevenLabs: ~$5–22/month, no voice persistence, limited minutes
 - Google Cloud TTS: ~$4 per 1 million characters, no voice cloning
-- AWS Polly: similar to GCS TTS
+- AWS Polly: similar to Google Cloud TTS
 
-**Your marginal cost per article is essentially $0** — the compute is sunk cost.
+**Your marginal cost per article is essentially $0** — the compute is your own hardware.
