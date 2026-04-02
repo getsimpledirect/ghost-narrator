@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.1] — 2026-04-03
+
+### Security
+- **C3: Path disclosure** — removed server filesystem path from voice sample error response (was exposing `/app/voices/default/reference.wav` to API callers)
+
+### Fixed
+- **C1: TOCTOU race condition** — job re-creation could spawn duplicate synthesis jobs when two requests arrived simultaneously for the same completed job_id. Now returns existing status atomically.
+- **C2: Unbounded memory store** — in-memory fallback (when Redis is down) had no size limit. Added 1000-job cap with LRU eviction to prevent OOM.
+- **W1: Redis KEYS blocking** — `list_all()` and `count()` used `KEYS *` which blocks the entire Redis server. Replaced with `SCAN` iteration.
+- **W2: ffmpeg return code unchecked** — `pitch_shift_segment` didn't check if ffmpeg succeeded before loading potentially corrupt output.
+- **W3: Temp file leak** — `pitch_shift_segment` left temp files in `/tmp` on exceptions. Added `try/finally` cleanup.
+- **W6: Silent directory failure** — `OUTPUT_DIR.mkdir()` failure was silently swallowed. Now logs a warning.
+- **W7: Overly broad exception catch** — `strategy.py` caught `Exception` alongside `JSONDecodeError`, hiding real bugs. Split into separate handlers.
+
+### CI
+- Added `ci.yml` — runs ruff lint + pytest on every PR and push to main
+- Added `dependabot-auto-merge.yml` — auto-merges dependabot PRs that pass CI
+- Fixed `dependabot.yml` — grouped updates, excluded heavy deps (torch/transformers)
+
+---
+
 ## [2.1.0] — 2026-04-03
 
 ### Critical Fix
@@ -229,7 +250,8 @@ See `docs/ARCHITECTURE.md` for technical details.
 
 ---
 
-[Unreleased]: https://github.com/getsimpledirect/ghost-narrator/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/getsimpledirect/ghost-narrator/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/getsimpledirect/ghost-narrator/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/getsimpledirect/ghost-narrator/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/getsimpledirect/ghost-narrator/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/getsimpledirect/ghost-narrator/releases/tag/v1.0.0
