@@ -30,7 +30,7 @@ jobs:
         run: |
           pip install pytest pytest-asyncio
           pip install fastapi uvicorn pydantic
-          pip install pydub openai redis
+          pip install pydub openai redis boto3
         working-directory: tts-service
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short

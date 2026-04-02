@@ -17,7 +17,7 @@ def mock_job_store():
 
 @pytest.fixture
 def mock_tts_engine():
-    with patch("app.services.tts_job.get_tts_engine") as mock_get_engine:
+    with patch("app.core.tts_engine.get_tts_engine") as mock_get_engine:
         mock_engine = MagicMock()
         mock_engine.is_ready = True
         mock_engine.synthesize_to_file.return_value = "/tmp/mock.wav"

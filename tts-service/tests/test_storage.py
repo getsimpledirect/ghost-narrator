@@ -135,6 +135,8 @@ def test_gcs_make_public_url():
 @pytest.mark.asyncio
 async def test_s3_storage_upload(tmp_path):
     """Test S3Storage upload with mocked boto3."""
+    boto3 = pytest.importorskip("boto3", reason="boto3 not installed")
+
     with patch.dict(
         os.environ,
         {
@@ -156,9 +158,9 @@ async def test_s3_storage_upload(tmp_path):
         audio_file = tmp_path / "test.mp3"
         audio_file.write_bytes(b"fake-audio")
 
-        with patch("app.services.storage.s3.boto3") as mock_boto:
+        with patch("boto3.client") as mock_boto_client:
             mock_s3 = MagicMock()
-            mock_boto.client.return_value = mock_s3
+            mock_boto_client.return_value = mock_s3
 
             backend = S3Storage()
             uri = await backend.upload(audio_file, job_id="job1", site_slug="site1")
@@ -169,6 +171,8 @@ async def test_s3_storage_upload(tmp_path):
 
 def test_s3_make_public_url():
     """Test S3Storage generates correct public URL."""
+    pytest.importorskip("boto3", reason="boto3 not installed")
+
     with patch.dict(
         os.environ,
         {
