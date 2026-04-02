@@ -15,7 +15,7 @@ Self-hosted AI narration for your blog. Replaces ElevenLabs (~$330/month) with a
 Publish an article on Ghost CMS → Ghost Narrator automatically generates a voice-narrated audio version using your cloned voice and embeds the player in your post. No cloud TTS APIs. No per-character billing. Your voice, your hardware, your data.
 
 ```
-Ghost CMS (publish) → n8n (orchestrate) → Ollama (rewrite for narration) → Qwen3-TTS (synthesize) → Storage (MP3) → Ghost (embed player)
+Ghost CMS (publish) → n8n (trigger) → TTS Service (narrate + synthesize) → Storage (MP3) → Ghost (embed player)
 ```
 
 > **Read the full story:** [You Cannot Buy What Can Only Be Built](https://founderreality.com/blog/you-cannot-buy-what-can-only-be-built) — why we built this and how it works.
@@ -52,12 +52,12 @@ That's it. The bundled Ollama LLM handles narration rewriting. Qwen3-TTS handles
 
 Ghost Narrator auto-detects your hardware and selects the right models:
 
-| Tier | VRAM | TTS Model | LLM Model | Output Quality |
-|---|---|---|---|---|
-| CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz |
-| Low | <9 GB | Qwen3-TTS-0.6B | qwen3:4b-q4 | 192kbps, 44.1kHz |
-| Mid | 9–18 GB | Qwen3-TTS-1.7B | qwen3:8b-q4 | 192kbps, 44.1kHz |
-| High | 18+ GB | Qwen3-TTS-1.7B | qwen3:8b-q4 | 256kbps, 48kHz |
+| Tier | VRAM | TTS Model | LLM Model | Output Quality | Key Features |
+|---|---|---|---|---|---|
+| CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
+| Low | <9 GB | Qwen3-TTS-0.6B | qwen3:4b-q4 | 192kbps, 44.1kHz | T4 / older GPUs |
+| Mid | 9–18 GB | Qwen3-TTS-1.7B | qwen3:8b-q4 | 192kbps, 44.1kHz | Pipelined narrate+synthesize |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (fp32)** | **qwen3:14b-q4** | **256kbps, 48kHz** | **2 workers, multi-voice, quality re-synth, voice caching** |
 
 Override with `HARDWARE_TIER=cpu_only` in `.env` if auto-detection fails.
 
@@ -67,11 +67,12 @@ Override with `HARDWARE_TIER=cpu_only` in `.env` if auto-detection fails.
 
 ```mermaid
 flowchart TD
-    A["📝 Ghost CMS<br>Publish Article"] -->|"webhook"| B["⚡ n8n<br>Workflow Orchestration"]
-    B -->|"rewrite"| C["🧠 Ollama<br>Bundled LLM"]
-    B <-->|"job state"| D["📦 Redis"]
-    C -->|"narration script"| E["🎙️ Qwen3-TTS<br>Voice Cloning"]
+    A["📝 Ghost CMS<br>Publish Article"] -->|"webhook"| B["⚡ n8n<br>Trigger & Embed"]
+    B -->|"raw article text"| E["🎙️ TTS Service<br>Narrate + Synthesize"]
+    E -->|"LLM narration"| C["🧠 Ollama<br>Bundled LLM"]
+    C -->|"narration script"| E
     E -->|"MP3"| F["💾 Storage<br>Local / GCS / S3"]
+    E -->|"callback"| B
     B -->|"embed player"| G["🔊 Ghost CMS<br>Audio in Post"]
     H["🔍 Hardware Probe<br>Auto GPU Detection"] -.->|"tier.env"| C
     H -.->|"tier.env"| E
@@ -156,13 +157,13 @@ See [`.env.example`](.env.example) for the full list.
 
 ### LLM Override
 
-Ghost Narrator bundles Ollama for narration rewriting. To use an external LLM instead:
+Ghost Narrator bundles Ollama for narration rewriting. No external LLM needed. To override with a different OpenAI-compatible endpoint, set `LLM_BASE_URL` in `.env`:
 
 | Provider | `LLM_BASE_URL` | `LLM_MODEL_NAME` |
 |----------|------------------|--------------------|
 | Bundled Ollama (default) | `http://ollama:11434/v1` | *(auto from tier)* |
-| External vLLM | `http://host.docker.internal:8001/v1` | `Qwen/Qwen3-14B-AWQ` |
 | OpenAI API | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| Any OpenAI-compatible API | `http://host.docker.internal:PORT/v1` | model name |
 
 ---
 

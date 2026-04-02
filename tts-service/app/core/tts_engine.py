@@ -20,10 +20,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""Qwen3-TTS engine wrapper — replaces Fish Speech v1.5."""
+"""Qwen3-TTS engine wrapper with voice cloning and pre-computed reference caching."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from pathlib import Path
@@ -58,12 +59,22 @@ class TTSEngine:
                     instance._model: Optional[QwenTTS] = None
                     instance._ready = False
                     instance._lock = threading.Lock()
+                    instance._synthesis_lock = (
+                        threading.Lock()
+                    )  # serialises GPU inference
                     instance._cancelled_jobs: set[str] = set()
+                    instance._cached_voice_path: Optional[str] = (
+                        None  # pre-computed voice cache
+                    )
                     cls._instance = instance
         return cls._instance
 
     def initialize(self) -> None:
-        """Load Qwen3-TTS model into memory. Called once at startup."""
+        """Load Qwen3-TTS model into memory and pre-compute voice reference.
+
+        Called once at startup. Caches the default voice reference embedding
+        so per-job synthesis doesn't repeat the expensive load_reference call.
+        """
         with self._lock:
             if self._ready:
                 return
@@ -85,6 +96,21 @@ class TTSEngine:
                     device=DEVICE,
                     dtype=ENGINE_CONFIG.tts_precision,
                 )
+                # Pre-compute and cache the default voice reference embedding
+                from app.config import VOICE_SAMPLE_PATH
+
+                voice_path = Path(VOICE_SAMPLE_PATH)
+                if voice_path.exists():
+                    logger.info("Pre-computing voice reference: %s", voice_path)
+                    self._model.load_reference(str(voice_path))
+                    self._cached_voice_path = str(voice_path)
+                    logger.info("Voice reference cached in VRAM")
+                else:
+                    logger.warning(
+                        "Voice sample not found at %s — will load per-job",
+                        voice_path,
+                    )
+
                 self._ready = True
                 logger.info("Qwen3-TTS engine ready")
             except Exception as e:
@@ -132,9 +158,14 @@ class TTSEngine:
             raise SynthesisError(f"Job {actual_job_id} was cancelled")
 
         try:
-            self._model.load_reference(str(voice_path))
-            audio_data = self._model.synthesize(text)
-            self._model.save_wav(audio_data, str(output_path))
+            with self._synthesis_lock:
+                # Only reload voice reference if it's different from the cached one
+                voice_path_str = str(voice_path)
+                if voice_path_str != self._cached_voice_path:
+                    self._model.load_reference(voice_path_str)
+                    self._cached_voice_path = voice_path_str
+                audio_data = self._model.synthesize(text)
+                self._model.save_wav(audio_data, str(output_path))
             return str(output_path)
         except SynthesisError:
             raise
@@ -151,6 +182,17 @@ class TTSEngine:
 
 _engine: Optional[TTSEngine] = None
 _engine_lock = threading.Lock()
+_engine_ready_event: Optional[asyncio.Event] = None
+_event_lock = threading.Lock()
+
+
+def get_engine_ready_event() -> asyncio.Event:
+    """Return an asyncio.Event that is set when the TTS engine is ready."""
+    global _engine_ready_event
+    with _event_lock:
+        if _engine_ready_event is None:
+            _engine_ready_event = asyncio.Event()
+        return _engine_ready_event
 
 
 def get_tts_engine() -> TTSEngine:
@@ -165,3 +207,13 @@ def initialize_tts_engine() -> None:
     """Initialize the TTS engine. Called from main.py lifespan."""
     engine = get_tts_engine()
     engine.initialize()
+    # Signal any coroutines waiting on engine readiness
+    try:
+        event = get_engine_ready_event()
+        # The event must be set from the event loop thread, so we use call_soon_threadsafe
+        # However, since this is called from the main thread during lifespan, we can set directly
+        if not event.is_set():
+            event.set()
+    except RuntimeError:
+        # No running event loop yet — will be set on first job's check
+        pass

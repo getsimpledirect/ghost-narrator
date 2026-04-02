@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Hardware auto-detection: CPU_ONLY / LOW_VRAM / MID_VRAM / HIGH_VRAM tiers
 - Qwen3-TTS engine (replaces Fish Speech v1.5)
-- Bundled Ollama LLM service (replaces external vLLM dependency)
+- Bundled Ollama LLM service for narration rewriting
 - Tiered narration pipeline: ChunkedStrategy + SingleShotStrategy
 - NarrationValidator: entity-level information preservation check
 - Voice profiles: named profiles, runtime upload, backward-compatible default
@@ -22,12 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Callback payload: `gcs_uri` → `audio_uri` (gcs_uri kept for backward compat)
-- `VLLM_BASE_URL` default now points to bundled Ollama at `http://ollama:11434/v1`
+- `LLM_BASE_URL` default points to bundled Ollama at `http://ollama:11434/v1`
 - `scripts/setup-gcp.sh` renamed to `scripts/setup-storage.sh`
 
 ### Removed
 - Fish Speech v1.5 dependency
-- External vLLM requirement (now optional override)
+- External LLM dependency (Ollama is now bundled)
 
 ---
 

@@ -38,7 +38,7 @@ from app.core.hardware import ENGINE_CONFIG  # noqa: E402
 
 # Voice and TTS settings
 VOICE_SAMPLE_PATH: Final[str] = os.environ.get(
-    "VOICE_SAMPLE_PATH", "/app/voices/reference.wav"
+    "VOICE_SAMPLE_PATH", "/app/voices/default/reference.wav"
 )
 TTS_LANGUAGE: Final[str] = os.environ.get("TTS_LANGUAGE", "en")
 
@@ -50,7 +50,7 @@ SELECTED_LLM_MODEL: Final[str] = ENGINE_CONFIG.llm_model
 # Override DEVICE from engine config (replaces static env var)
 DEVICE: Final[str] = ENGINE_CONFIG.tts_device
 
-# Narration LLM endpoint (Ollama default; override for external vLLM)
+# Narration LLM endpoint (bundled Ollama default; override for any OpenAI-compatible API)
 LLM_BASE_URL: Final[str] = os.environ.get("LLM_BASE_URL", "http://ollama:11434/v1")
 LLM_MODEL_NAME: Final[str] = os.environ.get("LLM_MODEL_NAME", ENGINE_CONFIG.llm_model)
 

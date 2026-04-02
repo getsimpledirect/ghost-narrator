@@ -39,22 +39,128 @@ logger = logging.getLogger(__name__)
 # Default maximum words per chunk (40-60 words = 8-12 second audio segments)
 DEFAULT_MAX_CHUNK_WORDS: Final[int] = 200
 
-# Transition words that suggest a new topic/paragraph boundary
+# ─── TTS Text Preprocessing ───────────────────────────────────────────────────
+
+# Common abbreviations that trip up TTS models when not expanded
+_ABBREVIATIONS: Final[dict[str, str]] = {
+    "Dr.": "Doctor",
+    "Mr.": "Mister",
+    "Mrs.": "Missus",
+    "Ms.": "Miss",
+    "Prof.": "Professor",
+    "Sr.": "Senior",
+    "Jr.": "Junior",
+    "St.": "Saint",
+    "vs.": "versus",
+    "etc.": "et cetera",
+    "e.g.": "for example",
+    "i.e.": "that is",
+    "approx.": "approximately",
+    "dept.": "department",
+    "govt.": "government",
+    "Inc.": "Incorporated",
+    "Corp.": "Corporation",
+    "Ltd.": "Limited",
+    "Co.": "Company",
+}
+
+# Regex for remaining markdown artifacts
+_MARKDOWN_RE: Final[re.Pattern[str]] = re.compile(r"[#*_~>`]+")
+# Multiple consecutive punctuation (e.g., "...", "!!", "??")
+_MULTI_PUNCT_RE: Final[re.Pattern[str]] = re.compile(r"([.!?]){3,}")
+# Stray brackets or parentheses with empty content
+_EMPTY_BRACKETS_RE: Final[re.Pattern[str]] = re.compile(r"\(\s*\)|\[\s*\]|\{\s*\}")
+# URLs that the LLM didn't fully remove
+_URL_RE: Final[re.Pattern[str]] = re.compile(r"https?://\S+")
+# Smart quotes and special characters
+_SPECIAL_CHARS: Final[dict[str, str]] = {
+    "\u2018": "'",  # left single quote
+    "\u2019": "'",  # right single quote
+    "\u201c": '"',  # left double quote
+    "\u201d": '"',  # right double quote
+    "\u2014": ",",  # em dash → comma pause
+    "\u2013": ",",  # en dash → comma pause
+    "\u2026": ".",  # ellipsis
+    "\u00a0": " ",  # non-breaking space
+    "\u200b": "",  # zero-width space
+    "\u2060": "",  # word joiner
+}
+
+
+def clean_text_for_tts(text: str) -> str:
+    """Clean narration text for optimal TTS synthesis.
+
+    Catches artifacts the LLM narration may have missed:
+    - Stray markdown characters
+    - Smart quotes and special Unicode
+    - Unexpanded abbreviations
+    - Remaining URLs
+    - Multiple consecutive punctuation
+    - Empty brackets
+    - Excessive whitespace
+
+    Args:
+        text: Narration text from LLM.
+
+    Returns:
+        Cleaned text ready for TTS chunking.
+    """
+    # Replace smart quotes and special characters
+    for char, replacement in _SPECIAL_CHARS.items():
+        text = text.replace(char, replacement)
+
+    # Strip remaining markdown artifacts
+    text = _MARKDOWN_RE.sub("", text)
+
+    # Remove URLs (LLM should have converted to spoken form)
+    text = _URL_RE.sub("", text)
+
+    # Expand abbreviations (word-boundary safe)
+    for abbr, expansion in _ABBREVIATIONS.items():
+        text = re.sub(re.escape(abbr) + r"\b", expansion, text)
+
+    # Normalize ellipsis and repeated punctuation
+    text = _MULTI_PUNCT_RE.sub(r"\1", text)
+
+    # Remove empty brackets
+    text = _EMPTY_BRACKETS_RE.sub("", text)
+
+    # Normalize whitespace
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    # Strip leading/trailing whitespace
+    text = text.strip()
+
+    return text
+
+
+# Transition words that suggest a new topic/paragraph boundary.
+# Only genuine topic-transition openers — not common sentence starters like
+# "the", "for", "so", "if", "this" which match nearly every sentence.
 _TRANSITION_STARTERS: Final[tuple[str, ...]] = (
     "now,",
-    "but ",
-    "so ",
-    "here",
-    "this",
-    "the ",
-    "when",
-    "if ",
-    "what",
-    "think",
-    "there",
-    "at the",
-    "in the",
-    "for ",
+    "however",
+    "meanwhile",
+    "turning to",
+    "on the other hand",
+    "in other news",
+    "speaking of",
+    "that said",
+    "moving on",
+    "in contrast",
+    "furthermore",
+    "moreover",
+    "additionally",
+    "but despite",
+    "yet despite",
+    "looking ahead",
+    "in summary",
+    "to summarize",
+    "finally,",
+    "lastly,",
+    "in other words",
+    "put another way",
 )
 
 
@@ -66,29 +172,19 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
     - Split on paragraph boundaries first (double newline or sentence groups)
     - Within paragraphs, group sentences into chunks of ~40-60 words
     - Never split mid-sentence
+    - For long sentences, prefer splitting at clause boundaries (commas,
+      semicolons, em dashes) rather than arbitrary word positions
     - Keep sentence-ending punctuation with its sentence (not the next chunk)
     - Chunks of 40-60 words produce 8-12 second audio segments — optimal for
       Qwen3-TTS voice consistency and natural prosody
 
     Args:
         text: The input text to split into chunks.
-        max_words: Maximum number of words per chunk (default: 50).
+        max_words: Maximum number of words per chunk (default: 200).
 
     Returns:
         A list of text chunks, each suitable for TTS synthesis.
         Returns an empty list if input is empty/whitespace.
-
-    Examples:
-        >>> chunks = split_into_chunks("Hello world. How are you?", max_words=10)
-        >>> len(chunks)
-        1
-        >>> chunks[0]
-        'Hello world. How are you?'
-
-        >>> long_text = "First sentence. " * 50
-        >>> chunks = split_into_chunks(long_text, max_words=20)
-        >>> all(len(c.split()) <= 25 for c in chunks)  # Some tolerance
-        True
     """
     if not text or not text.strip():
         return []
@@ -129,6 +225,25 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
                 current_chunk_words = []
                 current_word_count = 0
 
+            # For very long sentences that exceed max_words alone,
+            # split at clause boundaries (commas, semicolons) for natural prosody
+            if sentence_word_count > max_words:
+                # Flush any accumulated chunk first
+                if current_chunk_words:
+                    chunks.append(" ".join(current_chunk_words))
+                    current_chunk_words = []
+                    current_word_count = 0
+
+                # Split long sentence at clause boundaries
+                clause_chunks = _split_sentence_at_clauses(sentence, max_words)
+                for clause in clause_chunks[:-1]:
+                    chunks.append(clause)
+                # Last clause becomes the start of the next chunk
+                last_clause = clause_chunks[-1]
+                current_chunk_words = last_clause.split()
+                current_word_count = len(current_chunk_words)
+                continue
+
             current_chunk_words.extend(sentence_words)
             current_word_count += sentence_word_count
 
@@ -153,6 +268,61 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
         )
         return [text.strip()]
     return chunks
+
+
+def _split_sentence_at_clauses(sentence: str, max_words: int) -> list[str]:
+    """Split a long sentence at clause boundaries (commas, semicolons).
+
+    Prefers splitting after punctuation that indicates a natural breath
+    point: commas, semicolons, em dashes, "and", "but", "or", "because".
+
+    Args:
+        sentence: A single sentence that exceeds max_words.
+        max_words: Maximum words per resulting chunk.
+
+    Returns:
+        List of clause-based chunks that together form the original sentence.
+    """
+    # Split at clause boundaries: comma, semicolon, or conjunction
+    # Keep the punctuation with the preceding clause
+    parts = re.split(r"(?<=[,;])\s+", sentence)
+    if len(parts) == 1:
+        # No clause boundaries found — split at "and", "but", "or", "because"
+        parts = re.split(
+            r"\s+(?=and\s|but\s|or\s|because\s|which\s|that\s|while\s|whereas\s)",
+            sentence,
+        )
+    if len(parts) == 1:
+        # Still no good split point — fall back to word-boundary split
+        words = sentence.split()
+        chunks = []
+        for i in range(0, len(words), max_words):
+            chunk = " ".join(words[i : i + max_words])
+            # Add period if this chunk doesn't end with punctuation
+            if i + max_words < len(words) and not chunk[-1] in ".!?,":
+                chunk += ","
+            chunks.append(chunk)
+        return chunks
+
+    # Group clause parts into chunks of ~max_words
+    result: list[str] = []
+    current: list[str] = []
+    current_words = 0
+
+    for part in parts:
+        part_words = len(part.split())
+        if current_words + part_words > max_words and current:
+            result.append(" ".join(current))
+            current = [part]
+            current_words = part_words
+        else:
+            current.append(part)
+            current_words += part_words
+
+    if current:
+        result.append(" ".join(current))
+
+    return result or [sentence]
 
 
 def get_pause_ms_after_chunk(chunk: str, next_chunk: str | None) -> int:
@@ -189,3 +359,43 @@ def get_pause_ms_after_chunk(chunk: str, next_chunk: str | None) -> int:
         return 450  # Normal sentence boundary
 
     return 250  # Mid-thought break
+
+
+# ─── Quote Detection for Multi-Voice ──────────────────────────────────────────
+
+# Regex to detect quoted speech (double quotes, single quotes, or backticks)
+_QUOTE_RE: Final[re.Pattern[str]] = re.compile(r'["\u201c\u201d](.+?)["\u201d]')
+
+
+def has_quoted_speech(text: str) -> bool:
+    """Check if text contains quoted speech for multi-voice synthesis."""
+    return bool(_QUOTE_RE.search(text))
+
+
+def split_at_quotes(text: str) -> list[tuple[str, bool]]:
+    """Split text into segments, marking which are quoted speech.
+
+    Returns:
+        List of (text_segment, is_quote) tuples.
+        is_quote=True means this segment should use a shifted voice.
+    """
+    segments: list[tuple[str, bool]] = []
+    last_end = 0
+
+    for match in _QUOTE_RE.finditer(text):
+        # Add non-quoted text before this match
+        before = text[last_end : match.start()].strip()
+        if before:
+            segments.append((before, False))
+        # Add the quoted text (without the quote marks)
+        quoted = match.group(1).strip()
+        if quoted:
+            segments.append((quoted, True))
+        last_end = match.end()
+
+    # Add remaining non-quoted text
+    remaining = text[last_end:].strip()
+    if remaining:
+        segments.append((remaining, False))
+
+    return segments if segments else [(text, False)]

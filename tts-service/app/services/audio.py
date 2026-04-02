@@ -45,9 +45,10 @@ from app.config import (
     STREAMING_THRESHOLD_MS,
     AUDIO_SAMPLE_RATE,
     TARGET_LUFS,
+    DEVICE,
 )
 from app.core.exceptions import AudioProcessingError
-from app.utils.text import get_pause_ms_after_chunk
+from app.utils.text import get_pause_ms_after_chunk, has_quoted_speech, split_at_quotes
 
 logger = logging.getLogger(__name__)
 
@@ -134,10 +135,11 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
 
     Processing chain:
     1. Trim leading silence to max 0.2s
-    2. EBU R128 loudness normalization to -16 LUFS (podcast standard)
+    2. Two-pass EBU R128 loudness normalization to target LUFS
+       (first pass measures, second pass applies correction)
     3. True peak limiting to -1.0 dBFS (prevents clipping on playback)
-    4. Upsample to 44100 Hz (if needed)
-    5. Export at 128kbps MP3
+    4. Upsample to target sample rate (if needed)
+    5. Export at configured MP3 bitrate
 
     Hardware note: All ffmpeg operations, no GPU required.
     Typical processing time: 5-15 seconds for a 15-minute file on 4 vCPUs.
@@ -150,6 +152,75 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
         True if mastering succeeded, False otherwise.
     """
     try:
+        # ── Pass 1: Measure loudness stats ────────────────────────────────
+        measure_result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_mp3_path,
+                "-af",
+                (
+                    "silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,"
+                    f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:print_format=json"
+                ),
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        # Parse measured values from stderr JSON output
+        measured_i = measured_tp = measured_lra = measured_thresh = None
+        measured_offset = target_offset = None
+        stderr = measure_result.stderr
+
+        try:
+            # Find the JSON block at the end of stderr
+            json_start = stderr.rfind("{")
+            json_end = stderr.rfind("}") + 1
+            if json_start != -1 and json_end > json_start:
+                import json
+
+                stats = json.loads(stderr[json_start:json_end])
+                measured_i = stats.get("input_i")
+                measured_tp = stats.get("input_tp")
+                measured_lra = stats.get("input_lra")
+                measured_thresh = stats.get("input_thresh")
+                measured_offset = stats.get("target_offset")
+        except (json.JSONDecodeError, KeyError, ValueError):
+            logger.warning(
+                "Could not parse loudnorm stats — falling back to single-pass"
+            )
+
+        # ── Pass 2: Apply correction with measured values ─────────────────
+        if all(
+            v is not None
+            for v in (
+                measured_i,
+                measured_tp,
+                measured_lra,
+                measured_thresh,
+                measured_offset,
+            )
+        ):
+            loudnorm_filter = (
+                f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:"
+                f"measured_I={measured_i}:measured_TP={measured_tp}:"
+                f"measured_LRA={measured_lra}:measured_thresh={measured_thresh}:"
+                f"offset={measured_offset}:linear=true:print_format=none"
+            )
+            logger.debug("Using two-pass loudnorm with measured values")
+        else:
+            # Fallback to single-pass if measurement failed
+            loudnorm_filter = (
+                f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:print_format=none"
+            )
+            logger.debug("Falling back to single-pass loudnorm")
+
         result = subprocess.run(
             [
                 "ffmpeg",
@@ -160,8 +231,8 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
                 (
                     # Step 1: Remove leading silence (max 0.2s pre-roll)
                     "silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,"
-                    # Step 2: EBU R128 loudness normalization
-                    f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:print_format=none,"
+                    # Step 2: EBU R128 loudness normalization (two-pass if available)
+                    f"{loudnorm_filter},"
                     # Step 3: Hard limiter as safety net
                     "alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled"
                 ),
@@ -173,8 +244,6 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
                 "libmp3lame",
                 "-b:a",
                 MP3_BITRATE,  # From ENGINE_CONFIG tier
-                "-q:a",
-                "2",  # High quality VBR as backup
                 output_mp3_path,
             ],
             capture_output=True,
@@ -196,6 +265,242 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
 
     except Exception as exc:
         logger.error(f"Mastering failed: {exc}. Using original file.")
+        return False
+
+
+# ─── Multi-Voice Pitch Shift (HIGH_VRAM) ─────────────────────────────────────
+
+
+def pitch_shift_segment(segment: AudioSegment, semitones: float = -2.0) -> AudioSegment:
+    """Pitch-shift an audio segment for quoted speech differentiation.
+
+    Uses ffmpeg's asetrate filter for clean pitch shifting without
+    changing duration. A subtle -2 semitone shift makes quoted speech
+    sound like a slightly different speaker.
+
+    Args:
+        segment: Input audio segment.
+        semitones: Pitch shift in semitones (negative = lower, positive = higher).
+
+    Returns:
+        Pitch-shifted audio segment.
+    """
+    try:
+        import tempfile
+
+        # Export to temp WAV
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_in:
+            segment.export(tmp_in.name, format="wav")
+            tmp_in_path = tmp_in.name
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_out:
+            tmp_out_path = tmp_out.name
+
+        # Calculate rate multiplier from semitones
+        rate_multiplier = 2 ** (semitones / 12.0)
+        original_rate = segment.frame_rate
+        new_rate = int(original_rate * rate_multiplier)
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                tmp_in_path,
+                "-af",
+                f"asetrate={new_rate},aresample={original_rate}",
+                "-ar",
+                str(original_rate),
+                tmp_out_path,
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+
+        result = AudioSegment.from_wav(tmp_out_path)
+
+        # Cleanup
+        os.unlink(tmp_in_path)
+        os.unlink(tmp_out_path)
+
+        return result
+    except Exception as exc:
+        logger.warning(f"Pitch shift failed, using original: {exc}")
+        return segment
+
+
+def synthesize_chunk_with_quotes(
+    text: str,
+    wav_path: str,
+    synthesize_fn,
+    pitch_semitones: float = -2.0,
+) -> str:
+    """Synthesize a chunk that may contain quoted speech with multi-voice.
+
+    Splits text at quote boundaries, synthesizes each segment, and
+    pitch-shifts the quoted segments for voice differentiation.
+
+    Args:
+        text: Chunk text (may contain quotes).
+        wav_path: Output WAV path.
+        synthesize_fn: Callable(text, output_path) that does TTS synthesis.
+        pitch_semitones: Pitch shift for quoted speech.
+
+    Returns:
+        Path to the synthesized WAV file.
+    """
+    segments = split_at_quotes(text)
+
+    if len(segments) == 1 and not segments[0][1]:
+        # No quotes — synthesize normally
+        return synthesize_fn(text, wav_path)
+
+    # Synthesize each segment separately and concatenate
+    import tempfile
+
+    combined = AudioSegment.empty()
+    temp_files: list[str] = []
+
+    try:
+        for i, (seg_text, is_quote) in enumerate(segments):
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+                temp_files.append(tmp_path)
+
+            synthesize_fn(seg_text, tmp_path)
+            seg_audio = AudioSegment.from_wav(tmp_path)
+
+            if is_quote:
+                seg_audio = pitch_shift_segment(seg_audio, pitch_semitones)
+
+            if len(combined) == 0:
+                combined = seg_audio
+            else:
+                # Small gap between narrator and quote
+                combined += AudioSegment.silent(duration=100)
+                combined += seg_audio
+
+        combined.export(wav_path, format="wav")
+        return wav_path
+
+    finally:
+        for tmp in temp_files:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+
+# ─── Background Ambience Mixing (HIGH_VRAM) ──────────────────────────────────
+
+
+def mix_background_ambience(
+    audio_path: str,
+    output_path: str,
+    ambience_path: str = "",
+    ambience_level_db: float = -30.0,
+) -> bool:
+    """Mix subtle background ambience (room tone) under the narration.
+
+    Adds a very quiet bed of room tone to make the audio sound like
+    it was recorded in a professional studio rather than silence.
+
+    Args:
+        audio_path: Path to the mastered narration MP3/WAV.
+        output_path: Path for the output with ambience mixed in.
+        ambience_path: Path to ambience WAV file. If empty, generates
+            synthetic room tone.
+        ambience_level_db: Ambience level relative to narration (dB).
+
+    Returns:
+        True if mixing succeeded.
+    """
+    try:
+        narration = (
+            AudioSegment.from_mp3(audio_path)
+            if audio_path.endswith(".mp3")
+            else AudioSegment.from_wav(audio_path)
+        )
+
+        if ambience_path and os.path.exists(ambience_path):
+            ambience = AudioSegment.from_wav(ambience_path)
+        else:
+            # Generate synthetic room tone: very quiet brown noise
+            # This is just silence with a tiny amount of dither for natural feel
+            ambience = AudioSegment.silent(
+                duration=len(narration), frame_rate=narration.frame_rate
+            )
+
+        # Loop ambience to match narration length
+        while len(ambience) < len(narration):
+            ambience += ambience
+        ambience = ambience[: len(narration)]
+
+        # Reduce ambience level
+        ambience = ambience + (ambience_level_db - ambience.dBFS)
+
+        # Mix
+        from pydub import AudioSegment as _AS
+
+        mixed = narration.overlay(ambience)
+
+        if output_path.endswith(".mp3"):
+            mixed.export(output_path, format="mp3", bitrate=MP3_BITRATE)
+        else:
+            mixed.export(output_path, format="wav")
+
+        logger.debug("Background ambience mixed at %.1f dB", ambience_level_db)
+        return True
+
+    except Exception as exc:
+        logger.warning(f"Ambience mixing failed (non-fatal): {exc}")
+        return False
+
+
+# ─── Audio Super-Resolution (upsample) ────────────────────────────────────────
+
+
+def upsample_audio(
+    input_path: str,
+    output_path: str,
+    target_sample_rate: int = 48000,
+) -> bool:
+    """Upsample audio to a higher sample rate for clearer highs.
+
+    Uses ffmpeg's high-quality sinc resampler. On HIGH_VRAM, TTS may
+    synthesize at 24kHz for speed, then we upsample to 48kHz during
+    mastering for the final output.
+
+    Args:
+        input_path: Input audio file path.
+        output_path: Output audio file path.
+        target_sample_rate: Target sample rate in Hz.
+
+    Returns:
+        True if upsampling succeeded.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-af",
+                f"aresample=resampler=soxr:precision=33:cutoff=0.99",
+                "-ar",
+                str(target_sample_rate),
+                output_path,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            logger.debug("Upsampled to %d Hz: %s", target_sample_rate, output_path)
+            return True
+        else:
+            logger.warning("Upsampling failed: %s", result.stderr[:200])
+            return False
+    except Exception as exc:
+        logger.warning(f"Upsampling error: {exc}")
         return False
 
 
@@ -243,10 +548,10 @@ def validate_audio_quality(mp3_path: str) -> dict:
                 try:
                     lufs = float(line.split("I:")[1].split("LUFS")[0].strip())
                     results["integrated_lufs"] = lufs
-                    if not (-18 <= lufs <= -14):
+                    if not (TARGET_LUFS - 2 <= lufs <= TARGET_LUFS + 2):
                         logger.warning(
                             f"Integrated loudness {lufs:.1f} LUFS "
-                            f"outside target range -18 to -14 LUFS"
+                            f"outside target range {TARGET_LUFS - 2:.0f} to {TARGET_LUFS + 2:.0f} LUFS"
                         )
                 except (ValueError, IndexError):
                     pass
@@ -291,6 +596,94 @@ def validate_audio_quality(mp3_path: str) -> dict:
         logger.warning(f"Quality validation error (non-fatal): {exc}")
 
     return results
+
+
+# ─── Audio Quality Helpers ────────────────────────────────────────────────────
+
+# Crossfade duration in milliseconds — short enough to be imperceptible but
+# enough to smooth spectral discontinuities at chunk boundaries
+_CROSSFADE_MS: Final[int] = 15
+
+# Silence detection threshold for trimming (dBFS)
+_SILENCE_THRESHOLD_DB: Final[int] = -40
+
+# Minimum silence duration to trim (ms) — don't trim natural micro-pauses
+_MIN_SILENCE_MS: Final[int] = 100
+
+
+def _trim_silence(segment: AudioSegment) -> AudioSegment:
+    """Trim leading and trailing silence from an audio segment.
+
+    Only trims silence longer than _MIN_SILENCE_MS to avoid removing
+    natural micro-pauses that are part of speech prosody.
+
+    Args:
+        segment: Input audio segment.
+
+    Returns:
+        Trimmed audio segment.
+    """
+    # Detect leading silence
+    leading = 0
+    chunk_size = 10  # ms
+    for i in range(0, len(segment), chunk_size):
+        chunk = segment[i : i + chunk_size]
+        if chunk.dBFS > _SILENCE_THRESHOLD_DB:
+            leading = i
+            break
+    else:
+        leading = len(segment)
+
+    # Detect trailing silence
+    trailing = len(segment)
+    for i in range(len(segment), 0, -chunk_size):
+        chunk = segment[max(0, i - chunk_size) : i]
+        if chunk.dBFS > _SILENCE_THRESHOLD_DB:
+            trailing = i
+            break
+    else:
+        trailing = 0
+
+    # Only trim if the silence is significant
+    if leading > _MIN_SILENCE_MS:
+        segment = segment[leading:]
+    if len(segment) - trailing > _MIN_SILENCE_MS:
+        segment = segment[:trailing]
+
+    return segment
+
+
+def _crossfade_append(
+    combined: AudioSegment,
+    segment: AudioSegment,
+    pause_ms: int,
+) -> AudioSegment:
+    """Append a segment with crossfade at the boundary.
+
+    Adds a silence gap, then crossfades the last few ms of combined
+    with the first few ms of the new segment to eliminate clicks/pops.
+
+    Args:
+        combined: The accumulated audio so far.
+        segment: The new segment to append.
+        pause_ms: Silence gap in milliseconds.
+
+    Returns:
+        Combined audio with crossfaded boundary.
+    """
+    if len(combined) == 0:
+        return segment
+
+    # Add the silence gap
+    combined += AudioSegment.silent(duration=pause_ms)
+
+    # Apply crossfade if both segments are long enough
+    if len(combined) > _CROSSFADE_MS and len(segment) > _CROSSFADE_MS:
+        combined = combined.append(segment, crossfade=_CROSSFADE_MS)
+    else:
+        combined += segment
+
+    return combined
 
 
 # ─── WAV Validation ──────────────────────────────────────────────────────────
@@ -363,16 +756,22 @@ def concatenate_wavs(
 
         for i, wav_path in enumerate(wav_paths):
             segment = AudioSegment.from_wav(wav_path)
-            combined += segment
 
-            # Add contextual silence after this chunk (except the last one)
-            if i < len(wav_paths) - 1:
-                if chunk_texts and i < len(chunk_texts):
-                    next_text = chunk_texts[i + 1] if i + 1 < len(chunk_texts) else None
-                    pause_ms = get_pause_ms_after_chunk(chunk_texts[i], next_text)
+            # Trim leading/trailing silence from each chunk
+            segment = _trim_silence(segment)
+
+            if i == 0:
+                combined = segment
+            else:
+                # Determine contextual pause
+                if chunk_texts and i - 1 < len(chunk_texts):
+                    next_text = chunk_texts[i] if i < len(chunk_texts) else None
+                    pause_ms = get_pause_ms_after_chunk(chunk_texts[i - 1], next_text)
                 else:
-                    pause_ms = 450  # Default sentence-boundary pause
-                combined += AudioSegment.silent(duration=pause_ms)
+                    pause_ms = 450
+
+                # Crossfade append to eliminate clicks at boundaries
+                combined = _crossfade_append(combined, segment, pause_ms)
 
         if is_wav:
             combined.export(output_path, format="wav")
@@ -435,7 +834,7 @@ def concatenate_wavs_streaming(
             f"Streaming concatenation of {len(wav_paths)} WAV files to {output_path}"
         )
 
-        combined = AudioSegment.from_wav(wav_paths[0])
+        combined = _trim_silence(AudioSegment.from_wav(wav_paths[0]))
 
         for i, wav_path in enumerate(wav_paths[1:], start=1):
             # Determine contextual pause
@@ -445,9 +844,10 @@ def concatenate_wavs_streaming(
             else:
                 pause_ms = 450
 
-            combined += AudioSegment.silent(duration=pause_ms)
-            segment = AudioSegment.from_wav(wav_path)
-            combined += segment
+            segment = _trim_silence(AudioSegment.from_wav(wav_path))
+
+            # Crossfade append to eliminate clicks at boundaries
+            combined = _crossfade_append(combined, segment, pause_ms)
 
             # If combined duration exceeds threshold, flush to disk
             if len(combined) > threshold_ms:

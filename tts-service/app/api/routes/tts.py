@@ -201,6 +201,7 @@ async def generate(
         job_id,
         request.text,
         gcs_object_path,
+        request.site_slug or "site",
     )
 
     logger.info(f"TTS job queued: {job_id}")

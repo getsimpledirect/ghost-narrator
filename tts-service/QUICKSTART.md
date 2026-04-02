@@ -67,7 +67,7 @@ curl http://localhost:8020/health
 {
   "status": "healthy",
   "device": "cpu",
-  "model": "qwen3-tts-0.6b",
+  "model": "Qwen/Qwen3-TTS-0.6B",
   "voice_sample": true,
   "model_loaded": true,
   "reference_audio_present": true,
@@ -77,7 +77,10 @@ curl http://localhost:8020/health
   "jobs_count": 0,
   "max_workers": 4,
   "executor_active": true,
-  "storage_client_active": true
+  "gcs_client_active": true,
+  "hardware_tier": "cpu_only",
+  "tts_model": "Qwen/Qwen3-TTS-0.6B",
+  "llm_model": "qwen3:1.7b"
 }
 ```
 

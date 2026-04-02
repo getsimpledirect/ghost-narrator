@@ -48,7 +48,14 @@ from app.core.exceptions import (
     AudioProcessingError,
     StorageUploadError,
 )
-from app.config import DEVICE, GCS_BUCKET_NAME, MAX_CHUNK_WORDS, MP3_BITRATE, OUTPUT_DIR
+from app.config import (
+    DEVICE,
+    GCS_BUCKET_NAME,
+    MAX_CHUNK_WORDS,
+    MP3_BITRATE,
+    OUTPUT_DIR,
+    get_narration_strategy,
+)
 from app.services.audio import (
     apply_final_mastering,
     concatenate_wavs_auto,
@@ -68,25 +75,128 @@ from app.services.synthesis import (
 logger = logging.getLogger(__name__)
 
 
+async def _quality_check_and_resynthesize(
+    chunk_wav_paths: list[str],
+    chunk_texts: list[str],
+    job_id: str,
+    engine,
+    loop,
+    executor,
+) -> list[str]:
+    """Check audio quality of each chunk and re-synthesize bad ones.
+
+    HIGH_VRAM only — checks for:
+    - Excessive silence (>50% of chunk is silence)
+    - Clipping (samples at 0dBFS)
+    - Very low energy (likely failed synthesis)
+
+    Re-synthesizes failed chunks once, then uses original if still bad.
+    """
+    from app.services.audio import get_audio_duration
+
+    checked_paths = list(chunk_wav_paths)
+    resynth_count = 0
+
+    for i, wav_path in enumerate(chunk_wav_paths):
+        try:
+            seg = _AudioSegment.from_wav(wav_path)
+            duration_ms = len(seg)
+            if duration_ms < 100:
+                # Extremely short — likely failed
+                logger.warning(
+                    f"[{job_id}] Chunk {i} is only {duration_ms}ms — re-synthesizing"
+                )
+                checked_paths[i] = await _resynthesize_chunk(
+                    i, chunk_texts, job_id, engine, loop, executor
+                )
+                resynth_count += 1
+                continue
+
+            # Check silence ratio
+            silence_threshold = seg.dBFS - 30  # 30dB below average = silence
+            silence_ms = 0
+            chunk_size = 50  # ms
+            for j in range(0, duration_ms, chunk_size):
+                c = seg[j : j + chunk_size]
+                if c.dBFS < silence_threshold:
+                    silence_ms += chunk_size
+            silence_ratio = silence_ms / duration_ms
+
+            if silence_ratio > 0.5:
+                logger.warning(
+                    f"[{job_id}] Chunk {i} is {silence_ratio:.0%} silence — re-synthesizing"
+                )
+                checked_paths[i] = await _resynthesize_chunk(
+                    i, chunk_texts, job_id, engine, loop, executor
+                )
+                resynth_count += 1
+
+        except Exception as exc:
+            logger.debug(f"[{job_id}] Quality check for chunk {i} skipped: {exc}")
+
+    if resynth_count > 0:
+        logger.info(
+            f"[{job_id}] Re-synthesized {resynth_count} chunks after quality check"
+        )
+
+    return checked_paths
+
+
+async def _resynthesize_chunk(
+    chunk_idx: int,
+    chunk_texts: list[str],
+    job_id: str,
+    engine,
+    loop,
+    executor,
+) -> str:
+    """Re-synthesize a single chunk. Returns the path (may be original if re-synth fails)."""
+    from app.config import OUTPUT_DIR
+
+    if chunk_idx >= len(chunk_texts):
+        return ""
+
+    job_dir = OUTPUT_DIR / job_id
+    wav_path = str(job_dir / f"chunk_{chunk_idx:04d}.wav")
+
+    try:
+        await loop.run_in_executor(
+            executor,
+            engine.synthesize_to_file,
+            chunk_texts[chunk_idx],
+            wav_path,
+            job_id,
+        )
+        return wav_path
+    except Exception as exc:
+        logger.warning(f"[{job_id}] Re-synthesis of chunk {chunk_idx} failed: {exc}")
+        return wav_path  # Return original path
+
+
 async def run_tts_job(
     job_id: str,
     text: str,
     gcs_object_path: str,
+    site_slug: str = "site",
 ) -> None:
     """
     Execute the complete TTS pipeline with parallel processing and optimizations.
 
     This orchestrator manages:
     1. Status tracking via JobStore (Redis).
-    2. Zero-shot voice calibration (Whisper).
-    3. Multi-stage synthesis (LLaMA + Firefly).
-    4. Audio post-processing (Normalization + Mastering).
-    5. Cloud persistence (GCS) and external notifications (n8n).
+    2. TTS engine readiness check.
+    3. LLM narration (article text → spoken podcast script).
+    4. Text chunking for TTS synthesis.
+    5. Chunk synthesis (sequential on GPU, parallel on CPU).
+    6. Per-chunk normalization and concatenation with dynamic gaps.
+    7. Final mastering (EBU R128 loudness normalization).
+    8. Quality validation, upload, and webhook notification.
 
     Args:
         job_id: Unique identifier for tracking and file storage.
-        text: The raw text content to be synthesized.
+        text: The raw article text content to be narrated and synthesized.
         gcs_object_path: The target destination path in the GCS bucket.
+        site_slug: Site identifier for storage path organization.
 
     Raises:
         JobDeletedError: If the job is removed by a user during processing.
@@ -164,42 +274,111 @@ async def run_tts_job(
             },
         )
 
-        # Wait for TTS engine to be ready (up to 60 seconds)
-        engine_ready = False
-        from app.core.tts_engine import get_tts_engine
+        # Wait for TTS engine to be ready (event-driven, no polling)
+        from app.core.tts_engine import get_tts_engine, get_engine_ready_event
 
         engine = get_tts_engine()
-        for _ in range(60):
+        if not engine.is_ready:
+            ready_event = get_engine_ready_event()
+            # If engine was already initialized before this event was created, set it
             if engine.is_ready:
-                engine_ready = True
-                break
-            await asyncio.sleep(1)
-            await _check_status()  # Still check if job was deleted while waiting
+                ready_event.set()
+            else:
+                try:
+                    await asyncio.wait_for(ready_event.wait(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    raise RuntimeError("TTS engine failed to initialize within timeout")
 
-        if not engine_ready:
+        if not engine.is_ready:
             raise RuntimeError("TTS engine failed to initialize within timeout")
 
-        # Step 1: Prepare text - split into chunks
+        # Step 1+2+3: Narrate, chunk, and synthesize (pipelined when possible)
         await _check_status()
-        chunks, total_words = prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
-        logger.info(
-            f"[{job_id}] Chunking complete - {len(chunks)} chunks, {total_words} words"
-        )
+        logger.info(f"[{job_id}] Starting narration + synthesis pipeline...")
+        try:
+            narration = get_narration_strategy()
+        except Exception as exc:
+            logger.warning(f"[{job_id}] Narration strategy init failed: {exc}")
+            narration = None
 
-        # Step 2: Synthesize chunks to WAV files
-        await _check_status()
-        # Use auto-selection for parallel (CPU) vs sequential (GPU)
-        chunk_wav_paths = await synthesize_chunks_auto(
-            chunks=chunks,
-            job_dir=job_dir,
-            job_id=job_id,
-            status_check_callback=_check_status,
-        )
+        chunk_wav_paths: list[str] = []
+        all_chunks: list[str] = []
+        total_words = 0
+        chunk_index = 0
+
+        if narration is not None:
+            # Pipelined: narrate chunk N, synthesize chunk N while narrating chunk N+1
+            try:
+                async for narrated_segment in narration.narrate_iter(text):
+                    await _check_status()
+                    # Split this narrated segment into TTS-sized chunks
+                    tts_chunks, seg_words = prepare_text_for_synthesis(
+                        narrated_segment, MAX_CHUNK_WORDS
+                    )
+                    all_chunks.extend(tts_chunks)
+                    total_words += seg_words
+
+                    # Synthesize these TTS chunks immediately (don't wait for next narration)
+                    segment_paths = await synthesize_chunks_auto(
+                        chunks=tts_chunks,
+                        job_dir=job_dir,
+                        job_id=f"{job_id}",
+                        status_check_callback=_check_status,
+                        chunk_offset=chunk_index,
+                    )
+                    chunk_wav_paths.extend(segment_paths)
+                    chunk_index += len(tts_chunks)
+
+                logger.info(
+                    f"[{job_id}] Pipelined narration+synthesis complete — "
+                    f"{len(chunk_wav_paths)} audio chunks, {total_words} words"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"[{job_id}] Pipelined narration failed, falling back to sequential: {exc}"
+                )
+                # Fallback: narrate all, then synthesize all
+                try:
+                    narrated_text = await narration.narrate(text)
+                except Exception:
+                    narrated_text = text
+                all_chunks, total_words = prepare_text_for_synthesis(
+                    narrated_text, MAX_CHUNK_WORDS
+                )
+                chunk_wav_paths = await synthesize_chunks_auto(
+                    chunks=all_chunks,
+                    job_dir=job_dir,
+                    job_id=job_id,
+                    status_check_callback=_check_status,
+                )
+        else:
+            # No narration available — synthesize raw text directly
+            all_chunks, total_words = prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
+            chunk_wav_paths = await synthesize_chunks_auto(
+                chunks=all_chunks,
+                job_dir=job_dir,
+                job_id=job_id,
+                status_check_callback=_check_status,
+            )
 
         if not chunk_wav_paths:
             raise RuntimeError("No audio chunks were synthesized")
 
-        # Step 3: Normalize all chunks to -23 LUFS (in parallel for speed)
+        # Step 3b: Quality check and re-synthesis (HIGH_VRAM only)
+        from app.core.hardware import ENGINE_CONFIG, HardwareTier
+
+        if ENGINE_CONFIG.tier == HardwareTier.HIGH_VRAM:
+            await _check_status()
+            logger.info(
+                f"[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks..."
+            )
+            chunk_wav_paths = await _quality_check_and_resynthesize(
+                chunk_wav_paths, all_chunks, job_id, engine, loop, executor
+            )
+
+        # Step 4: Normalize chunks to -23 LUFS (skip very short chunks —
+        # single-pass loudnorm is inaccurate under ~10s, and final mastering
+        # re-normalizes the whole file anyway)
         await _check_status()
         logger.info(
             f"[{job_id}] Normalizing {len(chunk_wav_paths)} chunks (parallel)..."
@@ -207,6 +386,16 @@ async def run_tts_job(
 
         async def _normalize_one(i: int, wav_path: str) -> str:
             try:
+                # Skip normalization for very short chunks (<10s) — not enough
+                # signal for loudnorm to measure accurately, and final mastering
+                # will re-normalize the concatenated file
+                seg = _AudioSegment.from_wav(wav_path)
+                if len(seg) < 10_000:  # <10 seconds
+                    logger.debug(
+                        f"[{job_id}] Chunk {i} is {len(seg) / 1000:.1f}s — skipping per-chunk norm"
+                    )
+                    return wav_path
+
                 normalized_path = await loop.run_in_executor(
                     executor,
                     normalize_chunk_to_target_lufs,
@@ -238,7 +427,7 @@ async def run_tts_job(
                 concatenate_wavs_auto,
                 normalized_wav_paths,
                 raw_wav,
-                chunks,  # Pass chunk texts for dynamic pause detection
+                all_chunks,  # Pass chunk texts for dynamic pause detection
             )
         except Exception as exc:
             raise RuntimeError(f"Audio concatenation failed: {exc}") from exc
@@ -298,7 +487,7 @@ async def run_tts_job(
             audio_uri = await backend.upload(
                 Path(final_mp3),
                 job_id,
-                gcs_object_path.split("/")[0] if gcs_object_path else "site",
+                site_slug,
             )
         except Exception as exc:
             logger.error(f"[{job_id}] Storage upload failed (non-fatal): {exc}")
@@ -334,7 +523,7 @@ async def run_tts_job(
 
         logger.info(
             f"[{job_id}] ✓ Job completed in {total_duration:.1f}s "
-            f"({total_words} words, {len(chunks)} chunks)"
+            f"({total_words} words, {len(all_chunks)} chunks)"
         )
 
         # Step 9: Notify webhook

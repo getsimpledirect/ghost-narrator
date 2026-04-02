@@ -179,7 +179,7 @@ Response:
 {
   "status": "healthy",
   "device": "cpu",
-  "model": "qwen3-tts-0.6b",
+  "model": "Qwen/Qwen3-TTS-0.6B",
   "voice_sample": true,
   "model_loaded": true,
   "reference_audio_present": true,
@@ -189,7 +189,10 @@ Response:
   "jobs_count": 0,
   "max_workers": 4,
   "executor_active": true,
-  "storage_client_active": true
+  "gcs_client_active": true,
+  "hardware_tier": "cpu_only",
+  "tts_model": "Qwen/Qwen3-TTS-0.6B",
+  "llm_model": "qwen3:1.7b"
 }
 ```
 
@@ -425,11 +428,13 @@ tts-service/
 │   │   └── routes/
 │   │       ├── __init__.py
 │   │       ├── tts.py         # TTS endpoints (generate, status, download)
+│   │       ├── voices.py      # Voice profile endpoints (upload, list, delete)
 │   │       └── health.py      # Health check endpoints
 │   │
 │   ├── core/                  # Core functionality
 │   │   ├── __init__.py
 │   │   ├── exceptions.py      # Custom exception classes
+│   │   ├── hardware.py        # Hardware tier detection + EngineConfig
 │   │   └── tts_engine.py      # Qwen3-TTS engine wrapper
 │   │
 │   ├── models/                # Pydantic schemas
@@ -440,16 +445,30 @@ tts-service/
 │   │   ├── __init__.py
 │   │   ├── audio.py           # Audio concatenation and processing
 │   │   ├── job_store.py       # Redis/in-memory job storage
+│   │   ├── narration/         # LLM narration script generation
+│   │   │   ├── __init__.py
+│   │   │   ├── strategy.py    # ChunkedStrategy + SingleShotStrategy
+│   │   │   ├── prompt.py      # Tier-specific system prompts
+│   │   │   └── validator.py   # NarrationValidator (entity preservation)
 │   │   ├── notification.py    # Webhook notifications (n8n)
-│   │   ├── storage.py         # Storage upload service (local/GCS/S3)
+│   │   ├── storage/           # Pluggable storage backends
+│   │   │   ├── __init__.py    # Factory: get_storage_backend()
+│   │   │   ├── base.py        # StorageBackend ABC
+│   │   │   ├── local.py       # LocalStorage (local:// URIs)
+│   │   │   ├── gcs.py         # GCSStorage (gs:// URIs)
+│   │   │   └── s3.py          # S3Storage (s3:// URIs)
 │   │   ├── synthesis.py       # TTS synthesis orchestration
-│   │   └── tts_job.py         # Background job runner
+│   │   ├── tts_job.py         # Background job runner
+│   │   └── voices/            # Voice profile management
+│   │       ├── __init__.py
+│   │       ├── registry.py    # VoiceRegistry (resolve, list, delete)
+│   │       └── upload.py      # Voice sample validation and save
 │   │
 │   └── utils/                 # Utility functions
 │       ├── __init__.py
 │       └── text.py            # Text chunking utilities
 │
-├── voices/                    # Voice samples directory
+├── voices/                    # Voice samples directory (Docker volume)
 │   └── default/
 │       └── reference.wav      # Your voice sample (not in git)
 │
@@ -465,12 +484,16 @@ tts-service/
 |--------|-------------|
 | `app/main.py` | FastAPI app initialization, lifecycle management |
 | `app/config.py` | Centralized configuration from environment variables |
+| `app/core/hardware.py` | Hardware tier detection and EngineConfig singleton |
 | `app/core/tts_engine.py` | Thread-safe Qwen3-TTS wrapper with singleton pattern |
 | `app/core/exceptions.py` | Domain-specific exception hierarchy |
 | `app/services/job_store.py` | Job persistence with Redis + in-memory fallback |
 | `app/services/synthesis.py` | Parallel/sequential chunk synthesis |
 | `app/services/audio.py` | WAV concatenation with streaming for large files |
-| `app/services/storage.py` | Storage upload (local/GCS/S3) |
+| `app/services/narration/strategy.py` | ChunkedStrategy (CPU/LOW) and SingleShotStrategy (MID/HIGH) |
+| `app/services/narration/validator.py` | Entity-level information preservation check |
+| `app/services/storage/` | Pluggable storage: LocalStorage, GCSStorage, S3Storage |
+| `app/services/voices/registry.py` | Voice profile resolution with backward-compat fallback |
 | `app/services/notification.py` | Webhook callbacks with retry logic |
 | `app/services/tts_job.py` | Complete TTS pipeline orchestration |
 | `app/utils/text.py` | Sentence-boundary text chunking |

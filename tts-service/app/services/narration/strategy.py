@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from abc import ABC, abstractmethod
+from typing import AsyncIterator
 
 from app.core.hardware import HardwareTier
-from app.services.narration.prompt import get_system_prompt, get_continuity_instruction
+from app.services.narration.prompt import (
+    get_system_prompt,
+    get_continuity_instruction,
+    get_completeness_check_prompt,
+)
 from app.services.narration.validator import NarrationValidator
 
 logger = logging.getLogger(__name__)
@@ -14,37 +21,75 @@ logger = logging.getLogger(__name__)
 _validator = NarrationValidator()
 
 
-def _split_into_chunks(text: str, chunk_words: int) -> list[str]:
-    """Split text at paragraph boundaries, targeting chunk_words per chunk."""
+def _split_into_chunks(
+    text: str, chunk_words: int, overlap_paragraphs: int = 1
+) -> list[str]:
+    """Split text at paragraph boundaries with optional overlap.
+
+    Args:
+        text: Full text to split.
+        chunk_words: Target words per chunk.
+        overlap_paragraphs: Number of paragraphs to repeat at chunk boundaries
+            so the LLM has context from the previous chunk's end.
+
+    Returns:
+        List of text chunks with overlapping paragraphs at boundaries.
+    """
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks: list[str] = []
+    if len(paragraphs) <= 1:
+        return [text]
+
+    raw_chunks: list[list[str]] = []
     current: list[str] = []
     current_words = 0
+
     for para in paragraphs:
         para_words = len(para.split())
         if current_words + para_words > chunk_words and current:
-            chunks.append("\n\n".join(current))
+            raw_chunks.append(current)
             current = [para]
             current_words = para_words
         else:
             current.append(para)
             current_words += para_words
     if current:
-        chunks.append("\n\n".join(current))
-    return chunks or [text]
+        raw_chunks.append(current)
+
+    if len(raw_chunks) <= 1:
+        return ["\n\n".join(raw_chunks[0])] if raw_chunks else [text]
+
+    # Add overlap: prepend last N paragraphs from previous chunk
+    chunks: list[str] = []
+    for i, chunk_paras in enumerate(raw_chunks):
+        if i > 0 and overlap_paragraphs > 0:
+            overlap = raw_chunks[i - 1][-overlap_paragraphs:]
+            chunk_paras = overlap + chunk_paras
+        chunks.append("\n\n".join(chunk_paras))
+
+    return chunks
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.?!]) +")
 
 
 def _tail_sentences(text: str, n: int = 3) -> str:
     """Return last n sentences of text for continuity seeding."""
-    sentences = [s.strip() for s in text.replace("\n", " ").split(". ") if s.strip()]
-    return ". ".join(sentences[-n:]) + ("." if sentences else "")
+    sentences = [
+        s.strip()
+        for s in _SENTENCE_SPLIT_RE.split(text.replace("\n", " "))
+        if s.strip()
+    ]
+    return " ".join(sentences[-n:])
 
 
-async def _call_llm(client, messages: list[dict], model: str) -> str:
+async def _call_llm(
+    client, messages: list[dict], model: str, timeout: float = 120.0
+) -> str:
     response = await client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=0.3,
+        timeout=timeout,
     )
     return response.choices[0].message.content.strip()
 
@@ -52,6 +97,14 @@ async def _call_llm(client, messages: list[dict], model: str) -> str:
 class NarrationStrategy(ABC):
     @abstractmethod
     async def narrate(self, text: str) -> str: ...
+
+    async def narrate_iter(self, text: str) -> AsyncIterator[str]:
+        """Yield narrated chunks as they complete (for pipelining with TTS).
+
+        Default implementation: narrate everything, then yield as one chunk.
+        ChunkedStrategy overrides this to yield each chunk as it's ready.
+        """
+        yield await self.narrate(text)
 
 
 class ChunkedStrategy(NarrationStrategy):
@@ -64,8 +117,12 @@ class ChunkedStrategy(NarrationStrategy):
         self._model = model
         self._system_prompt = get_system_prompt(tier)
 
-    async def _narrate_chunk(self, chunk: str, previous_tail: str) -> str:
-        continuity = get_continuity_instruction(previous_tail)
+    async def _narrate_chunk(
+        self, chunk: str, previous_output_tail: str, previous_source_tail: str = ""
+    ) -> str:
+        continuity = get_continuity_instruction(
+            previous_output_tail, previous_source_tail
+        )
         messages = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": chunk + continuity},
@@ -83,15 +140,83 @@ class ChunkedStrategy(NarrationStrategy):
             result = await _call_llm(self._client, messages, self._model)
         return result
 
+    async def _llm_completeness_check(self, source: str, narration: str) -> str:
+        """Run LLM-based completeness verification (HIGH_VRAM only).
+
+        Returns narration with corrections if issues found, or original narration.
+        """
+        messages = get_completeness_check_prompt(source, narration)
+        try:
+            raw = await _call_llm(self._client, messages, self._model, timeout=60.0)
+            # Parse JSON array from response
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```(?:json)?\s*", "", raw)
+                raw = re.sub(r"\s*```$", "", raw)
+            missing = json.loads(raw)
+            if isinstance(missing, list) and missing:
+                logger.warning(
+                    "LLM completeness check found %d issues: %s",
+                    len(missing),
+                    missing[:3],
+                )
+                # Re-narrate with explicit missing items
+                fix_messages = [
+                    {"role": "system", "content": self._system_prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Your previous narration was missing these items:\n"
+                            + "\n".join(f"- {item}" for item in missing)
+                            + f"\n\nRewrite the narration for this source, "
+                            f"ensuring all items above are included:\n\n{source}"
+                        ),
+                    },
+                ]
+                return await _call_llm(self._client, fix_messages, self._model)
+        except (json.JSONDecodeError, Exception) as exc:
+            logger.debug("LLM completeness check skipped: %s", exc)
+        return narration
+
     async def narrate(self, text: str) -> str:
         chunks = _split_into_chunks(text, self._chunk_words)
         outputs: list[str] = []
-        previous_tail = ""
+        previous_output_tail = ""
+        previous_source_tail = ""
         for chunk in chunks:
-            output = await self._narrate_chunk(chunk, previous_tail)
+            output = await self._narrate_chunk(
+                chunk, previous_output_tail, previous_source_tail
+            )
             outputs.append(output)
-            previous_tail = _tail_sentences(output)
-        return "\n\n".join(outputs)
+            previous_output_tail = _tail_sentences(output)
+            previous_source_tail = _tail_sentences(chunk)
+
+        full_narration = "\n\n".join(outputs)
+
+        # Layer 4: LLM completeness check — HIGH_VRAM only
+        if self._tier == HardwareTier.HIGH_VRAM:
+            logger.info("Running LLM completeness check (HIGH_VRAM)...")
+            full_narration = await self._llm_completeness_check(text, full_narration)
+
+        return full_narration
+
+    async def narrate_iter(self, text: str) -> AsyncIterator[str]:
+        """Yield each narrated chunk as it completes for pipelining with TTS.
+
+        Note: LLM completeness check is skipped in iter mode since chunks
+        are consumed immediately by TTS. Full narrate() should be used when
+        completeness checking is needed.
+        """
+        chunks = _split_into_chunks(text, self._chunk_words)
+        previous_output_tail = ""
+        previous_source_tail = ""
+        for chunk in chunks:
+            output = await self._narrate_chunk(
+                chunk, previous_output_tail, previous_source_tail
+            )
+            previous_output_tail = _tail_sentences(output)
+            previous_source_tail = _tail_sentences(chunk)
+            yield output
 
 
 class SingleShotStrategy(NarrationStrategy):
