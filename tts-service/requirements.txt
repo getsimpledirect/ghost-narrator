@@ -52,7 +52,7 @@ python-dotenv>=0.13
 
 # ── Audio Processing ───────────────────────────────────────────────────────────
 pydub==0.25.1
-soundfile==0.12.1
+soundfile==0.13.1
 librosa==0.10.2
 resampy>=0.4.3
 audioread>=2.1.9
