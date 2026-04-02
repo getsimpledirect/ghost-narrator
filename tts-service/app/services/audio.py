@@ -134,10 +134,11 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
 
     Processing chain:
     1. Trim leading silence to max 0.2s
-    2. EBU R128 loudness normalization to -16 LUFS (podcast standard)
+    2. Two-pass EBU R128 loudness normalization to target LUFS
+       (first pass measures, second pass applies correction)
     3. True peak limiting to -1.0 dBFS (prevents clipping on playback)
-    4. Upsample to 44100 Hz (if needed)
-    5. Export at 128kbps MP3
+    4. Upsample to target sample rate (if needed)
+    5. Export at configured MP3 bitrate
 
     Hardware note: All ffmpeg operations, no GPU required.
     Typical processing time: 5-15 seconds for a 15-minute file on 4 vCPUs.
@@ -150,6 +151,75 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
         True if mastering succeeded, False otherwise.
     """
     try:
+        # ── Pass 1: Measure loudness stats ────────────────────────────────
+        measure_result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_mp3_path,
+                "-af",
+                (
+                    "silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,"
+                    f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:print_format=json"
+                ),
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        # Parse measured values from stderr JSON output
+        measured_i = measured_tp = measured_lra = measured_thresh = None
+        measured_offset = target_offset = None
+        stderr = measure_result.stderr
+
+        try:
+            # Find the JSON block at the end of stderr
+            json_start = stderr.rfind("{")
+            json_end = stderr.rfind("}") + 1
+            if json_start != -1 and json_end > json_start:
+                import json
+
+                stats = json.loads(stderr[json_start:json_end])
+                measured_i = stats.get("input_i")
+                measured_tp = stats.get("input_tp")
+                measured_lra = stats.get("input_lra")
+                measured_thresh = stats.get("input_thresh")
+                measured_offset = stats.get("target_offset")
+        except (json.JSONDecodeError, KeyError, ValueError):
+            logger.warning(
+                "Could not parse loudnorm stats — falling back to single-pass"
+            )
+
+        # ── Pass 2: Apply correction with measured values ─────────────────
+        if all(
+            v is not None
+            for v in (
+                measured_i,
+                measured_tp,
+                measured_lra,
+                measured_thresh,
+                measured_offset,
+            )
+        ):
+            loudnorm_filter = (
+                f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:"
+                f"measured_I={measured_i}:measured_TP={measured_tp}:"
+                f"measured_LRA={measured_lra}:measured_thresh={measured_thresh}:"
+                f"offset={measured_offset}:linear=true:print_format=none"
+            )
+            logger.debug("Using two-pass loudnorm with measured values")
+        else:
+            # Fallback to single-pass if measurement failed
+            loudnorm_filter = (
+                f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:print_format=none"
+            )
+            logger.debug("Falling back to single-pass loudnorm")
+
         result = subprocess.run(
             [
                 "ffmpeg",
@@ -160,8 +230,8 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
                 (
                     # Step 1: Remove leading silence (max 0.2s pre-roll)
                     "silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,"
-                    # Step 2: EBU R128 loudness normalization
-                    f"loudnorm=I={TARGET_LUFS}:TP=-1.0:LRA=8:print_format=none,"
+                    # Step 2: EBU R128 loudness normalization (two-pass if available)
+                    f"{loudnorm_filter},"
                     # Step 3: Hard limiter as safety net
                     "alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled"
                 ),

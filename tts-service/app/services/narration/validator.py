@@ -15,7 +15,7 @@ class ValidationResult:
 class NarrationValidator:
     """Verifies that key entities from source appear in narration output.
 
-    Extracts: numbers/percentages, quoted strings, dollar amounts.
+    Extracts: numbers/percentages, quoted strings, dollar amounts, proper nouns.
     Fast regex matching — no LLM calls.
     """
 
@@ -24,11 +24,30 @@ class NarrationValidator:
         re.IGNORECASE,
     )
     _QUOTE_RE = re.compile(r'"([^"]{4,})"')
+    # Proper nouns: capitalized words not at sentence start, or multi-word names
+    _PROPER_NOUN_RE = re.compile(
+        r"(?<!\. )(?<!\! )(?<!\? )(?<=[a-z,;:] )([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)"
+        r"|(?<=[a-z,;:] )([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)+)"
+    )
+    # Also catch standalone capitalized words mid-sentence (e.g., "by Musk", "from OpenAI")
+    _SINGLE_PROPER_RE = re.compile(
+        r"(?<= )(?:by|from|at|for|of|with|via|to|and|or|the) ([A-Z][a-zA-Z]{2,})(?=[ ,.;:!?])"
+    )
 
     def _extract_entities(self, text: str) -> list[str]:
         entities = []
         entities.extend(self._NUMBER_RE.findall(text))
         entities.extend(self._QUOTE_RE.findall(text))
+        # Extract multi-word proper nouns
+        for match in self._PROPER_NOUN_RE.finditer(text):
+            name = match.group(1) or match.group(2)
+            if name and len(name) > 3:
+                entities.append(name)
+        # Extract single proper nouns after prepositions
+        for match in self._SINGLE_PROPER_RE.finditer(text):
+            name = match.group(1)
+            if name and len(name) > 3:
+                entities.append(name)
         return [e.strip() for e in entities if e.strip()]
 
     def validate(self, source: str, narration: str) -> ValidationResult:

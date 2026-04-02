@@ -25,18 +25,37 @@ _PACING_ADDON = """
 
 
 def get_system_prompt(tier: HardwareTier) -> str:
-    """Return the system prompt appropriate for the given hardware tier."""
-    if tier == HardwareTier.HIGH_VRAM:
+    """Return the system prompt appropriate for the given hardware tier.
+
+    MID_VRAM and HIGH_VRAM both use qwen3:8b-q4, so they get the full prompt
+    with pacing instructions. CPU_ONLY and LOW_VRAM use smaller models and
+    get the simpler base prompt.
+    """
+    if tier in (HardwareTier.MID_VRAM, HardwareTier.HIGH_VRAM):
         return _BASE_PROMPT + _PACING_ADDON
     return _BASE_PROMPT
 
 
-def get_continuity_instruction(previous_tail: str) -> str:
-    """Return instruction to maintain stylistic continuity with previous chunk output."""
-    if not previous_tail.strip():
+def get_continuity_instruction(
+    previous_output_tail: str, previous_source_tail: str = ""
+) -> str:
+    """Return instruction to maintain stylistic and positional continuity.
+
+    Args:
+        previous_output_tail: Last sentences of the previous narration output.
+        previous_source_tail: Last sentences of the previous source chunk.
+    """
+    if not previous_output_tail.strip():
         return ""
-    return (
+    parts = [
         f"\n\nContinuity context — your previous output ended with:\n"
-        f'"{previous_tail}"\n'
+        f'"{previous_output_tail}"\n'
         f"Begin your output in a way that flows naturally from this."
-    )
+    ]
+    if previous_source_tail.strip():
+        parts.append(
+            f"\nThe source article chunk you just processed ended with:\n"
+            f'"{previous_source_tail}"\n'
+            f"Ensure you pick up from where the source left off — do not repeat or skip content."
+        )
+    return "\n".join(parts)

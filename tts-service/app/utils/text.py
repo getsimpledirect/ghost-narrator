@@ -39,22 +39,32 @@ logger = logging.getLogger(__name__)
 # Default maximum words per chunk (40-60 words = 8-12 second audio segments)
 DEFAULT_MAX_CHUNK_WORDS: Final[int] = 200
 
-# Transition words that suggest a new topic/paragraph boundary
+# Transition words that suggest a new topic/paragraph boundary.
+# Only genuine topic-transition openers — not common sentence starters like
+# "the", "for", "so", "if", "this" which match nearly every sentence.
 _TRANSITION_STARTERS: Final[tuple[str, ...]] = (
     "now,",
-    "but ",
-    "so ",
-    "here",
-    "this",
-    "the ",
-    "when",
-    "if ",
-    "what",
-    "think",
-    "there",
-    "at the",
-    "in the",
-    "for ",
+    "however",
+    "meanwhile",
+    "turning to",
+    "on the other hand",
+    "in other news",
+    "speaking of",
+    "that said",
+    "moving on",
+    "in contrast",
+    "furthermore",
+    "moreover",
+    "additionally",
+    "but despite",
+    "yet despite",
+    "looking ahead",
+    "in summary",
+    "to summarize",
+    "finally,",
+    "lastly,",
+    "in other words",
+    "put another way",
 )
 
 

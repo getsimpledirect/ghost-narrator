@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from pathlib import Path
@@ -153,6 +154,17 @@ class TTSEngine:
 
 _engine: Optional[TTSEngine] = None
 _engine_lock = threading.Lock()
+_engine_ready_event: Optional[asyncio.Event] = None
+_event_lock = threading.Lock()
+
+
+def get_engine_ready_event() -> asyncio.Event:
+    """Return an asyncio.Event that is set when the TTS engine is ready."""
+    global _engine_ready_event
+    with _event_lock:
+        if _engine_ready_event is None:
+            _engine_ready_event = asyncio.Event()
+        return _engine_ready_event
 
 
 def get_tts_engine() -> TTSEngine:
@@ -167,3 +179,13 @@ def initialize_tts_engine() -> None:
     """Initialize the TTS engine. Called from main.py lifespan."""
     engine = get_tts_engine()
     engine.initialize()
+    # Signal any coroutines waiting on engine readiness
+    try:
+        event = get_engine_ready_event()
+        # The event must be set from the event loop thread, so we use call_soon_threadsafe
+        # However, since this is called from the main thread during lifespan, we can set directly
+        if not event.is_set():
+            event.set()
+    except RuntimeError:
+        # No running event loop yet — will be set on first job's check
+        pass

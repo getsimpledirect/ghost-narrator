@@ -129,6 +129,7 @@ async def synthesize_chunks_sequential(
     job_dir: Path,
     job_id: str,
     status_check_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None,
+    chunk_offset: int = 0,
 ) -> list[str]:
     """
     Synthesize multiple chunks sequentially.
@@ -139,6 +140,7 @@ async def synthesize_chunks_sequential(
         chunks: List of text chunks to synthesize.
         job_dir: Directory for output chunk files.
         job_id: Job identifier for logging.
+        chunk_offset: Starting index for chunk file naming (for pipelined synthesis).
 
     Returns:
         List of paths to generated WAV files.
@@ -163,7 +165,7 @@ async def synthesize_chunks_sequential(
         if status_check_callback:
             await status_check_callback()
 
-        chunk_wav = str(job_dir / f"chunk_{idx:04d}.wav")
+        chunk_wav = str(job_dir / f"chunk_{chunk_offset + idx:04d}.wav")
         word_count = len(chunk.split())
 
         logger.info(
@@ -195,6 +197,7 @@ async def synthesize_chunks_parallel(
     job_dir: Path,
     job_id: str,
     status_check_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None,
+    chunk_offset: int = 0,
 ) -> list[str]:
     """
     Synthesize multiple chunks in parallel using thread pool.
@@ -205,6 +208,7 @@ async def synthesize_chunks_parallel(
         chunks: List of text chunks to synthesize.
         job_dir: Directory for output chunk files.
         job_id: Job identifier for logging.
+        chunk_offset: Starting index for chunk file naming (for pipelined synthesis).
 
     Returns:
         List of paths to generated WAV files (in order).
@@ -223,38 +227,48 @@ async def synthesize_chunks_parallel(
 
     loop = asyncio.get_running_loop()
 
-    # Check job status before starting batch
-    if status_check_callback:
-        await status_check_callback()
+    # Dispatch in batches of synthesis_workers so cancellation is checked between batches
+    workers = ENGINE_CONFIG.synthesis_workers
+    chunk_wav_paths: list[str] = []
 
-    tasks: list[asyncio.Future[str]] = []
+    for batch_start in range(0, len(chunks), workers):
+        # Check job status before each batch
+        if status_check_callback:
+            await status_check_callback()
 
-    for idx, chunk in enumerate(chunks):
-        chunk_wav = str(job_dir / f"chunk_{idx:04d}.wav")
-        task = loop.run_in_executor(
-            _executor, synthesize_chunk, chunk, chunk_wav, job_id
+        batch = chunks[batch_start : batch_start + workers]
+        tasks: list[asyncio.Future[str]] = []
+
+        for offset, chunk in enumerate(batch):
+            idx = batch_start + offset
+            chunk_wav = str(job_dir / f"chunk_{chunk_offset + idx:04d}.wav")
+            task = loop.run_in_executor(
+                _executor, synthesize_chunk, chunk, chunk_wav, job_id
+            )
+            tasks.append(task)
+
+        logger.info(
+            f"[{job_id}] Synthesizing batch {batch_start // workers + 1} "
+            f"({len(batch)} chunks)"
         )
-        tasks.append(task)
 
-    logger.info(f"[{job_id}] Starting parallel synthesis of {len(chunks)} chunks")
+        try:
+            batch_paths = await asyncio.gather(*tasks, return_exceptions=False)
+            chunk_wav_paths.extend(batch_paths)
+        except Exception as exc:
+            # Cancel any remaining tasks and wait for them to finish cancelling
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-    try:
-        chunk_wav_paths = await asyncio.gather(*tasks, return_exceptions=False)
-        logger.info(f"[{job_id}] Parallel synthesis complete")
-        return list(chunk_wav_paths)
+            raise SynthesisError(
+                f"Parallel synthesis failed at batch starting chunk {batch_start}",
+                details=str(exc),
+            ) from exc
 
-    except Exception as exc:
-        # Cancel any remaining tasks and wait for them to finish cancelling
-        # to avoid "coroutine was never awaited" warnings and resource leaks.
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-        raise SynthesisError(
-            "Parallel synthesis failed",
-            details=str(exc),
-        ) from exc
+    logger.info(f"[{job_id}] Parallel synthesis complete - {len(chunks)} chunks")
+    return chunk_wav_paths
 
 
 async def synthesize_chunks_auto(
@@ -263,6 +277,7 @@ async def synthesize_chunks_auto(
     job_id: str,
     device: Optional[str] = None,
     status_check_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None,
+    chunk_offset: int = 0,
 ) -> list[str]:
     """
     Automatically choose the best synthesis strategy based on EngineConfig.
@@ -275,6 +290,7 @@ async def synthesize_chunks_auto(
         job_dir: Directory for output chunk files.
         job_id: Job identifier for logging.
         device: Device type (cpu, cuda). Defaults to config DEVICE.
+        chunk_offset: Starting index for chunk file naming (for pipelined synthesis).
 
     Returns:
         List of paths to generated WAV files.
@@ -290,7 +306,7 @@ async def synthesize_chunks_auto(
             f"(workers={workers})"
         )
         return await synthesize_chunks_sequential(
-            chunks, job_dir, job_id, status_check_callback
+            chunks, job_dir, job_id, status_check_callback, chunk_offset
         )
     else:
         logger.debug(
@@ -298,7 +314,7 @@ async def synthesize_chunks_auto(
             f"with {workers} workers"
         )
         return await synthesize_chunks_parallel(
-            chunks, job_dir, job_id, status_check_callback
+            chunks, job_dir, job_id, status_check_callback, chunk_offset
         )
 
 

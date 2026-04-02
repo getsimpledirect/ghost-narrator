@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from abc import ABC, abstractmethod
+from typing import AsyncIterator
 
 from app.core.hardware import HardwareTier
 from app.services.narration.prompt import get_system_prompt, get_continuity_instruction
@@ -58,6 +59,14 @@ class NarrationStrategy(ABC):
     @abstractmethod
     async def narrate(self, text: str) -> str: ...
 
+    async def narrate_iter(self, text: str) -> AsyncIterator[str]:
+        """Yield narrated chunks as they complete (for pipelining with TTS).
+
+        Default implementation: narrate everything, then yield as one chunk.
+        ChunkedStrategy overrides this to yield each chunk as it's ready.
+        """
+        yield await self.narrate(text)
+
 
 class ChunkedStrategy(NarrationStrategy):
     def __init__(
@@ -69,8 +78,12 @@ class ChunkedStrategy(NarrationStrategy):
         self._model = model
         self._system_prompt = get_system_prompt(tier)
 
-    async def _narrate_chunk(self, chunk: str, previous_tail: str) -> str:
-        continuity = get_continuity_instruction(previous_tail)
+    async def _narrate_chunk(
+        self, chunk: str, previous_output_tail: str, previous_source_tail: str = ""
+    ) -> str:
+        continuity = get_continuity_instruction(
+            previous_output_tail, previous_source_tail
+        )
         messages = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": chunk + continuity},
@@ -91,12 +104,29 @@ class ChunkedStrategy(NarrationStrategy):
     async def narrate(self, text: str) -> str:
         chunks = _split_into_chunks(text, self._chunk_words)
         outputs: list[str] = []
-        previous_tail = ""
+        previous_output_tail = ""
+        previous_source_tail = ""
         for chunk in chunks:
-            output = await self._narrate_chunk(chunk, previous_tail)
+            output = await self._narrate_chunk(
+                chunk, previous_output_tail, previous_source_tail
+            )
             outputs.append(output)
-            previous_tail = _tail_sentences(output)
+            previous_output_tail = _tail_sentences(output)
+            previous_source_tail = _tail_sentences(chunk)
         return "\n\n".join(outputs)
+
+    async def narrate_iter(self, text: str) -> AsyncIterator[str]:
+        """Yield each narrated chunk as it completes for pipelining with TTS."""
+        chunks = _split_into_chunks(text, self._chunk_words)
+        previous_output_tail = ""
+        previous_source_tail = ""
+        for chunk in chunks:
+            output = await self._narrate_chunk(
+                chunk, previous_output_tail, previous_source_tail
+            )
+            previous_output_tail = _tail_sentences(output)
+            previous_source_tail = _tail_sentences(chunk)
+            yield output
 
 
 class SingleShotStrategy(NarrationStrategy):
