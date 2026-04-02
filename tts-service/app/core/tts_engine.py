@@ -58,6 +58,7 @@ class TTSEngine:
                     instance._model: Optional[QwenTTS] = None
                     instance._ready = False
                     instance._lock = threading.Lock()
+                    instance._synthesis_lock = threading.Lock()  # serialises GPU inference
                     instance._cancelled_jobs: set[str] = set()
                     cls._instance = instance
         return cls._instance
@@ -132,9 +133,10 @@ class TTSEngine:
             raise SynthesisError(f"Job {actual_job_id} was cancelled")
 
         try:
-            self._model.load_reference(str(voice_path))
-            audio_data = self._model.synthesize(text)
-            self._model.save_wav(audio_data, str(output_path))
+            with self._synthesis_lock:
+                self._model.load_reference(str(voice_path))
+                audio_data = self._model.synthesize(text)
+                self._model.save_wav(audio_data, str(output_path))
             return str(output_path)
         except SynthesisError:
             raise

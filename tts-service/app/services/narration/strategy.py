@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 
 from app.core.hardware import HardwareTier
@@ -34,17 +35,21 @@ def _split_into_chunks(text: str, chunk_words: int) -> list[str]:
     return chunks or [text]
 
 
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.?!]) +")
+
+
 def _tail_sentences(text: str, n: int = 3) -> str:
     """Return last n sentences of text for continuity seeding."""
-    sentences = [s.strip() for s in text.replace("\n", " ").split(". ") if s.strip()]
-    return ". ".join(sentences[-n:]) + ("." if sentences else "")
+    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text.replace("\n", " ")) if s.strip()]
+    return " ".join(sentences[-n:])
 
 
-async def _call_llm(client, messages: list[dict], model: str) -> str:
+async def _call_llm(client, messages: list[dict], model: str, timeout: float = 120.0) -> str:
     response = await client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=0.3,
+        timeout=timeout,
     )
     return response.choices[0].message.content.strip()
 

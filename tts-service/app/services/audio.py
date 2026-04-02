@@ -173,8 +173,6 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
                 "libmp3lame",
                 "-b:a",
                 MP3_BITRATE,  # From ENGINE_CONFIG tier
-                "-q:a",
-                "2",  # High quality VBR as backup
                 output_mp3_path,
             ],
             capture_output=True,
@@ -243,10 +241,10 @@ def validate_audio_quality(mp3_path: str) -> dict:
                 try:
                     lufs = float(line.split("I:")[1].split("LUFS")[0].strip())
                     results["integrated_lufs"] = lufs
-                    if not (-18 <= lufs <= -14):
+                    if not (TARGET_LUFS - 2 <= lufs <= TARGET_LUFS + 2):
                         logger.warning(
                             f"Integrated loudness {lufs:.1f} LUFS "
-                            f"outside target range -18 to -14 LUFS"
+                            f"outside target range {TARGET_LUFS - 2:.0f} to {TARGET_LUFS + 2:.0f} LUFS"
                         )
                 except (ValueError, IndexError):
                     pass

@@ -93,7 +93,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_strategy="single_shot",
         narration_chunk_words=9999,  # no fallback on HIGH_VRAM
         tts_chunk_words=200,
-        synthesis_workers=2,
+        synthesis_workers=1,
         mp3_bitrate="256k",
         sample_rate=48000,
         target_lufs=-14.0,
@@ -109,7 +109,7 @@ def _probe_tier() -> HardwareTier:
     vram = torch.cuda.get_device_properties(0).total_memory
     vram_gb = vram / _GB
     logger.info("CUDA device detected — %.1f GB VRAM", vram_gb)
-    if vram_gb < 9:
+    if vram_gb < 10:
         return HardwareTier.LOW_VRAM
     if vram_gb < 18:
         return HardwareTier.MID_VRAM

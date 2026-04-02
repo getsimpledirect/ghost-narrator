@@ -20,7 +20,7 @@ class NarrationValidator:
     """
 
     _NUMBER_RE = re.compile(
-        r"\b\d+(?:\.\d+)?%|\$[\d,.]+|\b\d{4}\b|\b\d+(?:\.\d+)?\s*(?:billion|million|trillion|thousand)\b",
+        r"\b\d+(?:\.\d+)?%|\$[\d,.]+|\b\d+(?:\.\d+)?\s*(?:billion|million|trillion|thousand)\b",
         re.IGNORECASE,
     )
     _QUOTE_RE = re.compile(r'"([^"]{4,})"')

@@ -33,6 +33,18 @@ def test_low_vram_when_6gb():
     assert config.synthesis_workers == 1
 
 
+def test_low_vram_when_9gb():
+    """9 GB is below the 10 GB MID_VRAM threshold."""
+    with patch("app.core.hardware.torch") as mock_torch:
+        mock_torch.cuda.is_available.return_value = True
+        props = MagicMock()
+        props.total_memory = 9 * 1024**3  # 9 GB
+        mock_torch.cuda.get_device_properties.return_value = props
+        config = get_engine_config()
+    assert config.tier == HardwareTier.LOW_VRAM
+    assert config.tts_model == "Qwen/Qwen3-TTS-0.6B"
+
+
 def test_mid_vram_when_12gb():
     with patch("app.core.hardware.torch") as mock_torch:
         mock_torch.cuda.is_available.return_value = True
@@ -56,7 +68,7 @@ def test_high_vram_when_24gb():
     assert config.tier == HardwareTier.HIGH_VRAM
     assert config.tts_model == "Qwen/Qwen3-TTS-1.7B"
     assert config.llm_model == "qwen3:8b-q4"
-    assert config.synthesis_workers == 2
+    assert config.synthesis_workers == 1
     assert config.mp3_bitrate == "256k"
     assert config.sample_rate == 48000
     assert config.target_lufs == -14.0
