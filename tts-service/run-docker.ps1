@@ -297,7 +297,7 @@ if ($Detached) {
     Write-Host "  View logs:     .\run-docker.ps1 -Logs"
     Write-Host "  Stop service:  .\run-docker.ps1 -Stop"
     Write-Host ""
-    Write-Info "Note: First run will download ~4GB Fish Speech v1.5 models (cached for future runs)."
+    Write-Info "Note: First run will download ~4GB Qwen3-TTS models (cached for future runs)."
 }
 else {
     $runArgs += "-it"

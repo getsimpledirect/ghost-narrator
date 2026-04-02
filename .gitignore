@@ -16,6 +16,13 @@ secrets/
 tts-service/voices/*
 !tts-service/voices/.gitkeep
 
+# Voice profiles (may contain sensitive voice data)
+tts-service/voices/profiles/*.wav
+tts-service/voices/default/reference.wav
+
+# Hardware probe output
+shared/
+
 # ─── Runtime data ─────────────────────────────────────────────────────────────
 tts-service/output/
 n8n/data/
@@ -70,6 +77,9 @@ desktop.ini
 
 # ─── Git Worktrees ────────────────────────────────────────────────────────────
 .worktrees/
+
+# ─── Internal workflow artifacts (superpowers plans/specs — not for public repo) ─
+docs/superpowers/
 
 # ─── Test / Coverage ──────────────────────────────────────────────────────────
 .coverage

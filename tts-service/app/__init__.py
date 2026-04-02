@@ -21,9 +21,7 @@
 # SOFTWARE.
 
 """
-Voice-Cloning Text-to-Speech REST API.
-
-Built on Fish Speech v1.5 + FastAPI.
+Ghost Narrator TTS Service — Qwen3-TTS voice cloning with hardware-tiered model selection.
 """
 
 __version__ = "2.0.0"

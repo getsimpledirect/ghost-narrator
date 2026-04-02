@@ -57,6 +57,11 @@ class GenerateRequest(BaseModel):
         max_length=100,
         description="Site identifier for GCS path generation. Defaults to 'site'.",
     )
+    voice_profile: str = Field(
+        default="default",
+        max_length=100,
+        description="Name of voice profile to use for cloning. Defaults to 'default'.",
+    )
 
     @field_validator("text")
     @classmethod
@@ -151,6 +156,15 @@ class HealthResponse(BaseModel):
         False, description="Reference token file (reference_vq_tokens.npy) exists."
     )
     tts_engine_ready: bool = Field(False, description="TTSEngine reported ready.")
+    hardware_tier: Optional[str] = Field(
+        default=None, description="Detected hardware tier."
+    )
+    tts_model: Optional[str] = Field(
+        default=None, description="Selected TTS model name."
+    )
+    llm_model: Optional[str] = Field(
+        default=None, description="Selected LLM model name."
+    )
 
 
 class ErrorResponse(BaseModel):

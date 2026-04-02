@@ -33,23 +33,66 @@ import re
 from pathlib import Path
 from typing import Final
 
+from app.core.hardware import ENGINE_CONFIG  # noqa: E402
+
 
 # Voice and TTS settings
 VOICE_SAMPLE_PATH: Final[str] = os.environ.get(
     "VOICE_SAMPLE_PATH", "/app/voices/reference.wav"
 )
 TTS_LANGUAGE: Final[str] = os.environ.get("TTS_LANGUAGE", "en")
-try:
-    MAX_CHUNK_WORDS: Final[int] = max(
-        10, min(int(os.environ.get("MAX_CHUNK_WORDS", "200")), 1000)
-    )
-except ValueError:
-    MAX_CHUNK_WORDS: Final[int] = 200
-DEVICE: Final[str] = os.environ.get("DEVICE", "cuda")
 
-# Google Cloud Storage settings
+# Hardware tier (read from ENGINE_CONFIG — set at startup)
+HARDWARE_TIER: Final[str] = ENGINE_CONFIG.tier.value
+SELECTED_TTS_MODEL: Final[str] = ENGINE_CONFIG.tts_model
+SELECTED_LLM_MODEL: Final[str] = ENGINE_CONFIG.llm_model
+
+# Override DEVICE from engine config (replaces static env var)
+DEVICE: Final[str] = ENGINE_CONFIG.tts_device
+
+# Narration LLM endpoint (Ollama default; override for external vLLM)
+LLM_BASE_URL: Final[str] = os.environ.get("LLM_BASE_URL", "http://ollama:11434/v1")
+LLM_MODEL_NAME: Final[str] = os.environ.get("LLM_MODEL_NAME", ENGINE_CONFIG.llm_model)
+
+# Storage backend
+STORAGE_BACKEND: Final[str] = os.environ.get("STORAGE_BACKEND", "local").lower()
+
+# S3 settings (used when STORAGE_BACKEND=s3)
+AWS_ACCESS_KEY_ID: Final[str] = os.environ.get("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY: Final[str] = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+AWS_REGION: Final[str] = os.environ.get("AWS_REGION", "us-east-1")
+S3_BUCKET_NAME: Final[str] = os.environ.get("S3_BUCKET_NAME", "")
+S3_AUDIO_PREFIX: Final[str] = os.environ.get("S3_AUDIO_PREFIX", "audio/articles")
+
+# GCS service account key (optional — leave blank for ADC)
+GCS_SERVICE_ACCOUNT_KEY_PATH: Final[str] = os.environ.get(
+    "GCS_SERVICE_ACCOUNT_KEY_PATH", ""
+)
+
+# GCS bucket settings (used when STORAGE_BACKEND=gcs)
 GCS_BUCKET_NAME: Final[str] = os.environ.get("GCS_BUCKET_NAME", "")
 GCS_AUDIO_PREFIX: Final[str] = os.environ.get("GCS_AUDIO_PREFIX", "audio/articles")
+
+# Audio quality (from ENGINE_CONFIG — overridable via env)
+MP3_BITRATE: Final[str] = os.environ.get("MP3_BITRATE", ENGINE_CONFIG.mp3_bitrate)
+AUDIO_SAMPLE_RATE: Final[int] = int(
+    os.environ.get("AUDIO_SAMPLE_RATE", str(ENGINE_CONFIG.sample_rate))
+)
+TARGET_LUFS: Final[float] = float(
+    os.environ.get("TARGET_LUFS", str(ENGINE_CONFIG.target_lufs))
+)
+
+# TTS chunk words (from ENGINE_CONFIG)
+try:
+    MAX_CHUNK_WORDS: Final[int] = max(
+        10,
+        min(
+            int(os.environ.get("MAX_CHUNK_WORDS", str(ENGINE_CONFIG.tts_chunk_words))),
+            1000,
+        ),
+    )
+except ValueError:
+    MAX_CHUNK_WORDS: Final[int] = ENGINE_CONFIG.tts_chunk_words
 
 # Webhook settings
 N8N_CALLBACK_URL: Final[str] = os.environ.get("N8N_CALLBACK_URL", "")
@@ -95,8 +138,7 @@ try:
 except ValueError:
     AUDIO_DECODE_TIMEOUT: Final[int] = 180
 
-# Audio settings
-MP3_BITRATE: Final[str] = "128k"
+# Audio settings (MP3_BITRATE already set from ENGINE_CONFIG above)
 STREAMING_THRESHOLD_MS: Final[int] = 600_000
 
 # HTTP client settings
@@ -110,3 +152,36 @@ MAX_RETRIES: Final[int] = 3
 
 # GCS upload settings
 GCS_UPLOAD_TIMEOUT: Final[int] = 300
+
+# Server external IP (for local storage URLs)
+SERVER_EXTERNAL_IP: Final[str] = os.environ.get("SERVER_EXTERNAL_IP", "localhost")
+
+
+def get_llm_client():
+    """Return async OpenAI-compatible client pointed at Ollama (or override URL)."""
+    from openai import AsyncOpenAI  # Ollama is OpenAI-compatible
+
+    return AsyncOpenAI(base_url=LLM_BASE_URL, api_key="ollama")
+
+
+def get_narration_strategy():
+    """Return the NarrationStrategy for the current hardware tier."""
+    from app.core.hardware import ENGINE_CONFIG, HardwareTier
+    from app.services.narration.strategy import ChunkedStrategy, SingleShotStrategy
+
+    client = get_llm_client()
+    tier = ENGINE_CONFIG.tier
+    if ENGINE_CONFIG.narration_strategy == "chunked":
+        return ChunkedStrategy(
+            llm_client=client,
+            chunk_words=ENGINE_CONFIG.narration_chunk_words,
+            tier=tier,
+            model=LLM_MODEL_NAME,
+        )
+    return SingleShotStrategy(
+        llm_client=client,
+        fallback_threshold_words=3000 if tier == HardwareTier.MID_VRAM else 999999,
+        fallback_chunk_words=ENGINE_CONFIG.narration_chunk_words,
+        tier=tier,
+        model=LLM_MODEL_NAME,
+    )

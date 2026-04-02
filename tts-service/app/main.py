@@ -23,7 +23,7 @@
 """
 Studio-Quality Text-to-Speech REST API.
 
-Built on Fish Speech v1.5 + FastAPI.
+Built on Qwen3-TTS + FastAPI.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.api.routes import health, tts
+from app.api.routes.voices import router as voices_router
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
 from app.core.tts_engine import initialize_tts_engine
 from app.services.job_store import get_job_store, initialize_job_store
@@ -71,16 +72,17 @@ TAGS_METADATA = [
 ]
 
 API_DESCRIPTION = """
-Studio-quality Text-to-Speech API powered by **Fish Speech v1.5** for Ghost CMS.
+Studio-quality Text-to-Speech API powered by **Qwen3-TTS** for Ghost CMS.
 
 ## Features
 
+- Hardware-tiered model selection (CPU/GPU auto-detection)
 - High-fidelity voice cloning (Zero-shot)
+- Information-preserving narration pipeline
+- Flexible storage: local, GCS, AWS S3
 - Natural prosody and breathing
 - Long-form text support (up to 100,000 characters)
-- Google Cloud Storage integration
 - Async job processing with status tracking
-- Automatic reference voice calibration
 """
 
 
@@ -208,6 +210,7 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(tts.router)
+app.include_router(voices_router)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ from typing import Any
 from fastapi import APIRouter, Response
 
 from app.config import DEVICE, MAX_WORKERS, VOICE_SAMPLE_PATH
+from app.core.hardware import ENGINE_CONFIG
 from app.core.tts_engine import get_tts_engine
 from app.models.schemas import HealthResponse
 from app.services.job_store import get_job_store
@@ -77,7 +78,7 @@ async def health() -> HealthResponse:
     return HealthResponse(
         status="healthy" if is_healthy else "degraded",
         device=DEVICE,
-        model="fish-speech-1.5",
+        model=ENGINE_CONFIG.tts_model,
         voice_sample=voice_ok,
         model_loaded=model_ok,
         reference_audio_present=reference_audio_present,
@@ -88,6 +89,9 @@ async def health() -> HealthResponse:
         max_workers=MAX_WORKERS,
         executor_active=executor is not None,
         gcs_client_active=gcs_client is not None,
+        hardware_tier=ENGINE_CONFIG.tier.value,
+        tts_model=ENGINE_CONFIG.tts_model,
+        llm_model=ENGINE_CONFIG.llm_model,
     )
 
 

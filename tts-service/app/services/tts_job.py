@@ -46,9 +46,9 @@ from app.core.exceptions import (
     SynthesisError,
     StorageError,
     AudioProcessingError,
-    GCSUploadError,
+    StorageUploadError,
 )
-from app.config import DEVICE, GCS_BUCKET_NAME, MAX_CHUNK_WORDS, OUTPUT_DIR
+from app.config import DEVICE, GCS_BUCKET_NAME, MAX_CHUNK_WORDS, MP3_BITRATE, OUTPUT_DIR
 from app.services.audio import (
     apply_final_mastering,
     concatenate_wavs_auto,
@@ -57,7 +57,7 @@ from app.services.audio import (
 )
 from app.services.job_store import get_job_store
 from app.services.notification import notify_job_completed, notify_job_failed
-from app.services.storage import get_gcs_client, upload_to_gcs
+from app.services.storage import get_storage_backend
 from app.services.synthesis import (
     cleanup_chunk_files,
     get_executor,
@@ -250,7 +250,7 @@ async def run_tts_job(
         raw_size = Path(raw_wav).stat().st_size / (1024 * 1024)
         logger.info(f"[{job_id}] Raw WAV created ({raw_size:.2f} MB)")
 
-        # Step 5: Apply final mastering (-16 LUFS, 44.1kHz, 128kbps)
+        # Step 5: Apply final mastering (tier-based LUFS, sample rate, bitrate)
         await _check_status()
         logger.info(f"[{job_id}] Applying final mastering...")
         mastering_ok = await loop.run_in_executor(
@@ -267,7 +267,7 @@ async def run_tts_job(
             # Fallback: export raw WAV to MP3 without mastering
             if Path(raw_wav).exists():
                 seg = _AudioSegment.from_wav(raw_wav)
-                seg.export(final_mp3, format="mp3", bitrate="128k")
+                seg.export(final_mp3, format="mp3", bitrate=MP3_BITRATE)
                 mastering_used_fallback = True
 
         # Verify final MP3 was created
@@ -289,23 +289,21 @@ async def run_tts_job(
         except Exception as exc:
             logger.warning(f"[{job_id}] Quality check failed (non-fatal): {exc}")
 
-        # Step 7: Upload to GCS (if configured)
+        # Step 7: Upload to storage backend
         await _check_status()
-        gcs_uri: Optional[str] = None
-        gcs_upload_failed = False
-        if GCS_BUCKET_NAME and gcs_object_path and get_gcs_client():
-            try:
-                gcs_uri = await loop.run_in_executor(
-                    executor,
-                    upload_to_gcs,
-                    final_mp3,
-                    gcs_object_path,
-                )
-            except Exception as exc:
-                # GCS upload failure is non-fatal — audio is still available locally
-                logger.error(f"[{job_id}] GCS upload failed (non-fatal): {exc}")
-                gcs_uri = None
-                gcs_upload_failed = True
+        audio_uri: Optional[str] = None
+        upload_failed = False
+        try:
+            backend = get_storage_backend()
+            audio_uri = await backend.upload(
+                Path(final_mp3),
+                job_id,
+                gcs_object_path.split("/")[0] if gcs_object_path else "site",
+            )
+        except Exception as exc:
+            logger.error(f"[{job_id}] Storage upload failed (non-fatal): {exc}")
+            audio_uri = None
+            upload_failed = True
 
         # Step 8: Cleanup chunk directory and temp files
         cleanup_chunk_files(job_dir, job_id)
@@ -318,7 +316,8 @@ async def run_tts_job(
         # Update job status to completed
         completed_data: dict = {
             "status": "completed",
-            "gcs_uri": gcs_uri,
+            "audio_uri": audio_uri,
+            "gcs_uri": audio_uri,  # backward compat
             "local_path": final_mp3,
             "completed_at": time.time(),
             "duration_seconds": total_duration,
@@ -327,9 +326,9 @@ async def run_tts_job(
             completed_data["mastering_warning"] = (
                 "Audio mastering failed; raw export used"
             )
-        if gcs_upload_failed:
-            completed_data["gcs_upload_warning"] = (
-                "GCS upload failed; audio available locally only"
+        if upload_failed:
+            completed_data["upload_warning"] = (
+                "Storage upload failed; audio available locally only"
             )
         await job_store.update(job_id, completed_data)
 
@@ -339,9 +338,14 @@ async def run_tts_job(
         )
 
         # Step 9: Notify webhook
-        await notify_job_completed(job_id, gcs_uri)
+        await notify_job_completed(job_id, audio_uri)
 
-    except (SynthesisError, StorageError, AudioProcessingError, GCSUploadError) as exc:
+    except (
+        SynthesisError,
+        StorageError,
+        AudioProcessingError,
+        StorageUploadError,
+    ) as exc:
         duration = time.time() - start_time
         logger.error(
             f"[{job_id}] ✗ Job failed due to specific domain error after {duration:.1f}s: {exc}"

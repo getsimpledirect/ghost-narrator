@@ -1,0 +1,21 @@
+Ghost Narrator
+Copyright (c) 2026 Ayush Naik
+
+This project uses the following third-party components:
+
+Qwen3-TTS (Qwen/Qwen3-TTS-0.6B, Qwen/Qwen3-TTS-1.7B)
+  Copyright (c) Alibaba Cloud
+  Licensed under the Apache License, Version 2.0
+  https://huggingface.co/Qwen/Qwen3-TTS-1.7B
+
+Qwen3 Language Models (qwen3:1.7b, qwen3:4b, qwen3:8b)
+  Copyright (c) Alibaba Cloud
+  Licensed under the Apache License, Version 2.0
+  https://huggingface.co/Qwen
+
+PyTorch
+  Copyright (c) Facebook, Inc.
+  BSD 3-Clause License
+  https://github.com/pytorch/pytorch
+
+See LICENSE for the full MIT license text for this project's original code.

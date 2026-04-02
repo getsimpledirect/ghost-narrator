@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 
 from app.config import DEVICE, MAX_CHUNK_WORDS
+from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
 from app.utils.text import split_into_chunks
@@ -98,7 +99,7 @@ def shutdown_executor(wait: bool = True, cancel_futures: bool = True) -> None:
 
 def synthesize_chunk(text: str, output_path: str, job_id: str = "default") -> str:
     """
-    Synthesize a single text chunk using Fish Speech v1.5 voice cloning.
+    Synthesize a single text chunk using Qwen3-TTS voice cloning.
 
     This is a synchronous function designed to run in a thread pool.
 
@@ -264,10 +265,10 @@ async def synthesize_chunks_auto(
     status_check_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None,
 ) -> list[str]:
     """
-    Automatically choose the best synthesis strategy based on device and chunk count.
+    Automatically choose the best synthesis strategy based on EngineConfig.
 
-    - CPU with multiple chunks: Use parallel synthesis
-    - GPU or single chunk: Use sequential synthesis
+    - synthesis_workers == 1: sequential (GPU path)
+    - synthesis_workers > 1: parallel (CPU 4 workers, HIGH_VRAM 2 workers)
 
     Args:
         chunks: List of text chunks to synthesize.
@@ -281,21 +282,22 @@ async def synthesize_chunks_auto(
     Raises:
         SynthesisError: If synthesis fails.
     """
-    current_device = device or DEVICE
+    workers = ENGINE_CONFIG.synthesis_workers
 
-    if current_device == "cpu" and len(chunks) > 1:
+    if workers <= 1 or len(chunks) <= 1:
         logger.debug(
-            f"[{job_id}] Using parallel synthesis for {len(chunks)} chunks on CPU"
+            f"[{job_id}] Using sequential synthesis for {len(chunks)} chunks "
+            f"(workers={workers})"
         )
-        return await synthesize_chunks_parallel(
+        return await synthesize_chunks_sequential(
             chunks, job_dir, job_id, status_check_callback
         )
     else:
         logger.debug(
-            f"[{job_id}] Using sequential synthesis for {len(chunks)} chunks "
-            f"on {current_device}"
+            f"[{job_id}] Using parallel synthesis for {len(chunks)} chunks "
+            f"with {workers} workers"
         )
-        return await synthesize_chunks_sequential(
+        return await synthesize_chunks_parallel(
             chunks, job_dir, job_id, status_check_callback
         )
 

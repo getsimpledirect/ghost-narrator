@@ -9,11 +9,11 @@ We currently support the following versions of Ghost Narrator:
 | Latest  | :white_check_mark: |
 | < 1.0   | :x:                |
 
-*The current release is v1.3.0 - see [releases](https://github.com/getsimpledirect/workos-mvp/releases) for details.*
+*The current release is v1.3.0 - see [releases](https://github.com/getsimpledirect/ghost-narrator/releases) for details.*
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within Ghost Narrator, please report it via **GitHub Issues**: https://github.com/getsimpledirect/workos-mvp/issues
+If you discover a security vulnerability within Ghost Narrator, please report it via **GitHub Issues**: https://github.com/getsimpledirect/ghost-narrator/issues
 
 Please mark the issue as "Security" or email the maintainer directly if it's sensitive.
 
@@ -90,10 +90,10 @@ For most use cases, the default Docker network isolation provides sufficient sec
 
 This security policy applies to:
 - The Ghost Narrator codebase
-- The TTS Service (Fish Speech integration)
+- The TTS Service (Qwen3-TTS integration)
 - n8n workflows
 - Shell scripts and Docker configurations
 
 This policy does NOT apply to:
 - Third-party services (vLLM, ChromaDB, SearXNG, n8n) - see their respective security policies
-- External dependencies (Fish Speech, PyTorch, etc.) - report to upstream maintainers
+- External dependencies (Qwen3-TTS, PyTorch, etc.) - report to upstream maintainers
