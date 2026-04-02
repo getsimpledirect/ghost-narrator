@@ -38,7 +38,7 @@ from app.core.hardware import ENGINE_CONFIG  # noqa: E402
 
 # Voice and TTS settings
 VOICE_SAMPLE_PATH: Final[str] = os.environ.get(
-    "VOICE_SAMPLE_PATH", "/app/voices/reference.wav"
+    "VOICE_SAMPLE_PATH", "/app/voices/default/reference.wav"
 )
 TTS_LANGUAGE: Final[str] = os.environ.get("TTS_LANGUAGE", "en")
 

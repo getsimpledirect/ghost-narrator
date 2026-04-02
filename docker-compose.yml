@@ -16,9 +16,9 @@
 #   - N8N_USER: n8n admin username
 #   - N8N_PASSWORD: n8n admin password
 #   - N8N_ENCRYPTION_KEY: n8n encryption key (openssl rand -hex 32)
-#   - GCS_BUCKET_NAME: GCS bucket for audio storage
-#   - VLLM_BASE_URL: URL to vLLM API (default: http://host.docker.internal:8001/v1)
-#   - VLLM_MODEL_NAME: Model name for vLLM (e.g., Qwen/Qwen3-14B)
+#   - GCS_BUCKET_NAME: GCS bucket for audio storage (STORAGE_BACKEND=gcs)
+#   - LLM_BASE_URL: Narration LLM URL (default: bundled Ollama; override for external vLLM)
+#   - LLM_MODEL_NAME: Ollama model tag (auto-selected from hardware tier if unset)
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -185,7 +185,7 @@ services:
       - "8020:8020"
     environment:
       # TTS configuration
-      - VOICE_SAMPLE_PATH=/app/voices/reference.wav
+      - VOICE_SAMPLE_PATH=/app/voices/default/reference.wav
       - TTS_LANGUAGE=en
       - MAX_CHUNK_WORDS=200
       - HARDWARE_TIER=${HARDWARE_TIER:-}
@@ -210,7 +210,7 @@ services:
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
       - SERVER_EXTERNAL_IP=${SERVER_EXTERNAL_IP:-localhost}
     volumes:
-      - ./tts-service/voices:/app/voices
+      - voices_data:/app/voices
       - tts_output:/app/output
       - tier_data:/shared:ro
     networks:
@@ -250,6 +250,8 @@ volumes:
   tier_data:
     driver: local
   ollama_models:
+    driver: local
+  voices_data:
     driver: local
 
 # ─── Networks ──────────────────────────────────────────────────────────────────

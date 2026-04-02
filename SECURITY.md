@@ -95,5 +95,5 @@ This security policy applies to:
 - Shell scripts and Docker configurations
 
 This policy does NOT apply to:
-- Third-party services (vLLM, ChromaDB, SearXNG, n8n) - see their respective security policies
+- Third-party services (Ollama, n8n) - see their respective security policies
 - External dependencies (Qwen3-TTS, PyTorch, etc.) - report to upstream maintainers

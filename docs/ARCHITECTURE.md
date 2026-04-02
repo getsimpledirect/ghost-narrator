@@ -68,11 +68,11 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 │  │  │  :5678       │  │  :11434      │  │   :8020              │   │    │
 │  │  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘   │    │
 │  │         │                                                         │    │
-│  │  ┌──────────────┐  ┌──────────────┐                             │    │
-│  │  │    Redis      │  │  ChromaDB    │                             │    │
-│  │  │  Job Store    │  │  (optional)  │                             │    │
-│  │  │  :6379        │  │  :8000       │                             │    │
-│  │  └──────────────┘  └──────────────┘                             │    │
+│  │  ┌──────────────┐  ┌─────────────────────────────────────┐   │    │
+│  │  │    Redis      │  │  Hardware Probe (init container)    │   │    │
+│  │  │  Job Store    │  │  writes tier_data:/shared/tier.env  │   │    │
+│  │  │  :6379        │  │  (runs once at stack startup)       │   │    │
+│  │  └──────────────┘  └─────────────────────────────────────┘   │    │
 │  │                                                                   │    │
 │  └─────────┼───────────────────────────────────────────────────────┘    │
 │            │                                                              │
@@ -117,7 +117,7 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | Mid | 10–16 GB | Qwen3-TTS-1.7B | 192kbps, 44.1kHz | L4 / RTX 3060+ |
 | High | 20+ GB | Qwen3-TTS-1.7B | 256kbps, 48kHz, −14 LUFS | A100 / RTX 4090 |
 
-Detection is performed by `scripts/detect-hardware.sh` which inspects `nvidia-smi` output and sets `TTS_MODEL`, `TTS_DEVICE`, and `AUDIO_QUALITY` in the `.env` file. You can override any of these manually.
+Detection is performed by `scripts/init/hardware-probe.sh`, which runs as a Docker init container before the other services start. It inspects `nvidia-smi` output, writes the selected tier to `tier_data:/shared/tier.env`, and exits. Both `tts-service` and `ollama` mount this volume read-only and read the tier at startup. Override with `HARDWARE_TIER=cpu_only|low_vram|mid_vram|high_vram` in `.env`.
 
 ---
 
@@ -681,8 +681,11 @@ ghost-narrator/
 │       └── static-content-audio-pipeline.json # Static/non-Ghost content synthesis
 │
 ├── scripts/
-│   ├── detect-hardware.sh         # Hardware tier detection
+│   ├── init/
+│   │   ├── hardware-probe.sh      # Init container: GPU detection → tier_data/tier.env
+│   │   └── ollama-init.sh         # Init: reads tier.env, pulls correct Qwen3 model
 │   ├── setup-storage.sh           # Storage backend setup (GCS/S3)
+│   ├── validate-build.sh          # End-to-end smoke test
 │   ├── backfill-audio.sh          # Backfill audio for existing posts (Linux/macOS)
 │   └── backfill-audio.ps1         # Backfill audio for existing posts (Windows)
 │

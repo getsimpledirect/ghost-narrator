@@ -34,13 +34,13 @@ from typing import Any
 
 from fastapi import APIRouter, Response
 
-from app.config import DEVICE, MAX_WORKERS, VOICE_SAMPLE_PATH
+from app.config import DEVICE, MAX_WORKERS, STORAGE_BACKEND, VOICE_SAMPLE_PATH
 from app.core.hardware import ENGINE_CONFIG
 from app.core.tts_engine import get_tts_engine
 from app.models.schemas import HealthResponse
 from app.services.job_store import get_job_store
 from app.services.notification import get_http_client
-from app.services.storage import get_gcs_client
+from app.services.storage import get_storage_backend
 from app.services.synthesis import get_executor
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ async def health() -> HealthResponse:
         logger.error(f"Error listing jobs in health check: {exc}")
 
     executor = get_executor()
-    gcs_client = get_gcs_client()
+    storage = get_storage_backend()
 
     return HealthResponse(
         status="healthy" if is_healthy else "degraded",
@@ -88,7 +88,7 @@ async def health() -> HealthResponse:
         jobs_count=jobs_count,
         max_workers=MAX_WORKERS,
         executor_active=executor is not None,
-        gcs_client_active=gcs_client is not None,
+        gcs_client_active=storage is not None,
         hardware_tier=ENGINE_CONFIG.tier.value,
         tts_model=ENGINE_CONFIG.tts_model,
         llm_model=ENGINE_CONFIG.llm_model,
@@ -152,7 +152,7 @@ async def detailed_health() -> dict[str, Any]:
         }
 
     executor = get_executor()
-    gcs_client = get_gcs_client()
+    storage = get_storage_backend()
     http_client = get_http_client()
 
     voice_path = Path(VOICE_SAMPLE_PATH)
@@ -175,7 +175,7 @@ async def detailed_health() -> dict[str, Any]:
             "tts_engine": engine_status,
             "job_store": job_store_status,
             "executor": {"active": executor is not None, "max_workers": MAX_WORKERS},
-            "gcs": {"enabled": gcs_client is not None},
+            "storage": {"enabled": storage is not None, "backend": STORAGE_BACKEND},
             "http_client": {"enabled": http_client is not None},
             "voice_sample": voice_status,
         },

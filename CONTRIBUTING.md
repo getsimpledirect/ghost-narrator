@@ -41,7 +41,7 @@ Thank you for your interest in contributing to Ghost Narrator!
 
 ### Prerequisites
 - Docker & Docker Compose
-- Python 3.11+ (for local testing)
+- Python 3.12+ (for local testing)
 - Git
 
 ### Local Development
