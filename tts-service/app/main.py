@@ -23,7 +23,7 @@
 """
 Studio-Quality Text-to-Speech REST API.
 
-Built on Fish Speech v1.5 + FastAPI.
+Built on Qwen3-TTS + FastAPI.
 """
 
 from __future__ import annotations
@@ -71,16 +71,17 @@ TAGS_METADATA = [
 ]
 
 API_DESCRIPTION = """
-Studio-quality Text-to-Speech API powered by **Fish Speech v1.5** for Ghost CMS.
+Studio-quality Text-to-Speech API powered by **Qwen3-TTS** for Ghost CMS.
 
 ## Features
 
+- Hardware-tiered model selection (CPU/GPU auto-detection)
 - High-fidelity voice cloning (Zero-shot)
+- Information-preserving narration pipeline
+- Flexible storage: local, GCS, AWS S3
 - Natural prosody and breathing
 - Long-form text support (up to 100,000 characters)
-- Google Cloud Storage integration
 - Async job processing with status tracking
-- Automatic reference voice calibration
 """
 
 
