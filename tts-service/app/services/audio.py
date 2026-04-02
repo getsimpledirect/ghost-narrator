@@ -361,6 +361,94 @@ def validate_audio_quality(mp3_path: str) -> dict:
     return results
 
 
+# ─── Audio Quality Helpers ────────────────────────────────────────────────────
+
+# Crossfade duration in milliseconds — short enough to be imperceptible but
+# enough to smooth spectral discontinuities at chunk boundaries
+_CROSSFADE_MS: Final[int] = 15
+
+# Silence detection threshold for trimming (dBFS)
+_SILENCE_THRESHOLD_DB: Final[int] = -40
+
+# Minimum silence duration to trim (ms) — don't trim natural micro-pauses
+_MIN_SILENCE_MS: Final[int] = 100
+
+
+def _trim_silence(segment: AudioSegment) -> AudioSegment:
+    """Trim leading and trailing silence from an audio segment.
+
+    Only trims silence longer than _MIN_SILENCE_MS to avoid removing
+    natural micro-pauses that are part of speech prosody.
+
+    Args:
+        segment: Input audio segment.
+
+    Returns:
+        Trimmed audio segment.
+    """
+    # Detect leading silence
+    leading = 0
+    chunk_size = 10  # ms
+    for i in range(0, len(segment), chunk_size):
+        chunk = segment[i : i + chunk_size]
+        if chunk.dBFS > _SILENCE_THRESHOLD_DB:
+            leading = i
+            break
+    else:
+        leading = len(segment)
+
+    # Detect trailing silence
+    trailing = len(segment)
+    for i in range(len(segment), 0, -chunk_size):
+        chunk = segment[max(0, i - chunk_size) : i]
+        if chunk.dBFS > _SILENCE_THRESHOLD_DB:
+            trailing = i
+            break
+    else:
+        trailing = 0
+
+    # Only trim if the silence is significant
+    if leading > _MIN_SILENCE_MS:
+        segment = segment[leading:]
+    if len(segment) - trailing > _MIN_SILENCE_MS:
+        segment = segment[:trailing]
+
+    return segment
+
+
+def _crossfade_append(
+    combined: AudioSegment,
+    segment: AudioSegment,
+    pause_ms: int,
+) -> AudioSegment:
+    """Append a segment with crossfade at the boundary.
+
+    Adds a silence gap, then crossfades the last few ms of combined
+    with the first few ms of the new segment to eliminate clicks/pops.
+
+    Args:
+        combined: The accumulated audio so far.
+        segment: The new segment to append.
+        pause_ms: Silence gap in milliseconds.
+
+    Returns:
+        Combined audio with crossfaded boundary.
+    """
+    if len(combined) == 0:
+        return segment
+
+    # Add the silence gap
+    combined += AudioSegment.silent(duration=pause_ms)
+
+    # Apply crossfade if both segments are long enough
+    if len(combined) > _CROSSFADE_MS and len(segment) > _CROSSFADE_MS:
+        combined = combined.append(segment, crossfade=_CROSSFADE_MS)
+    else:
+        combined += segment
+
+    return combined
+
+
 # ─── WAV Validation ──────────────────────────────────────────────────────────
 
 
@@ -431,16 +519,22 @@ def concatenate_wavs(
 
         for i, wav_path in enumerate(wav_paths):
             segment = AudioSegment.from_wav(wav_path)
-            combined += segment
 
-            # Add contextual silence after this chunk (except the last one)
-            if i < len(wav_paths) - 1:
-                if chunk_texts and i < len(chunk_texts):
-                    next_text = chunk_texts[i + 1] if i + 1 < len(chunk_texts) else None
-                    pause_ms = get_pause_ms_after_chunk(chunk_texts[i], next_text)
+            # Trim leading/trailing silence from each chunk
+            segment = _trim_silence(segment)
+
+            if i == 0:
+                combined = segment
+            else:
+                # Determine contextual pause
+                if chunk_texts and i - 1 < len(chunk_texts):
+                    next_text = chunk_texts[i] if i < len(chunk_texts) else None
+                    pause_ms = get_pause_ms_after_chunk(chunk_texts[i - 1], next_text)
                 else:
-                    pause_ms = 450  # Default sentence-boundary pause
-                combined += AudioSegment.silent(duration=pause_ms)
+                    pause_ms = 450
+
+                # Crossfade append to eliminate clicks at boundaries
+                combined = _crossfade_append(combined, segment, pause_ms)
 
         if is_wav:
             combined.export(output_path, format="wav")
@@ -503,7 +597,7 @@ def concatenate_wavs_streaming(
             f"Streaming concatenation of {len(wav_paths)} WAV files to {output_path}"
         )
 
-        combined = AudioSegment.from_wav(wav_paths[0])
+        combined = _trim_silence(AudioSegment.from_wav(wav_paths[0]))
 
         for i, wav_path in enumerate(wav_paths[1:], start=1):
             # Determine contextual pause
@@ -513,9 +607,10 @@ def concatenate_wavs_streaming(
             else:
                 pause_ms = 450
 
-            combined += AudioSegment.silent(duration=pause_ms)
-            segment = AudioSegment.from_wav(wav_path)
-            combined += segment
+            segment = _trim_silence(AudioSegment.from_wav(wav_path))
+
+            # Crossfade append to eliminate clicks at boundaries
+            combined = _crossfade_append(combined, segment, pause_ms)
 
             # If combined duration exceeds threshold, flush to disk
             if len(combined) > threshold_ms:

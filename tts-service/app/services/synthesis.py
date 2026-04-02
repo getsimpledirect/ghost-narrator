@@ -39,7 +39,7 @@ from app.config import DEVICE, MAX_CHUNK_WORDS
 from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
-from app.utils.text import split_into_chunks
+from app.utils.text import split_into_chunks, clean_text_for_tts
 
 if TYPE_CHECKING:
     from app.core.tts_engine import TTSEngine
@@ -323,7 +323,10 @@ def prepare_text_for_synthesis(
     max_chunk_words: int = MAX_CHUNK_WORDS,
 ) -> tuple[list[str], int]:
     """
-    Prepare text for synthesis by splitting into chunks.
+    Prepare text for synthesis by cleaning and splitting into chunks.
+
+    Applies TTS-specific text cleanup (abbreviation expansion, markdown
+    stripping, special character normalization) before chunking.
 
     Args:
         text: The full text to prepare.
@@ -338,7 +341,10 @@ def prepare_text_for_synthesis(
     if not text or not text.strip():
         raise SynthesisError("Cannot prepare empty text for synthesis")
 
-    chunks = split_into_chunks(text, max_chunk_words)
+    # Clean text for TTS (abbreviations, markdown, special chars)
+    cleaned = clean_text_for_tts(text)
+
+    chunks = split_into_chunks(cleaned, max_chunk_words)
 
     if not chunks:
         raise SynthesisError(
