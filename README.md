@@ -66,16 +66,16 @@ Override with `HARDWARE_TIER=cpu_only` in `.env` if auto-detection fails.
 ## Architecture
 
 ```mermaid
-flowchart LR
-    A["📝 Ghost CMS<br>Publish Article"] -->|"webhook"| B["⚡ n8n<br>Trigger & Embed"]
-    B -->|"raw article text"| E["🎙️ TTS Service<br>Narrate + Synthesize"]
-    E -->|"LLM narration"| C["🧠 Ollama<br>Bundled LLM"]
-    C -->|"narration script"| E
-    E -->|"MP3"| F["💾 Storage<br>Local / GCS / S3"]
-    E -->|"callback"| B
-    B -->|"embed player"| A
-    H["🔍 Hardware Probe"] -.->|"tier.env"| C
-    H -.->|"tier.env"| E
+flowchart TD
+    G["📝 Ghost CMS"] -->|"webhook"| N["⚡ n8n\nTrigger & Embed"]
+    N -->|"raw article text"| T["🎙️ TTS Service\nNarrate + Synthesize"]
+    T -->|"LLM narration"| O["🧠 Ollama\nBundled LLM"]
+    O -->|"narration script"| T
+    T -->|"MP3"| S["💾 Storage\nlocal / GCS / S3"]
+    T -->|"callback"| N
+    N -->|"embed player"| G
+    H["🔍 Hardware Probe"] -.->|"tier.env"| T
+    H -.->|"tier.env"| O
 ```
 
 ---

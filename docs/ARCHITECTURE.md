@@ -56,27 +56,17 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 ## Architecture Overview
 
 ```mermaid
-flowchart LR
-    ghost["📝 Ghost CMS<br>Publish Article"] -->|"webhook"| n8n
-
-    subgraph docker["Docker Host · 4+ vCPUs · 8GB+ RAM"]
-        n8n["⚡ n8n<br>Trigger & Embed<br>:5678"]
-        tts["🎙️ TTS Service<br>Narrate + Synthesize<br>:8020"]
-        ollama["🧠 Ollama<br>Qwen3 LLM<br>:11434"]
-        redis["📦 Redis<br>Job Store<br>:6379"]
-        probe["🔍 Hardware Probe"]
-    end
-
-    n8n -->|"raw article text"| tts
-    tts -->|"LLM narration"| ollama
-    ollama -->|"narration script"| tts
-    tts <-->|"job state"| redis
-    probe -.->|"tier.env"| tts
-    probe -.->|"tier.env"| ollama
-
-    tts -->|"MP3"| storage["💾 Storage<br>local / GCS / S3"]
-    tts -->|"callback"| n8n
-    n8n -->|"embed player"| ghost
+flowchart TD
+    G["📝 Ghost CMS"] -->|"post.published webhook"| N["⚡ n8n\nTrigger & Embed"]
+    N -->|"raw article text"| T["🎙️ TTS Service\nNarrate + Synthesize"]
+    T -->|"LLM narration"| O["🧠 Ollama\nBundled LLM"]
+    O -->|"narration script"| T
+    T <-->|"job state"| R["📦 Redis"]
+    T -->|"MP3"| S["💾 Storage\nlocal / GCS / S3"]
+    T -->|"callback"| N
+    N -->|"embed audio player"| G
+    H["🔍 Hardware Probe"] -.->|"tier.env"| T
+    H -.->|"tier.env"| O
 ```
 
 ---
@@ -112,17 +102,13 @@ The end-to-end narration pipeline has seven stages:
 
 ```mermaid
 flowchart TD
-    ghost["📝 Ghost Publishes Post"] -->|"webhook"| wh["1️⃣ Webhook Receive<br>n8n catches post.published"]
-    wh -->|"fetch"| fa["2️⃣ Fetch Article<br>Ghost Content API returns plaintext"]
-    fa -->|"submit"| st["3️⃣ Submit to TTS<br>n8n sends raw article text"]
-
-    subgraph tts_internal["TTS Service (internal)"]
-        st --> narr["4️⃣ Narrate + Synthesize<br>LLM rewrites article → podcast script<br>Qwen3-TTS generates audio chunks"]
-    end
-
-    narr -->|"MP3"| up["5️⃣ Upload to Storage<br>local / GCS / S3"]
-    up -->|"callback"| cb["6️⃣ Callback to n8n<br>TTS notifies n8n audio is ready"]
-    cb -->|"embed"| em["7️⃣ Embed in Ghost<br>n8n patches post with audio player"]
+    A["📝 Ghost publishes post"] --> B["1. Webhook Receive\nn8n catches post.published"]
+    B --> C["2. Fetch Article\nGhost Content API returns plaintext"]
+    C --> D["3. Submit to TTS\nn8n sends raw article text"]
+    D --> E["4. Narrate + Synthesize\nLLM rewrites article to podcast script\nQwen3-TTS generates audio"]
+    E --> F["5. Upload to Storage\nlocal / GCS / S3"]
+    F --> G["6. Callback to n8n\nTTS notifies n8n audio is ready"]
+    G --> H["7. Embed in Ghost\nn8n patches post with audio player"]
 ```
 
 1. **Webhook Receive** — n8n catches the Ghost `post.published` event
