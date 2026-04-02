@@ -1,4 +1,4 @@
-# Using modern CUDA runtime for Fish Speech v1.5
+# Using modern CUDA runtime for Qwen3-TTS
 FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 # Prevent interactive prompts during build
@@ -31,17 +31,6 @@ COPY requirements.txt .
 
 # Install dependencies using uv
 RUN uv pip install --system --no-cache -r requirements.txt
-
-# Pre-download model weights (optional, speeds up first run)
-RUN mkdir -p /app/checkpoints && \
-    (python -c "from huggingface_hub import snapshot_download; \
-     snapshot_download(repo_id='fishaudio/fish-speech-1.5', \
-                       local_dir='/app/checkpoints/fish-speech-1.5', \
-                       resume_download=True, \
-                       max_workers=4)" 2>&1 || \
-     echo "⚠ Model download skipped - will download on first use") && \
-    (python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')" 2>&1 || \
-     echo "⚠ Whisper tiny model pre-cache failed - will download on first reference voice calibration")
 
 # Verify critical imports work
 RUN python -c "import torch, transformers, fastapi, google.cloud.storage, redis, librosa" && \

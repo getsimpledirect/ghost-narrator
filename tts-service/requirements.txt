@@ -1,10 +1,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # TTS Service Requirements
 # ═══════════════════════════════════════════════════════════════════════════════
-# Python Version: 3.11 (required by Fish Speech)
-#
-# ⚠️ IMPORTANT: DO NOT install these dependencies on Python 3.12+
-# Fish Speech officially supports Python 3.9-3.11
+# Python Version: 3.11+
 #
 # Use Docker to run this service (see QUICKSTART.md):
 #   .\run-docker.ps1 -Detached
@@ -20,9 +17,9 @@ torch==2.4.1
 torchaudio==2.4.1
 torchvision==0.19.1
 triton==3.0.0
-numpy==1.26.4  # Downgrade from 2.1.1 for compatibility
+numpy==1.26.4
 
-# ── Transformers (Optimized for LLaMA-based TTS) ──────────────────────────────
+# ── Transformers ──────────────────────────────────────────────────────────────
 transformers==4.45.2
 tokenizers>=0.20.0,<0.21
 safetensors>=0.4.1
@@ -37,9 +34,8 @@ torchmetrics==1.4.0
 gradio==5.1.0
 gradio-client==1.4.0
 
-# ── Core TTS Engine (Studio Quality) ──────────────────────────────────────────
-# Fish Speech v1.5 for high-fidelity zero-shot voice cloning
-fish-speech @ git+https://github.com/fishaudio/fish-speech.git@v1.5.0
+# ── Core TTS Engine ───────────────────────────────────────────────────────────
+qwen-tts>=0.1.0
 
 # ── API Framework ──────────────────────────────────────────────────────────────
 fastapi==0.111.0
@@ -78,6 +74,9 @@ httpcore==1.0.9
 h11>=0.8
 anyio>=3.0.0
 sniffio>=1.0.0
+
+# ── OpenAI Client (for Ollama-compatible narration LLM) ────────────────────────
+openai>=1.0.0
 
 # ── Redis (Job State Persistence) ──────────────────────────────────────────────
 redis==5.0.1
