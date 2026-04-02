@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0] — 2026-04-03
+
+### Critical Fix
+- **Narration step wired into TTS pipeline** — LLM narration was completely missing from `run_tts_job`. Articles were synthesized verbatim (markdown, headers, bullet lists) without the podcast rewrite. The narration/ package existed but was never called.
+
+### Fixed
+- `gcs_object_path.split("/")[0]` passed wrong site slug to storage backend — now uses explicit `site_slug` parameter
+- Parallel synthesis now checks job cancellation between batches instead of only once before dispatching all tasks
+- Stale docstring referencing Fish Speech pipeline updated to reflect Qwen3-TTS architecture
+- Engine readiness busy-poll (60 Redis round-trips) replaced with `asyncio.Event` — zero polling overhead
+- n8n workflows no longer duplicate LLM narration — TTS service owns narration entirely
+
+### Added
+- **Pipelined narration + synthesis** — LLM narrates chunk N+1 while TTS synthesizes chunk N (overlapped execution)
+- **Layered information preservation** during LLM narration conversion:
+  - Prompt: 10-item preservation checklist (numbers, dates, names, quotes, URLs, lists, etc.)
+  - Validator: date/time, URL, email regex patterns + word count ratio check (flags if <55%)
+  - Chunk overlap: 1 paragraph overlap at chunk boundaries prevents context loss
+  - LLM completeness check (HIGH_VRAM only): second LLM call verifies no facts were dropped
+- **Audio quality improvements** (zero performance cost, ~250ms total for 30-chunk article):
+  - Text preprocessing: strips markdown, smart quotes, expands 19 abbreviations (Dr.→Doctor, e.g.→for example)
+  - 15ms crossfade at chunk boundaries eliminates clicks/pops
+  - Prosodic-aware splitting: long sentences split at clause boundaries (commas, conjunctions)
+  - Silence trimming: removes 6-15s of dead air from typical articles
+- **HIGH_VRAM premium features** (20+ GB GPU):
+  - fp32 TTS precision — cleaner audio, less quantization noise
+  - 2 parallel TTS workers — ~2x faster synthesis
+  - qwen3:14b-q4 LLM — significantly better narration quality
+  - Pre-computed voice reference tokens cached at startup (saves 2-5s per job)
+  - Multi-voice for quoted speech — pitch-shifts quotes for speaker differentiation
+  - Automatic quality re-synthesis — re-synthesizes chunks with excessive silence
+  - Two-pass EBU R128 loudness normalization for final mastering
+- MID_VRAM now receives full pacing prompt (same qwen3:8b-q4 model as HIGH_VRAM)
+- `_TRANSITION_STARTERS` narrowed to actual topic transitions (removed "the", "for", "so", "if")
+- Continuity seeding passes both output tail AND source tail for richer context
+
+### Changed
+- n8n workflows: removed "Convert to Narration (LLM)" and "Parse Narration" nodes — n8n sends raw article text directly to TTS service
+- `LLM_BASE_URL` and `LLM_MODEL_NAME` no longer required in n8n — configured on TTS service container
+- Architecture diagrams rewritten as clean mermaid flowcharts (TD, no subgraphs)
+- Documentation updated across README.md, ARCHITECTURE.md, SETUP_GUIDE.md
+
+---
+
 ## [2.0.0] — 2026-04-02
 
 ### Added
@@ -185,6 +229,7 @@ See `docs/ARCHITECTURE.md` for technical details.
 
 ---
 
-[Unreleased]: https://github.com/getsimpledirect/ghost-narrator/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/getsimpledirect/ghost-narrator/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/getsimpledirect/ghost-narrator/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/getsimpledirect/ghost-narrator/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/getsimpledirect/ghost-narrator/releases/tag/v1.0.0
