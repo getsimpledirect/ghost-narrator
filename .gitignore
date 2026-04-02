@@ -81,6 +81,13 @@ desktop.ini
 # ─── Internal workflow artifacts (superpowers plans/specs — not for public repo) ─
 docs/superpowers/
 
+# ─── Model weights / checkpoints ───────────────────────────────────────────────
+*.pt
+*.bin
+*.ckpt
+*.safetensors
+checkpoints/
+
 # ─── Test / Coverage ──────────────────────────────────────────────────────────
 .coverage
 htmlcov/
