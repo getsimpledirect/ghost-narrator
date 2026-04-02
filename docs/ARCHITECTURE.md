@@ -55,55 +55,36 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         Docker Host Machine                              │
-│                         4+ vCPUs · 8GB+ RAM                              │
-│                                                                           │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                        Docker Network                             │    │
-│  │                                                                   │    │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │    │
-│  │  │   n8n        │  │   Ollama     │  │   TTS Service        │   │    │
-│  │  │  Workflow     │  │  Qwen3       │  │   Qwen3-TTS         │   │    │
-│  │  │  :5678       │  │  :11434      │  │   :8020              │   │    │
-│  │  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘   │    │
-│  │         │                                                         │    │
-│  │  ┌──────────────┐  ┌─────────────────────────────────────┐   │    │
-│  │  │    Redis      │  │  Hardware Probe (init container)    │   │    │
-│  │  │  Job Store    │  │  writes tier_data:/shared/tier.env  │   │    │
-│  │  │  :6379        │  │  (runs once at stack startup)       │   │    │
-│  │  └──────────────┘  └─────────────────────────────────────┘   │    │
-│  │                                                                   │    │
-│  └─────────┼───────────────────────────────────────────────────────┘    │
-│            │                                                              │
-└────────────┼──────────────────────────────────────────────────────────── ┘
-             │
-             │  Orchestration Flow
-             │
-             │  Ghost Webhook → n8n Pipeline (POST /webhook/ghost-published)
-             │  n8n Pipeline → TTS Service (POST /tts/generate with raw article text)
-             │  TTS Service → Ollama (convert article to narration script, internally)
-             │  TTS Service → TTS Engine (synthesize MP3 with cloned voice)
-             │  TTS Service → Storage (upload MP3)
-             │  TTS Service → n8n Callback (POST /webhook/tts-callback)
-             │  n8n Callback → Ghost (embed audio player in post via Admin API)
-             │
-             ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         External Services                                 │
-│                                                                           │
-│  ┌──────────────────────┐       ┌──────────────────────┐                │
-│  │  Ghost CMS Site 1    │       │  Ghost CMS Site 2    │                │
-│  │  ghost-site-1.com    │       │  ghost-site-2.com    │                │
-│  │  (sends webhooks)    │       │  (sends webhooks)    │                │
-│  └──────────────────────┘       └──────────────────────┘                │
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │  Storage Backend (local / GCS / S3)                           │       │
-│  │  audio/articles/site/slug.mp3                                │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-└───────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Docker["Docker Host Machine · 4+ vCPUs · 8GB+ RAM"]
+        subgraph Network["Docker Network"]
+            n8n["⚡ n8n<br>Workflow Trigger<br>:5678"]
+            ollama["🧠 Ollama<br>Qwen3 LLM<br>:11434"]
+            tts["🎙️ TTS Service<br>Qwen3-TTS<br>:8020"]
+            redis["📦 Redis<br>Job Store<br>:6379"]
+            probe["🔍 Hardware Probe<br>Init Container<br>writes tier.env"]
+        end
+    end
+
+    subgraph External["External Services"]
+        ghost1["📝 Ghost CMS Site 1<br>ghost-site-1.com"]
+        ghost2["📝 Ghost CMS Site 2<br>ghost-site-2.com"]
+        storage["💾 Storage Backend<br>local / GCS / S3"]
+    end
+
+    ghost1 -->|"webhook<br>post.published"| n8n
+    ghost2 -->|"webhook<br>post.published"| n8n
+    n8n -->|"raw article text<br>POST /tts/generate"| tts
+    tts -->|"LLM narration<br>POST /v1/chat/completions"| ollama
+    ollama -->|"narration script"| tts
+    tts <-->|"job state"| redis
+    tts -->|"MP3 upload"| storage
+    tts -->|"callback<br>POST /webhook/tts-callback"| n8n
+    n8n -->|"embed audio player<br>Admin API"| ghost1
+    n8n -->|"embed audio player<br>Admin API"| ghost2
+    probe -.->|"tier.env"| ollama
+    probe -.->|"tier.env"| tts
 ```
 
 ---
