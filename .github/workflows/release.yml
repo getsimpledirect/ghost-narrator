@@ -24,17 +24,20 @@ jobs:
         id: changelog
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # Extract section between this version header and the next
-          awk -v ver="$VERSION" '
+          # Strip 'v' prefix: v2.1.1 → 2.1.1
+          CLEAN_VERSION="${VERSION#v}"
+          # Extract section between this version header and the next version header
+          awk -v ver="$CLEAN_VERSION" '
+            BEGIN { found=0 }
             /^## \[/ {
               if (found) exit
-              if ($0 ~ ver) { found=1; next }
+              if ($0 ~ "\\[" ver "\\]") { found=1; next }
             }
             found { print }
           ' CHANGELOG.md > release_notes.md
           # If empty, use a fallback
           if [ ! -s release_notes.md ]; then
-            echo "See [CHANGELOG.md](CHANGELOG.md) for details." > release_notes.md
+            echo "No changelog entry found for $VERSION." > release_notes.md
           fi
 
       - name: Create GitHub Release
@@ -43,4 +46,4 @@ jobs:
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
           body_path: release_notes.md
-          generate_release_notes: true
+          generate_release_notes: false
