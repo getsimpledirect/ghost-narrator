@@ -25,29 +25,45 @@ def mock_tts_engine():
         yield mock_engine
 
 
+@pytest.fixture
+def mock_storage_backend():
+    """Return a mock storage backend that succeeds."""
+    backend = AsyncMock()
+    backend.upload.return_value = "local://test-job-123.mp3"
+    return backend
+
+
 @pytest.mark.asyncio
-async def test_run_tts_job_success(mock_job_store, mock_tts_engine):
+async def test_run_tts_job_success(
+    mock_job_store, mock_tts_engine, mock_storage_backend
+):
     mock_job_store.get.return_value = {"status": "processing"}
 
     job_id = "test-job-123"
     text = "Hello world. This is a test."
     gcs_path = "audio/test.mp3"
 
-    # prepare_text_for_synthesis returns (chunks, total_words)
-    with patch("app.services.tts_job.prepare_text_for_synthesis") as mock_prepare, \
-         patch("app.services.tts_job.synthesize_chunks_auto") as mock_synth, \
-         patch("app.services.tts_job.concatenate_wavs_auto") as mock_concat, \
-         patch("app.services.tts_job.normalize_chunk_to_target_lufs", side_effect=lambda p, _: p), \
-         patch("app.services.tts_job.apply_final_mastering", return_value=True), \
-         patch("app.services.tts_job.validate_audio_quality", return_value=None), \
-         patch("app.services.tts_job.get_gcs_client", return_value=None), \
-         patch("app.services.tts_job.notify_job_completed", new_callable=AsyncMock), \
-         patch("app.services.tts_job.get_executor") as mock_get_exec, \
-         patch("app.services.tts_job.cleanup_chunk_files"), \
-         patch.object(Path, "mkdir"), \
-         patch.object(Path, "exists", return_value=True), \
-         patch.object(Path, "stat") as mock_stat:
-
+    with (
+        patch("app.services.tts_job.prepare_text_for_synthesis") as mock_prepare,
+        patch("app.services.tts_job.synthesize_chunks_auto") as mock_synth,
+        patch("app.services.tts_job.concatenate_wavs_auto") as mock_concat,
+        patch(
+            "app.services.tts_job.normalize_chunk_to_target_lufs",
+            side_effect=lambda p, _: p,
+        ),
+        patch("app.services.tts_job.apply_final_mastering", return_value=True),
+        patch("app.services.tts_job.validate_audio_quality", return_value=None),
+        patch(
+            "app.services.tts_job.get_storage_backend",
+            return_value=mock_storage_backend,
+        ),
+        patch("app.services.tts_job.notify_job_completed", new_callable=AsyncMock),
+        patch("app.services.tts_job.get_executor") as mock_get_exec,
+        patch("app.services.tts_job.cleanup_chunk_files"),
+        patch.object(Path, "mkdir"),
+        patch.object(Path, "exists", return_value=True),
+        patch.object(Path, "stat") as mock_stat,
+    ):
         mock_stat.return_value.st_size = 1024 * 1024
         mock_get_exec.return_value = MagicMock()
         mock_prepare.return_value = (["Hello world.", "This is a test."], 6)
@@ -70,15 +86,17 @@ async def test_run_tts_job_deleted_mid_process(mock_job_store, mock_tts_engine):
     # Simulate a job being deleted during processing
     mock_job_store.get.side_effect = [
         {"status": "processing"},  # engine ready check
-        {"status": "deleted"},     # _check_status before chunking
+        {"status": "deleted"},  # _check_status before chunking
     ]
 
     job_id = "test-job-deleted"
     text = "A very long text. " * 50
     gcs_path = "audio/deleted.mp3"
 
-    with patch("app.services.tts_job.get_executor") as mock_get_exec, \
-         patch.object(Path, "mkdir"):
+    with (
+        patch("app.services.tts_job.get_executor") as mock_get_exec,
+        patch.object(Path, "mkdir"),
+    ):
         mock_get_exec.return_value = MagicMock()
 
         await run_tts_job(job_id, text, gcs_path)
@@ -101,12 +119,13 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
     text = "Some text to synthesize."
     gcs_path = "audio/fail.mp3"
 
-    with patch("app.services.tts_job.prepare_text_for_synthesis") as mock_prepare, \
-         patch("app.services.tts_job.synthesize_chunks_auto") as mock_synth, \
-         patch("app.services.tts_job.get_executor") as mock_get_exec, \
-         patch("app.services.tts_job.notify_job_failed", new_callable=AsyncMock), \
-         patch.object(Path, "mkdir"):
-
+    with (
+        patch("app.services.tts_job.prepare_text_for_synthesis") as mock_prepare,
+        patch("app.services.tts_job.synthesize_chunks_auto") as mock_synth,
+        patch("app.services.tts_job.get_executor") as mock_get_exec,
+        patch("app.services.tts_job.notify_job_failed", new_callable=AsyncMock),
+        patch.object(Path, "mkdir"),
+    ):
         mock_get_exec.return_value = MagicMock()
         mock_prepare.return_value = (["Some text to synthesize."], 4)
         mock_synth.side_effect = SynthesisError("GPU out of memory")
@@ -123,30 +142,38 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
 
 
 @pytest.mark.asyncio
-async def test_run_tts_job_gcs_failure_still_completes(mock_job_store, mock_tts_engine):
-    """GCS upload failure is non-fatal — job should still be marked completed."""
+async def test_run_tts_job_storage_failure_still_completes(
+    mock_job_store, mock_tts_engine
+):
+    """Storage upload failure is non-fatal — job should still be marked completed."""
     mock_job_store.get.return_value = {"status": "processing"}
 
-    job_id = "test-job-gcs-fail"
+    job_id = "test-job-storage-fail"
     text = "Hello world."
-    gcs_path = "audio/gcs-fail.mp3"
+    gcs_path = "audio/storage-fail.mp3"
 
-    with patch("app.services.tts_job.prepare_text_for_synthesis") as mock_prepare, \
-         patch("app.services.tts_job.synthesize_chunks_auto") as mock_synth, \
-         patch("app.services.tts_job.concatenate_wavs_auto"), \
-         patch("app.services.tts_job.normalize_chunk_to_target_lufs", side_effect=lambda p, _: p), \
-         patch("app.services.tts_job.apply_final_mastering", return_value=True), \
-         patch("app.services.tts_job.validate_audio_quality", return_value=None), \
-         patch("app.services.tts_job.get_gcs_client", return_value=MagicMock()), \
-         patch("app.services.tts_job.GCS_BUCKET_NAME", "my-bucket"), \
-         patch("app.services.tts_job.upload_to_gcs", side_effect=Exception("Network error")), \
-         patch("app.services.tts_job.notify_job_completed", new_callable=AsyncMock), \
-         patch("app.services.tts_job.get_executor") as mock_get_exec, \
-         patch("app.services.tts_job.cleanup_chunk_files"), \
-         patch.object(Path, "mkdir"), \
-         patch.object(Path, "exists", return_value=True), \
-         patch.object(Path, "stat") as mock_stat:
+    # Mock storage backend that fails on upload
+    failing_backend = AsyncMock()
+    failing_backend.upload.side_effect = Exception("Network error")
 
+    with (
+        patch("app.services.tts_job.prepare_text_for_synthesis") as mock_prepare,
+        patch("app.services.tts_job.synthesize_chunks_auto") as mock_synth,
+        patch("app.services.tts_job.concatenate_wavs_auto"),
+        patch(
+            "app.services.tts_job.normalize_chunk_to_target_lufs",
+            side_effect=lambda p, _: p,
+        ),
+        patch("app.services.tts_job.apply_final_mastering", return_value=True),
+        patch("app.services.tts_job.validate_audio_quality", return_value=None),
+        patch("app.services.tts_job.get_storage_backend", return_value=failing_backend),
+        patch("app.services.tts_job.notify_job_completed", new_callable=AsyncMock),
+        patch("app.services.tts_job.get_executor") as mock_get_exec,
+        patch("app.services.tts_job.cleanup_chunk_files"),
+        patch.object(Path, "mkdir"),
+        patch.object(Path, "exists", return_value=True),
+        patch.object(Path, "stat") as mock_stat,
+    ):
         mock_stat.return_value.st_size = 1024 * 1024
         mock_get_exec.return_value = MagicMock()
         mock_prepare.return_value = (["Hello world."], 2)
@@ -154,7 +181,7 @@ async def test_run_tts_job_gcs_failure_still_completes(mock_job_store, mock_tts_
 
         await run_tts_job(job_id, text, gcs_path)
 
-        # Job completes even when GCS fails
+        # Job completes even when storage fails
         statuses = [
             call.args[1].get("status")
             for call in mock_job_store.update.call_args_list
@@ -162,13 +189,14 @@ async def test_run_tts_job_gcs_failure_still_completes(mock_job_store, mock_tts_
         ]
         assert "completed" in statuses
 
-        # The completed payload should include a GCS warning
+        # The completed payload should include an upload warning
         completed_updates = [
             call.args[1]
             for call in mock_job_store.update.call_args_list
-            if isinstance(call.args[1], dict) and call.args[1].get("status") == "completed"
+            if isinstance(call.args[1], dict)
+            and call.args[1].get("status") == "completed"
         ]
-        assert any("gcs_upload_warning" in u for u in completed_updates)
+        assert any("upload_warning" in u for u in completed_updates)
 
 
 @pytest.mark.asyncio
@@ -180,9 +208,10 @@ async def test_run_tts_job_executor_not_initialized(mock_job_store, mock_tts_eng
     text = "Hello world."
     gcs_path = "audio/no-exec.mp3"
 
-    with patch("app.services.tts_job.get_executor", return_value=None), \
-         patch.object(Path, "mkdir"):
-
+    with (
+        patch("app.services.tts_job.get_executor", return_value=None),
+        patch.object(Path, "mkdir"),
+    ):
         await run_tts_job(job_id, text, gcs_path)
 
         statuses = [
