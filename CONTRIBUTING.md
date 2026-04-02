@@ -55,7 +55,8 @@ cd ghost-narrator
 cp .env.example .env
 
 # Start services
-./scripts/init.sh
+./install.sh
+./start.sh up -d
 ```
 
 ### Running Tests

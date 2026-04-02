@@ -9,7 +9,7 @@ We currently support the following versions of Ghost Narrator:
 | Latest  | :white_check_mark: |
 | < 1.0   | :x:                |
 
-*The current release is v1.3.0 - see [releases](https://github.com/getsimpledirect/ghost-narrator/releases) for details.*
+*The current release is v2.0.0 - see [releases](https://github.com/getsimpledirect/ghost-narrator/releases) for details.*
 
 ## Reporting a Vulnerability
 

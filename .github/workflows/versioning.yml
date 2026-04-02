@@ -1,0 +1,100 @@
+name: Automated Versioning
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-version:
+    # Skip if this push IS the bump commit itself (prevents infinite loop).
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Commitizen
+        run: pip install commitizen
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Bump version
+        id: bump
+        run: |
+          set +e
+          cz bump --yes
+          CZ_EXIT=$?
+          set -e
+
+          if [ $CZ_EXIT -eq 0 ]; then
+            echo "bumped=true" >> $GITHUB_OUTPUT
+            echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+          elif [ $CZ_EXIT -eq 7 ]; then
+            NEXT_VERSION=$(cz version --project)
+            STALE_TAG="v${NEXT_VERSION}"
+            echo "Stale tag ${STALE_TAG} found — deleting and retrying..."
+            git tag -d "$STALE_TAG" 2>/dev/null || true
+            git push origin --delete "$STALE_TAG" 2>/dev/null || true
+
+            set +e
+            cz bump --yes
+            CZ_EXIT2=$?
+            set -e
+
+            if [ $CZ_EXIT2 -eq 0 ]; then
+              echo "bumped=true" >> $GITHUB_OUTPUT
+              echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+            else
+              echo "Retry failed (exit $CZ_EXIT2) — skipping release"
+              echo "bumped=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No bumpable commits found (exit $CZ_EXIT) — skipping release"
+            echo "bumped=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create bump PR
+        if: steps.bump.outputs.bumped == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          BUMP_BRANCH="auto/bump-v${{ steps.bump.outputs.version }}"
+          git checkout -b "$BUMP_BRANCH"
+          git push origin "$BUMP_BRANCH" --tags
+
+          PR_URL=$(gh pr create \
+            --title "bump: version ${{ steps.bump.outputs.version }}" \
+            --body "Automated version bump by Commitizen." \
+            --base main \
+            --head "$BUMP_BRANCH")
+
+          gh pr merge "$PR_URL" --auto --squash
+
+      - name: Generate release notes
+        if: steps.bump.outputs.bumped == 'true'
+        run: cz changelog --dry-run > /tmp/release_notes.md
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.bumped == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.bump.outputs.version }}
+          body_path: /tmp/release_notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
