@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `ci.yml` — runs ruff lint + pytest on every PR and push to main
 - Added `dependabot-auto-merge.yml` — auto-merges dependabot PRs that pass CI
 - Fixed `dependabot.yml` — grouped updates, excluded heavy deps (torch/transformers)
+- Fixed all CI test failures: hardware mock (torch unavailable in CI), narration strategy (word count ratio retries), tts_job (wrong patch target), storage (boto3 skip/patch)
 
 ---
 
