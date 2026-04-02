@@ -33,7 +33,7 @@ COPY requirements.txt .
 RUN uv pip install --system --no-cache -r requirements.txt
 
 # Verify critical imports work
-RUN python -c "import torch, transformers, fastapi, google.cloud.storage, redis, librosa" && \
+RUN python -c "import torch, transformers, fastapi, google.cloud.storage, redis, librosa, qwen_tts" && \
     echo "✓ All critical packages validated"
 
 # Copy application code

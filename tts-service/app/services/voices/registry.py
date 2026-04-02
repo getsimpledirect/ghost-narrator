@@ -38,6 +38,10 @@ class VoiceRegistry:
             )
         return path
 
+    def profile_path(self, name: str) -> Path:
+        """Return the path where a named profile WAV should be stored."""
+        return self._profiles_dir / f"{name}.wav"
+
     def list_profiles(self) -> list[str]:
         """Return list of available profile names including 'default'."""
         profiles = ["default"]

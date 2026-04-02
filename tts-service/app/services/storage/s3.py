@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-import boto3
 from app.services.storage.base import StorageBackend
 from app.core.exceptions import StorageUploadError
 from app.config import (
@@ -21,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 class S3Storage(StorageBackend):
     def __init__(self) -> None:
+        import boto3  # Lazy import — only needed when S3 backend is selected
+
         if not S3_BUCKET_NAME:
             raise ValueError("S3_BUCKET_NAME must be set when STORAGE_BACKEND=s3")
         self._bucket = S3_BUCKET_NAME

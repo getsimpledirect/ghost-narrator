@@ -42,7 +42,7 @@ async def upload_voice(name: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only WAV files are accepted")
 
     registry = _get_registry()
-    dest = registry._profiles_dir / f"{name}.wav"
+    dest = registry.profile_path(name)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp.write(await file.read())

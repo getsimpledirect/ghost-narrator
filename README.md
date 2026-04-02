@@ -18,22 +18,20 @@ Ghost Narrator converts your Ghost articles into podcast-quality MP3 audio autom
 | Tier | VRAM | TTS Model | Output Quality |
 |---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | 192kbps, 44.1kHz |
-| Low (4–8 GB) | 4–8 GB | Qwen3-TTS-0.6B | 192kbps, 44.1kHz |
-| Mid (10–16 GB) | 10–16 GB | Qwen3-TTS-1.7B | 192kbps, 44.1kHz |
-| High (20+ GB) | 20+ GB | Qwen3-TTS-1.7B | 256kbps, 48kHz, −14 LUFS |
+| Low (<9 GB) | <9 GB | Qwen3-TTS-0.6B | 192kbps, 44.1kHz |
+| Mid (9–18 GB) | 9–18 GB | Qwen3-TTS-1.7B | 192kbps, 44.1kHz |
+| High (18+ GB) | 18+ GB | Qwen3-TTS-1.7B | 256kbps, 48kHz, −14 LUFS |
 
 ## Quick Start
 
 ```bash
-cp .env.example .env
-# Edit .env — set Ghost API keys, storage backend, server IP
-# Place voice reference: tts-service/voices/default/reference.wav
-./start.sh up -d
+git clone https://github.com/getsimpledirect/ghost-narrator.git
+cd ghost-narrator
+./install.sh      # Interactive setup: .env, storage, voice sample, Docker images
+./start.sh up -d  # Start the stack
 ```
 
 Open `http://YOUR_IP:5678` and import the three n8n workflows from `n8n/workflows/`.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full setup.
 
 ## Storage
 
@@ -43,7 +41,7 @@ STORAGE_BACKEND=gcs     # Google Cloud Storage
 STORAGE_BACKEND=s3      # AWS S3
 ```
 
-Run `bash scripts/setup-storage.sh gcs` or `bash scripts/setup-storage.sh s3` for guided setup.
+Run `./install.sh` and select your storage backend when prompted.
 
 ## License
 

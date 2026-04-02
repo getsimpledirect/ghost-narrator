@@ -5,7 +5,7 @@
 # Services:
 #   - redis: Job state persistence
 #   - n8n: Workflow orchestration
-#   - tts-service: Studio-quality TTS API (Fish Speech v1.5)
+#   - tts-service: Studio-quality TTS API (Qwen3-TTS)
 #
 # Usage:
 #   docker compose up -d
@@ -31,7 +31,7 @@ services:
     environment:
       - HARDWARE_TIER=${HARDWARE_TIER:-}
     volumes:
-      - ./scripts/hardware-probe.sh:/scripts/hardware-probe.sh:ro
+      - ./scripts/init/hardware-probe.sh:/scripts/hardware-probe.sh:ro
       - tier_data:/shared
     entrypoint: ["/bin/sh", "/scripts/hardware-probe.sh"]
 
@@ -76,7 +76,7 @@ services:
     volumes:
       - ollama_models:/root/.ollama
       - tier_data:/shared:ro
-      - ./scripts/ollama-init.sh:/scripts/ollama-init.sh:ro
+      - ./scripts/init/ollama-init.sh:/scripts/ollama-init.sh:ro
     entrypoint: ["/bin/sh", "/scripts/ollama-init.sh"]
     networks:
       - pipeline_net

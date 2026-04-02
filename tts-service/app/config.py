@@ -69,6 +69,10 @@ GCS_SERVICE_ACCOUNT_KEY_PATH: Final[str] = os.environ.get(
     "GCS_SERVICE_ACCOUNT_KEY_PATH", ""
 )
 
+# GCS bucket settings (used when STORAGE_BACKEND=gcs)
+GCS_BUCKET_NAME: Final[str] = os.environ.get("GCS_BUCKET_NAME", "")
+GCS_AUDIO_PREFIX: Final[str] = os.environ.get("GCS_AUDIO_PREFIX", "audio/articles")
+
 # Audio quality (from ENGINE_CONFIG — overridable via env)
 MP3_BITRATE: Final[str] = os.environ.get("MP3_BITRATE", ENGINE_CONFIG.mp3_bitrate)
 AUDIO_SAMPLE_RATE: Final[int] = int(
@@ -89,10 +93,6 @@ try:
     )
 except ValueError:
     MAX_CHUNK_WORDS: Final[int] = ENGINE_CONFIG.tts_chunk_words
-
-# Google Cloud Storage settings
-GCS_BUCKET_NAME: Final[str] = os.environ.get("GCS_BUCKET_NAME", "")
-GCS_AUDIO_PREFIX: Final[str] = os.environ.get("GCS_AUDIO_PREFIX", "audio/articles")
 
 # Webhook settings
 N8N_CALLBACK_URL: Final[str] = os.environ.get("N8N_CALLBACK_URL", "")

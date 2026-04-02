@@ -99,7 +99,7 @@ def shutdown_executor(wait: bool = True, cancel_futures: bool = True) -> None:
 
 def synthesize_chunk(text: str, output_path: str, job_id: str = "default") -> str:
     """
-    Synthesize a single text chunk using Fish Speech v1.5 voice cloning.
+    Synthesize a single text chunk using Qwen3-TTS voice cloning.
 
     This is a synchronous function designed to run in a thread pool.
 

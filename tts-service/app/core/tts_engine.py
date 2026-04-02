@@ -39,10 +39,8 @@ logger = logging.getLogger(__name__)
 # Adjust import path if the package uses a different module name.
 try:
     from qwen_tts import QwenTTS  # type: ignore[import]
-except ImportError as e:
-    raise ImportError(
-        "qwen-tts package not found. Install with: pip install qwen-tts"
-    ) from e
+except ImportError:
+    QwenTTS = None  # type: ignore[assignment,misc]
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -69,6 +67,10 @@ class TTSEngine:
         with self._lock:
             if self._ready:
                 return
+            if QwenTTS is None:
+                raise TTSEngineError(
+                    "qwen-tts package not installed. Install with: pip install qwen-tts"
+                )
             from app.core.hardware import ENGINE_CONFIG
 
             logger.info(

@@ -48,7 +48,7 @@ from app.core.exceptions import (
     AudioProcessingError,
     StorageUploadError,
 )
-from app.config import DEVICE, GCS_BUCKET_NAME, MAX_CHUNK_WORDS, OUTPUT_DIR
+from app.config import DEVICE, GCS_BUCKET_NAME, MAX_CHUNK_WORDS, MP3_BITRATE, OUTPUT_DIR
 from app.services.audio import (
     apply_final_mastering,
     concatenate_wavs_auto,
@@ -250,7 +250,7 @@ async def run_tts_job(
         raw_size = Path(raw_wav).stat().st_size / (1024 * 1024)
         logger.info(f"[{job_id}] Raw WAV created ({raw_size:.2f} MB)")
 
-        # Step 5: Apply final mastering (-16 LUFS, 44.1kHz, 128kbps)
+        # Step 5: Apply final mastering (tier-based LUFS, sample rate, bitrate)
         await _check_status()
         logger.info(f"[{job_id}] Applying final mastering...")
         mastering_ok = await loop.run_in_executor(
@@ -267,7 +267,7 @@ async def run_tts_job(
             # Fallback: export raw WAV to MP3 without mastering
             if Path(raw_wav).exists():
                 seg = _AudioSegment.from_wav(raw_wav)
-                seg.export(final_mp3, format="mp3", bitrate="128k")
+                seg.export(final_mp3, format="mp3", bitrate=MP3_BITRATE)
                 mastering_used_fallback = True
 
         # Verify final MP3 was created
