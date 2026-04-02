@@ -166,7 +166,7 @@ class ChunkedStrategy(NarrationStrategy):
                     {
                         "role": "user",
                         "content": (
-                            f"Your previous narration was missing these items:\n"
+                            "Your previous narration was missing these items:\n"
                             + "\n".join(f"- {item}" for item in missing)
                             + f"\n\nRewrite the narration for this source, "
                             f"ensuring all items above are included:\n\n{source}"
@@ -174,8 +174,10 @@ class ChunkedStrategy(NarrationStrategy):
                     },
                 ]
                 return await _call_llm(self._client, fix_messages, self._model)
-        except (json.JSONDecodeError, Exception) as exc:
-            logger.debug("LLM completeness check skipped: %s", exc)
+        except json.JSONDecodeError as exc:
+            logger.debug("LLM completeness check returned invalid JSON: %s", exc)
+        except Exception as exc:
+            logger.warning("LLM completeness check failed: %s", exc)
         return narration
 
     async def narrate(self, text: str) -> str:

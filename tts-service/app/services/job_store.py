@@ -63,6 +63,7 @@ class JobStore:
         self.memory_store: dict[str, dict[str, Any]] = {}
         self.lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
+        self._max_memory_jobs: int = 1000
 
     async def initialize(self, redis_url: Optional[str] = None) -> None:
         """
@@ -243,6 +244,14 @@ class JobStore:
         async with self.lock:
             if job_id in self.memory_store:
                 return False
+            # Evict oldest entry if at capacity
+            if len(self.memory_store) >= self._max_memory_jobs:
+                oldest = next(iter(self.memory_store))
+                del self.memory_store[oldest]
+                logger.warning(
+                    f"Memory store at capacity ({self._max_memory_jobs}), "
+                    f"evicted oldest job: {oldest}"
+                )
             self.memory_store[job_id] = serializable_data
             return True
 
@@ -339,15 +348,20 @@ class JobStore:
         """
         if self.use_redis and self.redis_client:
             try:
-                keys = await self.redis_client.keys("job:*")
-                if not keys:
-                    return {}
-                values = await self.redis_client.mget(*keys)
                 jobs: dict[str, dict[str, Any]] = {}
-                for key, data in zip(keys, values):
-                    if data:
-                        job_id = key.replace("job:", "", 1)
-                        jobs[job_id] = json.loads(data)
+                cursor = 0
+                while True:
+                    cursor, keys = await self.redis_client.scan(
+                        cursor, match="job:*", count=100
+                    )
+                    if keys:
+                        values = await self.redis_client.mget(*keys)
+                        for key, data in zip(keys, values):
+                            if data:
+                                job_id = key.replace("job:", "", 1)
+                                jobs[job_id] = json.loads(data)
+                    if cursor == 0:
+                        break
                 return jobs
             except Exception as exc:
                 logger.error(f"Redis list failed: {exc}. Returning memory store")
@@ -366,8 +380,16 @@ class JobStore:
         """
         if self.use_redis and self.redis_client:
             try:
-                keys = await self.redis_client.keys("job:*")
-                return len(keys)
+                count = 0
+                cursor = 0
+                while True:
+                    cursor, keys = await self.redis_client.scan(
+                        cursor, match="job:*", count=100
+                    )
+                    count += len(keys)
+                    if cursor == 0:
+                        break
+                return count
             except Exception as exc:
                 logger.error(f"Redis count failed: {exc}. Counting memory store")
                 async with self.lock:

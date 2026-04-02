@@ -39,7 +39,6 @@ from fastapi.responses import FileResponse
 
 from app.config import (
     GCS_AUDIO_PREFIX,
-    GCS_BUCKET_NAME,
     MAX_JOB_ID_LENGTH,
     MAX_TEXT_LENGTH,
     OUTPUT_DIR,
@@ -150,7 +149,7 @@ async def generate(
     if not Path(VOICE_SAMPLE_PATH).exists():
         raise HTTPException(
             status_code=503,
-            detail=f"Voice sample not found at {VOICE_SAMPLE_PATH}",
+            detail="Voice sample not configured. Please contact the administrator.",
         )
 
     # Validate text is not empty
@@ -182,13 +181,12 @@ async def generate(
     created = await job_store.create_if_not_exists(job_id, initial_data)
 
     if not created:
+        # Job already exists — return its current status (no race possible)
         existing_job = await job_store.get(job_id)
-        existing_status = existing_job.get("status") if existing_job else None
-        if existing_status in ("queued", "processing", "paused"):
-            # Job is active — return the existing job rather than duplicating
-            return GenerateResponse(job_id=job_id, status=existing_status)
-        # Job is terminal (completed/failed/deleted) or missing — allow re-run
-        await job_store.set(job_id, initial_data)
+        existing_status = (
+            existing_job.get("status", "unknown") if existing_job else "unknown"
+        )
+        return GenerateResponse(job_id=job_id, status=existing_status)
 
     # Build GCS object path
     gcs_object_path = request.gcs_path or (

@@ -116,8 +116,12 @@ except ValueError:
 OUTPUT_DIR: Final[Path] = Path(os.environ.get("OUTPUT_DIR", "/app/output"))
 try:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-except (PermissionError, OSError):
-    pass  # Directory creation deferred to runtime; will fail clearly on first write
+except (PermissionError, OSError) as exc:
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "Could not create OUTPUT_DIR %s: %s. Will attempt at runtime.", OUTPUT_DIR, exc
+    )
 
 # Validation constants
 MAX_TEXT_LENGTH: Final[int] = 100_000

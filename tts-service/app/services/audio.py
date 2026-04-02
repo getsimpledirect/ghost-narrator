@@ -34,7 +34,6 @@ import logging
 import os
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 from typing import Final
 
@@ -45,10 +44,9 @@ from app.config import (
     STREAMING_THRESHOLD_MS,
     AUDIO_SAMPLE_RATE,
     TARGET_LUFS,
-    DEVICE,
 )
 from app.core.exceptions import AudioProcessingError
-from app.utils.text import get_pause_ms_after_chunk, has_quoted_speech, split_at_quotes
+from app.utils.text import get_pause_ms_after_chunk, split_at_quotes
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +173,7 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
 
         # Parse measured values from stderr JSON output
         measured_i = measured_tp = measured_lra = measured_thresh = None
-        measured_offset = target_offset = None
+        measured_offset = None
         stderr = measure_result.stderr
 
         try:
@@ -301,7 +299,7 @@ def pitch_shift_segment(segment: AudioSegment, semitones: float = -2.0) -> Audio
         original_rate = segment.frame_rate
         new_rate = int(original_rate * rate_multiplier)
 
-        subprocess.run(
+        proc = subprocess.run(
             [
                 "ffmpeg",
                 "-y",
@@ -317,16 +315,23 @@ def pitch_shift_segment(segment: AudioSegment, semitones: float = -2.0) -> Audio
             timeout=30,
         )
 
+        if proc.returncode != 0:
+            logger.warning(
+                "Pitch shift ffmpeg failed: %s",
+                proc.stderr.decode(errors="replace")[:200],
+            )
+            return segment
+
         result = AudioSegment.from_wav(tmp_out_path)
-
-        # Cleanup
-        os.unlink(tmp_in_path)
-        os.unlink(tmp_out_path)
-
         return result
+
     except Exception as exc:
         logger.warning(f"Pitch shift failed, using original: {exc}")
         return segment
+    finally:
+        for p in (tmp_in_path, tmp_out_path):
+            if p and os.path.exists(p):
+                os.unlink(p)
 
 
 def synthesize_chunk_with_quotes(
@@ -438,7 +443,6 @@ def mix_background_ambience(
         ambience = ambience + (ambience_level_db - ambience.dBFS)
 
         # Mix
-        from pydub import AudioSegment as _AS
 
         mixed = narration.overlay(ambience)
 
@@ -485,7 +489,7 @@ def upsample_audio(
                 "-i",
                 input_path,
                 "-af",
-                f"aresample=resampler=soxr:precision=33:cutoff=0.99",
+                "aresample=resampler=soxr:precision=33:cutoff=0.99",
                 "-ar",
                 str(target_sample_rate),
                 output_path,

@@ -43,7 +43,6 @@ from app.services.synthesis import get_executor
 
 if TYPE_CHECKING:
     import concurrent.futures
-    from pathlib import Path
 
     import httpx
     from google.cloud import storage as gcs

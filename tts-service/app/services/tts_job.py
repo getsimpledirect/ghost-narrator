@@ -50,7 +50,6 @@ from app.core.exceptions import (
 )
 from app.config import (
     DEVICE,
-    GCS_BUCKET_NAME,
     MAX_CHUNK_WORDS,
     MP3_BITRATE,
     OUTPUT_DIR,
@@ -92,7 +91,6 @@ async def _quality_check_and_resynthesize(
 
     Re-synthesizes failed chunks once, then uses original if still bad.
     """
-    from app.services.audio import get_audio_duration
 
     checked_paths = list(chunk_wav_paths)
     resynth_count = 0

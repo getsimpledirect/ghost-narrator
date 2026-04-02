@@ -35,14 +35,14 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 
-from app.config import DEVICE, MAX_CHUNK_WORDS
+from app.config import MAX_CHUNK_WORDS
 from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
 from app.utils.text import split_into_chunks, clean_text_for_tts
 
 if TYPE_CHECKING:
-    from app.core.tts_engine import TTSEngine
+    pass
 
 logger = logging.getLogger(__name__)
 

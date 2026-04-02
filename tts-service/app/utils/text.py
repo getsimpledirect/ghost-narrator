@@ -299,7 +299,7 @@ def _split_sentence_at_clauses(sentence: str, max_words: int) -> list[str]:
         for i in range(0, len(words), max_words):
             chunk = " ".join(words[i : i + max_words])
             # Add period if this chunk doesn't end with punctuation
-            if i + max_words < len(words) and not chunk[-1] in ".!?,":
+            if i + max_words < len(words) and chunk[-1] not in ".!?,":
                 chunk += ","
             chunks.append(chunk)
         return chunks
