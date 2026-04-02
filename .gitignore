@@ -71,6 +71,9 @@ desktop.ini
 # ─── Git Worktrees ────────────────────────────────────────────────────────────
 .worktrees/
 
+# ─── Internal workflow artifacts (superpowers plans/specs — not for public repo) ─
+docs/superpowers/
+
 # ─── Test / Coverage ──────────────────────────────────────────────────────────
 .coverage
 htmlcov/
