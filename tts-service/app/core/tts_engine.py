@@ -59,13 +59,22 @@ class TTSEngine:
                     instance._model: Optional[QwenTTS] = None
                     instance._ready = False
                     instance._lock = threading.Lock()
-                    instance._synthesis_lock = threading.Lock()  # serialises GPU inference
+                    instance._synthesis_lock = (
+                        threading.Lock()
+                    )  # serialises GPU inference
                     instance._cancelled_jobs: set[str] = set()
+                    instance._cached_voice_path: Optional[str] = (
+                        None  # pre-computed voice cache
+                    )
                     cls._instance = instance
         return cls._instance
 
     def initialize(self) -> None:
-        """Load Qwen3-TTS model into memory. Called once at startup."""
+        """Load Qwen3-TTS model into memory and pre-compute voice reference.
+
+        Called once at startup. Caches the default voice reference embedding
+        so per-job synthesis doesn't repeat the expensive load_reference call.
+        """
         with self._lock:
             if self._ready:
                 return
@@ -87,6 +96,21 @@ class TTSEngine:
                     device=DEVICE,
                     dtype=ENGINE_CONFIG.tts_precision,
                 )
+                # Pre-compute and cache the default voice reference embedding
+                from app.config import VOICE_SAMPLE_PATH
+
+                voice_path = Path(VOICE_SAMPLE_PATH)
+                if voice_path.exists():
+                    logger.info("Pre-computing voice reference: %s", voice_path)
+                    self._model.load_reference(str(voice_path))
+                    self._cached_voice_path = str(voice_path)
+                    logger.info("Voice reference cached in VRAM")
+                else:
+                    logger.warning(
+                        "Voice sample not found at %s — will load per-job",
+                        voice_path,
+                    )
+
                 self._ready = True
                 logger.info("Qwen3-TTS engine ready")
             except Exception as e:
@@ -135,7 +159,11 @@ class TTSEngine:
 
         try:
             with self._synthesis_lock:
-                self._model.load_reference(str(voice_path))
+                # Only reload voice reference if it's different from the cached one
+                voice_path_str = str(voice_path)
+                if voice_path_str != self._cached_voice_path:
+                    self._model.load_reference(voice_path_str)
+                    self._cached_voice_path = voice_path_str
                 audio_data = self._model.synthesize(text)
                 self._model.save_wav(audio_data, str(output_path))
             return str(output_path)

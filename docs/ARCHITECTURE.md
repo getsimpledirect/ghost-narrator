@@ -112,12 +112,22 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 
 Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS model and output settings.
 
-| Tier | VRAM | TTS Model | Output Quality | Notes |
-|---|---|---|---|---|
-| CPU only | None | Qwen3-TTS-0.6B | 192kbps, 44.1kHz | Parallel workers, any machine |
-| Low | 4–8 GB | Qwen3-TTS-0.6B | 192kbps, 44.1kHz | T4 / older GPUs |
-| Mid | 10–16 GB | Qwen3-TTS-1.7B | 192kbps, 44.1kHz | L4 / RTX 3060+ |
-| High | 20+ GB | Qwen3-TTS-1.7B | 256kbps, 48kHz, −14 LUFS | A100 / RTX 4090 |
+| Tier | VRAM | TTS Model | LLM | Output Quality | Features |
+|---|---|---|---|---|---|
+| CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
+| Low | 4–8 GB | Qwen3-TTS-0.6B | qwen3:4b-q4 | 192kbps, 44.1kHz | T4 / older GPUs |
+| Mid | 10–16 GB | Qwen3-TTS-1.7B | qwen3:8b-q4 | 192kbps, 44.1kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
+| **High** | **20+ GB** | **Qwen3-TTS-1.7B (fp32)** | **qwen3:14b-q4** | **256kbps, 48kHz, −14 LUFS** | **2 parallel workers, multi-voice quotes, quality re-synthesis, voice pre-caching** |
+
+**HIGH_VRAM exclusive features:**
+- **fp32 TTS precision** — cleaner audio with less quantization noise
+- **2 parallel TTS workers** — ~2x faster synthesis for multi-chunk articles
+- **qwen3:14b-q4 LLM** — significantly better narration quality (nuance, argument handling, natural phrasing)
+- **Pipelined narration+synthesis** — LLM narrates chunk N+1 while TTS synthesizes chunk N
+- **Pre-computed voice reference** — voice embedding cached at startup, saves 2-5s per job
+- **Multi-voice for quotes** — quoted speech is pitch-shifted for speaker differentiation
+- **Automatic quality re-synthesis** — chunks with excessive silence or clipping are automatically re-synthesized
+- **Information preservation LLM check** — second LLM call verifies no facts were dropped during narration
 
 Detection is performed by `scripts/init/hardware-probe.sh`, which runs as a Docker init container before the other services start. It inspects `nvidia-smi` output, writes the selected tier to `tier_data:/shared/tier.env`, and exits. Both `tts-service` and `ollama` mount this volume read-only and read the tier at startup. Override with `HARDWARE_TIER=cpu_only|low_vram|mid_vram|high_vram` in `.env`.
 
@@ -595,15 +605,17 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | CPU only | 0 GB | Ollama (CPU) + TTS (CPU) + n8n + Redis | 0 GB | ~4 GB | Any machine with 4+ cores |
 | Low (4–8 GB) | 4–8 GB | Ollama (GPU) + TTS-0.6B (GPU) + n8n + Redis | ~4–6 GB | ~6 GB | T4 / older GPUs |
 | Mid (10–16 GB) | 10–16 GB | Ollama (GPU) + TTS-1.7B (GPU) + n8n + Redis | ~8–12 GB | ~8 GB | L4 / RTX 3060+ |
-| High (20+ GB) | 20+ GB | Ollama (GPU) + TTS-1.7B (GPU) + n8n + Redis | ~12–18 GB | ~10 GB | A100 / RTX 4090 |
+| High (20+ GB) | 20+ GB | Ollama 14B (GPU) + TTS-1.7B fp32 ×2 (GPU) + n8n + Redis | ~16–18 GB | ~10 GB | A100 / RTX 4090 |
 
 **Component breakdown:**
 
 | Component | VRAM Usage | RAM Usage | Notes |
 |---|---|---|---|
-| Ollama (Qwen3-8B, GPU) | ~5–6 GB | ~2 GB | Bundled LLM for narration rewrite |
-| Ollama (Qwen3-4B, GPU) | ~3 GB | ~1.5 GB | Lighter model option |
-| Qwen3-TTS-1.7B (GPU) | ~2–3 GB | ~6 GB | Mid/high tier TTS model |
+| Ollama (Qwen3-14B-q4, GPU) | ~9 GB | ~2 GB | HIGH_VRAM LLM for premium narration |
+| Ollama (Qwen3-8B-q4, GPU) | ~5–6 GB | ~2 GB | Mid tier LLM |
+| Ollama (Qwen3-4B-q4, GPU) | ~3 GB | ~1.5 GB | Lighter model option |
+| Qwen3-TTS-1.7B fp32 (GPU) | ~7 GB | ~6 GB | HIGH_VRAM — cleaner audio, 2 workers |
+| Qwen3-TTS-1.7B fp16 (GPU) | ~3.4 GB | ~6 GB | Mid/high tier TTS model |
 | Qwen3-TTS-0.6B (GPU) | ~1–2 GB | ~3 GB | Low tier / CPU fallback |
 | Qwen3-TTS (CPU mode) | 0 GB VRAM | ~1 GB | **Recommended for most setups** |
 | Redis | 0 GB VRAM | ~50 MB | Persistent job storage |

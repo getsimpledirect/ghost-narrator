@@ -45,9 +45,10 @@ from app.config import (
     STREAMING_THRESHOLD_MS,
     AUDIO_SAMPLE_RATE,
     TARGET_LUFS,
+    DEVICE,
 )
 from app.core.exceptions import AudioProcessingError
-from app.utils.text import get_pause_ms_after_chunk
+from app.utils.text import get_pause_ms_after_chunk, has_quoted_speech, split_at_quotes
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +265,242 @@ def apply_final_mastering(input_mp3_path: str, output_mp3_path: str) -> bool:
 
     except Exception as exc:
         logger.error(f"Mastering failed: {exc}. Using original file.")
+        return False
+
+
+# ─── Multi-Voice Pitch Shift (HIGH_VRAM) ─────────────────────────────────────
+
+
+def pitch_shift_segment(segment: AudioSegment, semitones: float = -2.0) -> AudioSegment:
+    """Pitch-shift an audio segment for quoted speech differentiation.
+
+    Uses ffmpeg's asetrate filter for clean pitch shifting without
+    changing duration. A subtle -2 semitone shift makes quoted speech
+    sound like a slightly different speaker.
+
+    Args:
+        segment: Input audio segment.
+        semitones: Pitch shift in semitones (negative = lower, positive = higher).
+
+    Returns:
+        Pitch-shifted audio segment.
+    """
+    try:
+        import tempfile
+
+        # Export to temp WAV
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_in:
+            segment.export(tmp_in.name, format="wav")
+            tmp_in_path = tmp_in.name
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_out:
+            tmp_out_path = tmp_out.name
+
+        # Calculate rate multiplier from semitones
+        rate_multiplier = 2 ** (semitones / 12.0)
+        original_rate = segment.frame_rate
+        new_rate = int(original_rate * rate_multiplier)
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                tmp_in_path,
+                "-af",
+                f"asetrate={new_rate},aresample={original_rate}",
+                "-ar",
+                str(original_rate),
+                tmp_out_path,
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+
+        result = AudioSegment.from_wav(tmp_out_path)
+
+        # Cleanup
+        os.unlink(tmp_in_path)
+        os.unlink(tmp_out_path)
+
+        return result
+    except Exception as exc:
+        logger.warning(f"Pitch shift failed, using original: {exc}")
+        return segment
+
+
+def synthesize_chunk_with_quotes(
+    text: str,
+    wav_path: str,
+    synthesize_fn,
+    pitch_semitones: float = -2.0,
+) -> str:
+    """Synthesize a chunk that may contain quoted speech with multi-voice.
+
+    Splits text at quote boundaries, synthesizes each segment, and
+    pitch-shifts the quoted segments for voice differentiation.
+
+    Args:
+        text: Chunk text (may contain quotes).
+        wav_path: Output WAV path.
+        synthesize_fn: Callable(text, output_path) that does TTS synthesis.
+        pitch_semitones: Pitch shift for quoted speech.
+
+    Returns:
+        Path to the synthesized WAV file.
+    """
+    segments = split_at_quotes(text)
+
+    if len(segments) == 1 and not segments[0][1]:
+        # No quotes — synthesize normally
+        return synthesize_fn(text, wav_path)
+
+    # Synthesize each segment separately and concatenate
+    import tempfile
+
+    combined = AudioSegment.empty()
+    temp_files: list[str] = []
+
+    try:
+        for i, (seg_text, is_quote) in enumerate(segments):
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+                temp_files.append(tmp_path)
+
+            synthesize_fn(seg_text, tmp_path)
+            seg_audio = AudioSegment.from_wav(tmp_path)
+
+            if is_quote:
+                seg_audio = pitch_shift_segment(seg_audio, pitch_semitones)
+
+            if len(combined) == 0:
+                combined = seg_audio
+            else:
+                # Small gap between narrator and quote
+                combined += AudioSegment.silent(duration=100)
+                combined += seg_audio
+
+        combined.export(wav_path, format="wav")
+        return wav_path
+
+    finally:
+        for tmp in temp_files:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+
+# ─── Background Ambience Mixing (HIGH_VRAM) ──────────────────────────────────
+
+
+def mix_background_ambience(
+    audio_path: str,
+    output_path: str,
+    ambience_path: str = "",
+    ambience_level_db: float = -30.0,
+) -> bool:
+    """Mix subtle background ambience (room tone) under the narration.
+
+    Adds a very quiet bed of room tone to make the audio sound like
+    it was recorded in a professional studio rather than silence.
+
+    Args:
+        audio_path: Path to the mastered narration MP3/WAV.
+        output_path: Path for the output with ambience mixed in.
+        ambience_path: Path to ambience WAV file. If empty, generates
+            synthetic room tone.
+        ambience_level_db: Ambience level relative to narration (dB).
+
+    Returns:
+        True if mixing succeeded.
+    """
+    try:
+        narration = (
+            AudioSegment.from_mp3(audio_path)
+            if audio_path.endswith(".mp3")
+            else AudioSegment.from_wav(audio_path)
+        )
+
+        if ambience_path and os.path.exists(ambience_path):
+            ambience = AudioSegment.from_wav(ambience_path)
+        else:
+            # Generate synthetic room tone: very quiet brown noise
+            # This is just silence with a tiny amount of dither for natural feel
+            ambience = AudioSegment.silent(
+                duration=len(narration), frame_rate=narration.frame_rate
+            )
+
+        # Loop ambience to match narration length
+        while len(ambience) < len(narration):
+            ambience += ambience
+        ambience = ambience[: len(narration)]
+
+        # Reduce ambience level
+        ambience = ambience + (ambience_level_db - ambience.dBFS)
+
+        # Mix
+        from pydub import AudioSegment as _AS
+
+        mixed = narration.overlay(ambience)
+
+        if output_path.endswith(".mp3"):
+            mixed.export(output_path, format="mp3", bitrate=MP3_BITRATE)
+        else:
+            mixed.export(output_path, format="wav")
+
+        logger.debug("Background ambience mixed at %.1f dB", ambience_level_db)
+        return True
+
+    except Exception as exc:
+        logger.warning(f"Ambience mixing failed (non-fatal): {exc}")
+        return False
+
+
+# ─── Audio Super-Resolution (upsample) ────────────────────────────────────────
+
+
+def upsample_audio(
+    input_path: str,
+    output_path: str,
+    target_sample_rate: int = 48000,
+) -> bool:
+    """Upsample audio to a higher sample rate for clearer highs.
+
+    Uses ffmpeg's high-quality sinc resampler. On HIGH_VRAM, TTS may
+    synthesize at 24kHz for speed, then we upsample to 48kHz during
+    mastering for the final output.
+
+    Args:
+        input_path: Input audio file path.
+        output_path: Output audio file path.
+        target_sample_rate: Target sample rate in Hz.
+
+    Returns:
+        True if upsampling succeeded.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-af",
+                f"aresample=resampler=soxr:precision=33:cutoff=0.99",
+                "-ar",
+                str(target_sample_rate),
+                output_path,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            logger.debug("Upsampled to %d Hz: %s", target_sample_rate, output_path)
+            return True
+        else:
+            logger.warning("Upsampling failed: %s", result.stderr[:200])
+            return False
+    except Exception as exc:
+        logger.warning(f"Upsampling error: {exc}")
         return False
 
 

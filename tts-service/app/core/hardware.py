@@ -1,4 +1,5 @@
 """Hardware detection and engine configuration for tiered model selection."""
+
 from __future__ import annotations
 
 import logging
@@ -8,6 +9,7 @@ from enum import Enum
 
 try:
     import torch
+
     _TORCH_AVAILABLE = True
 except ImportError:
     _TORCH_AVAILABLE = False
@@ -15,13 +17,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-_GB = 1024 ** 3
+_GB = 1024**3
 
 
 class HardwareTier(str, Enum):
-    CPU_ONLY  = "cpu_only"
-    LOW_VRAM  = "low_vram"
-    MID_VRAM  = "mid_vram"
+    CPU_ONLY = "cpu_only"
+    LOW_VRAM = "low_vram"
+    MID_VRAM = "mid_vram"
     HIGH_VRAM = "high_vram"
 
 
@@ -30,11 +32,11 @@ class EngineConfig:
     tier: HardwareTier
     tts_model: str
     tts_device: str
-    tts_precision: str          # "fp32" or "fp16"
+    tts_precision: str  # "fp32" or "fp16"
     llm_model: str
-    narration_strategy: str     # "chunked" or "single_shot"
+    narration_strategy: str  # "chunked" or "single_shot"
     narration_chunk_words: int  # LLM narration chunk size
-    tts_chunk_words: int        # TTS synthesis chunk size
+    tts_chunk_words: int  # TTS synthesis chunk size
     synthesis_workers: int
     mp3_bitrate: str
     sample_rate: int
@@ -88,12 +90,12 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tier=HardwareTier.HIGH_VRAM,
         tts_model="Qwen/Qwen3-TTS-1.7B",
         tts_device="cuda",
-        tts_precision="fp16",
-        llm_model="qwen3:8b-q4",
-        narration_strategy="single_shot",
-        narration_chunk_words=9999,  # no fallback on HIGH_VRAM
+        tts_precision="fp32",  # fp32 for cleaner audio (have the VRAM)
+        llm_model="qwen3:14b-q4",  # larger model for better narration
+        narration_strategy="chunked",  # chunked enables pipelined narrate+synthesize
+        narration_chunk_words=2500,  # large chunks, pipelining hides latency
         tts_chunk_words=200,
-        synthesis_workers=1,
+        synthesis_workers=2,  # parallel TTS on GPU (2 workers)
         mp3_bitrate="256k",
         sample_rate=48000,
         target_lufs=-14.0,
@@ -124,7 +126,9 @@ def get_engine_config() -> EngineConfig:
             tier = HardwareTier(override)
             logger.info("HARDWARE_TIER override: %s", tier.value)
         except ValueError:
-            logger.warning("Invalid HARDWARE_TIER=%r — probing hardware instead", override)
+            logger.warning(
+                "Invalid HARDWARE_TIER=%r — probing hardware instead", override
+            )
             tier = _probe_tier()
     else:
         tier = _probe_tier()

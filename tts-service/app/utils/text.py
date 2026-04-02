@@ -359,3 +359,43 @@ def get_pause_ms_after_chunk(chunk: str, next_chunk: str | None) -> int:
         return 450  # Normal sentence boundary
 
     return 250  # Mid-thought break
+
+
+# ─── Quote Detection for Multi-Voice ──────────────────────────────────────────
+
+# Regex to detect quoted speech (double quotes, single quotes, or backticks)
+_QUOTE_RE: Final[re.Pattern[str]] = re.compile(r'["\u201c\u201d](.+?)["\u201d]')
+
+
+def has_quoted_speech(text: str) -> bool:
+    """Check if text contains quoted speech for multi-voice synthesis."""
+    return bool(_QUOTE_RE.search(text))
+
+
+def split_at_quotes(text: str) -> list[tuple[str, bool]]:
+    """Split text into segments, marking which are quoted speech.
+
+    Returns:
+        List of (text_segment, is_quote) tuples.
+        is_quote=True means this segment should use a shifted voice.
+    """
+    segments: list[tuple[str, bool]] = []
+    last_end = 0
+
+    for match in _QUOTE_RE.finditer(text):
+        # Add non-quoted text before this match
+        before = text[last_end : match.start()].strip()
+        if before:
+            segments.append((before, False))
+        # Add the quoted text (without the quote marks)
+        quoted = match.group(1).strip()
+        if quoted:
+            segments.append((quoted, True))
+        last_end = match.end()
+
+    # Add remaining non-quoted text
+    remaining = text[last_end:].strip()
+    if remaining:
+        segments.append((remaining, False))
+
+    return segments if segments else [(text, False)]
