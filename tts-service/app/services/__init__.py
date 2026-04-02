@@ -52,13 +52,15 @@ from app.services.notification import (
     notify_n8n,
 )
 from app.services.storage import (
-    build_gcs_path,
-    cleanup_gcs_client,
+    StorageBackend,
+    get_storage_backend,
     get_gcs_client,
+    upload_to_gcs,
+    is_gcs_enabled,
+    build_gcs_path,
     get_public_url,
     initialize_gcs_client,
-    is_gcs_enabled,
-    upload_to_gcs,
+    cleanup_gcs_client,
 )
 from app.services.synthesis import (
     cleanup_chunk_files,
@@ -96,13 +98,15 @@ __all__ = [
     "notify_job_failed",
     "notify_n8n",
     # Storage
-    "build_gcs_path",
-    "cleanup_gcs_client",
+    "StorageBackend",
+    "get_storage_backend",
     "get_gcs_client",
+    "upload_to_gcs",
+    "is_gcs_enabled",
+    "build_gcs_path",
     "get_public_url",
     "initialize_gcs_client",
-    "is_gcs_enabled",
-    "upload_to_gcs",
+    "cleanup_gcs_client",
     # Synthesis
     "cleanup_chunk_files",
     "get_executor",

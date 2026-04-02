@@ -148,7 +148,8 @@ async def notify_n8n(
     payload = {
         "job_id": job_id,
         "status": status,
-        "gcs_uri": gcs_uri,
+        "audio_uri": gcs_uri,  # New storage-agnostic field
+        "gcs_uri": gcs_uri,  # Backward compat
         "error": error,
     }
 

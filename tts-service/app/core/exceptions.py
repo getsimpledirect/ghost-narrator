@@ -70,16 +70,14 @@ class StorageError(TTSServiceError):
     pass
 
 
-class GCSUploadError(StorageError):
-    """Raised when uploading to Google Cloud Storage fails."""
+class StorageUploadError(StorageError):
+    """Raised when any storage backend upload fails."""
 
-    def __init__(
-        self, message: str, bucket: Optional[str] = None, path: Optional[str] = None
-    ) -> None:
-        self.bucket = bucket
-        self.path = path
-        details = f"bucket={bucket}, path={path}" if bucket or path else None
-        super().__init__(message, details)
+    pass
+
+
+# Backward-compatible alias
+GCSUploadError = StorageUploadError
 
 
 class JobNotFoundError(TTSServiceError):

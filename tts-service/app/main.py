@@ -40,6 +40,7 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.api.routes import health, tts
+from app.api.routes.voices import router as voices_router
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
 from app.core.tts_engine import initialize_tts_engine
 from app.services.job_store import get_job_store, initialize_job_store
@@ -209,6 +210,7 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(tts.router)
+app.include_router(voices_router)
 
 
 if __name__ == "__main__":
