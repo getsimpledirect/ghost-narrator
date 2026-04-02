@@ -6,17 +6,21 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     labels:
       - "dependencies"
       - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
     groups:
-      python-minor:
+      python-packages:
         patterns:
           - "*"
-        update-types:
-          - "minor"
-          - "patch"
+        exclude-patterns:
+          - "torch*"
+          - "triton*"
+          - "transformers*"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
@@ -24,10 +28,12 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
     labels:
       - "dependencies"
       - "ci"
+    commit-message:
+      prefix: "ci"
     groups:
       actions:
         patterns:
