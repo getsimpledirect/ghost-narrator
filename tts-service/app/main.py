@@ -44,17 +44,14 @@ from app.api.routes import health, tts
 from app.api.routes import metrics as metrics_router
 from app.cache.redis_cache import get_cache
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
+from app.core.logging import setup_logging
 from app.core.tts_engine import initialize_tts_engine
 from app.services.job_store import get_job_store, initialize_job_store
 from app.services.notification import close_http_client, initialize_http_client
 from app.services.storage import cleanup_gcs_client, initialize_gcs_client
 from app.services.synthesis import initialize_executor, shutdown_executor
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s — %(message)s',
-)
-logger = logging.getLogger('tts-service')
+logger = setup_logging()
 
 # OpenTelemetry instrumentation - optional
 try:
