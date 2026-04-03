@@ -35,6 +35,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
 
 from fastapi import FastAPI
+import logging
 
 from app import __version__
 from app.api.middleware import APIVersionMiddleware
@@ -48,6 +49,12 @@ from app.services.notification import close_http_client, initialize_http_client
 from app.services.storage import cleanup_gcs_client, initialize_gcs_client
 from app.services.synthesis import initialize_executor, shutdown_executor
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+)
+logger = logging.getLogger("tts-service")
+
 # OpenTelemetry instrumentation - optional
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -55,12 +62,6 @@ try:
     OPENTELEMETRY_AVAILABLE = True
 except ImportError:
     OPENTELEMETRY_AVAILABLE = False
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-)
-logger = logging.getLogger("tts-service")
 
 # Module-level reference to the background model loader task.
 # Stored here to prevent it from being garbage collected and to allow
@@ -222,13 +223,14 @@ app.add_middleware(RateLimitMiddleware, requests_per_minute=60)
 app.include_router(health.router)
 app.include_router(tts.router)
 
-# Lazy import voices router to make python-multipart optional
+# Lazy import voices router - check for python-multipart first
 try:
+    import python_multipart  # noqa: F401 - just check availability
     from app.api.routes.voices import router as voices_router
 
     app.include_router(voices_router)
-except ImportError as e:
-    logger.warning(f"Voices endpoint not available: {e}")
+except ImportError:
+    logger.warning("Voices endpoint not available: python-multipart not installed")
 
 app.include_router(metrics_router.router)
 
