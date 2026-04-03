@@ -443,35 +443,32 @@ tts-service/
 │   │
 │   ├── domains/               # Domain-driven business logic
 │   │   ├── __init__.py
-│   │   ├── audio/             # Audio processing domain
-│   │   │   └── __init__.py    # Concatenation, normalization, mastering, validation
 │   │   ├── job/               # Job management domain
 │   │   │   ├── __init__.py
 │   │   │   ├── state.py       # JobState enum and JobStatus dataclass
-│   │   │   ├── callbacks.py   # Job callback notifications
 │   │   │   ├── store.py       # Redis/in-memory job storage
 │   │   │   ├── notification.py # Webhook notifications (n8n)
 │   │   │   ├── runner.py      # Background job runner entry point
 │   │   │   └── tts_job.py     # Complete TTS pipeline orchestration
 │   │   ├── narration/         # LLM narration script generation
 │   │   │   ├── __init__.py
-│   │   │   ├── base.py        # NarrationStrategy ABC
+│   │   │   ├── factory.py     # Strategy factory (selects by hardware tier)
 │   │   │   ├── strategy.py    # ChunkedStrategy + SingleShotStrategy
 │   │   │   ├── prompt.py      # Tier-specific system prompts
 │   │   │   └── validator.py   # NarrationValidator (entity preservation)
 │   │   ├── storage/           # Pluggable storage backends
 │   │   │   ├── __init__.py    # Factory: get_storage_backend()
-│   │   │   ├── base.py        # StorageBackend ABC
 │   │   │   ├── local.py       # LocalStorageBackend (local:// URIs)
 │   │   │   ├── gcs.py         # GCSStorageBackend (gs:// URIs)
 │   │   │   └── s3.py          # S3StorageBackend (s3:// URIs)
 │   │   ├── synthesis/         # TTS synthesis orchestration
 │   │   │   ├── __init__.py
-│   │   │   ├── base.py        # SynthesisPipeline ABC
 │   │   │   ├── chunker.py     # Text chunking for synthesis
 │   │   │   ├── concatenate.py # Audio concatenation utilities
 │   │   │   ├── normalize.py   # Audio normalization
 │   │   │   ├── mastering.py   # Audio mastering with fallback
+│   │   │   ├── quality.py     # Audio quality validation and mastering wrapper
+│   │   │   ├── quality_check.py # Per-chunk quality check and resynthesis
 │   │   │   └── service.py     # Synthesis orchestration (sequential/parallel)
 │   │   └── voices/            # Voice profile management
 │   │       ├── __init__.py
@@ -503,7 +500,9 @@ tts-service/
 | `app/core/exceptions.py` | Domain-specific exception hierarchy |
 | `app/domains/job/store.py` | Job persistence with Redis + in-memory fallback |
 | `app/domains/synthesis/service.py` | Parallel/sequential chunk synthesis |
-| `app/domains/audio/__init__.py` | WAV concatenation with streaming for large files |
+| `app/domains/synthesis/concatenate.py` | WAV concatenation with streaming for large files |
+| `app/domains/synthesis/normalize.py` | EBU R128 loudness normalization |
+| `app/domains/synthesis/mastering.py` | Two-pass audio mastering with loudnorm |
 | `app/domains/narration/strategy.py` | ChunkedStrategy (CPU/LOW) and SingleShotStrategy (MID/HIGH) |
 | `app/domains/narration/validator.py` | Entity-level information preservation check |
 | `app/domains/storage/` | Pluggable storage: LocalStorageBackend, GCSStorageBackend, S3StorageBackend |

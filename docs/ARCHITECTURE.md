@@ -206,7 +206,7 @@ Use `docker compose` to bring up all services:
 docker compose up -d        # Start all services in background
 docker compose down          # Stop all services
 docker compose logs -f       # Tail logs from all services
-docker compose restart tts   # Restart a single service
+docker compose restart tts-service   # Restart a single service
 ```
 
 `install.sh` handles:
@@ -760,33 +760,32 @@ ghost-narrator/
     │   │   └── bulkhead.py        # Bulkhead pattern for job isolation
     │   │
     │   ├── domains/               # Domain-driven business logic
-    │   │   ├── audio/
-    │   │   │   └── __init__.py    # WAV concatenation, LUFS normalization, mastering, quality validation
     │   │   ├── job/
     │   │   │   ├── __init__.py
     │   │   │   ├── state.py       # JobState enum and JobStatus dataclass
     │   │   │   ├── store.py       # Redis + in-memory job storage with fallback
     │   │   │   ├── notification.py# Webhook callbacks (n8n) with circuit breaker
-    │   │   │   ├── callbacks.py   # Job lifecycle callbacks
     │   │   │   ├── runner.py      # Entry point for TTS job execution
     │   │   │   └── tts_job.py     # Complete TTS pipeline runner
     │   │   ├── narration/
-    │   │   │   ├── base.py        # Abstract NarrationStrategy
+    │   │   │   ├── factory.py     # Strategy factory (selects by hardware tier)
     │   │   │   ├── strategy.py    # Single-shot and chunked strategies
     │   │   │   ├── prompt.py      # System prompts and continuity instructions
     │   │   │   └── validator.py   # Narration completeness validation
     │   │   ├── storage/
-    │   │   │   ├── base.py        # Abstract StorageBackend
+    │   │   │   ├── __init__.py    # Factory + exports (LocalStorageBackend, GCS, S3)
     │   │   │   ├── local.py       # Local filesystem storage
     │   │   │   ├── gcs.py         # Google Cloud Storage backend
     │   │   │   └── s3.py          # AWS S3 storage backend
     │   │   ├── synthesis/
-    │   │   │   ├── base.py        # Abstract SynthesisPipeline
+    │   │   │   ├── __init__.py    # Exports for synthesis module
     │   │   │   ├── service.py     # Synthesis orchestration (parallel/sequential)
     │   │   │   ├── chunker.py     # Text chunking logic
     │   │   │   ├── concatenate.py # Audio concatenation utilities
     │   │   │   ├── normalize.py   # Audio normalization
-    │   │   │   └── mastering.py   # Audio mastering with fallback
+    │   │   │   ├── mastering.py   # Audio mastering with fallback
+    │   │   │   ├── quality.py     # Audio quality validation and mastering wrapper
+    │   │   │   └── quality_check.py # Per-chunk quality check and resynthesis
     │   │   └── voices/
     │   │       ├── registry.py    # Voice profile management
     │   │       └── upload.py      # Voice sample validation
