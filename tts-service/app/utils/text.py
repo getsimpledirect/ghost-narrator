@@ -43,47 +43,47 @@ DEFAULT_MAX_CHUNK_WORDS: Final[int] = 200
 
 # Common abbreviations that trip up TTS models when not expanded
 _ABBREVIATIONS: Final[dict[str, str]] = {
-    "Dr.": "Doctor",
-    "Mr.": "Mister",
-    "Mrs.": "Missus",
-    "Ms.": "Miss",
-    "Prof.": "Professor",
-    "Sr.": "Senior",
-    "Jr.": "Junior",
-    "St.": "Saint",
-    "vs.": "versus",
-    "etc.": "et cetera",
-    "e.g.": "for example",
-    "i.e.": "that is",
-    "approx.": "approximately",
-    "dept.": "department",
-    "govt.": "government",
-    "Inc.": "Incorporated",
-    "Corp.": "Corporation",
-    "Ltd.": "Limited",
-    "Co.": "Company",
+    'Dr.': 'Doctor',
+    'Mr.': 'Mister',
+    'Mrs.': 'Missus',
+    'Ms.': 'Miss',
+    'Prof.': 'Professor',
+    'Sr.': 'Senior',
+    'Jr.': 'Junior',
+    'St.': 'Saint',
+    'vs.': 'versus',
+    'etc.': 'et cetera',
+    'e.g.': 'for example',
+    'i.e.': 'that is',
+    'approx.': 'approximately',
+    'dept.': 'department',
+    'govt.': 'government',
+    'Inc.': 'Incorporated',
+    'Corp.': 'Corporation',
+    'Ltd.': 'Limited',
+    'Co.': 'Company',
 }
 
 # Regex for remaining markdown artifacts
-_MARKDOWN_RE: Final[re.Pattern[str]] = re.compile(r"[#*_~>`]+")
+_MARKDOWN_RE: Final[re.Pattern[str]] = re.compile(r'[#*_~>`]+')
 # Multiple consecutive punctuation (e.g., "...", "!!", "??")
-_MULTI_PUNCT_RE: Final[re.Pattern[str]] = re.compile(r"([.!?]){3,}")
+_MULTI_PUNCT_RE: Final[re.Pattern[str]] = re.compile(r'([.!?]){3,}')
 # Stray brackets or parentheses with empty content
-_EMPTY_BRACKETS_RE: Final[re.Pattern[str]] = re.compile(r"\(\s*\)|\[\s*\]|\{\s*\}")
+_EMPTY_BRACKETS_RE: Final[re.Pattern[str]] = re.compile(r'\(\s*\)|\[\s*\]|\{\s*\}')
 # URLs that the LLM didn't fully remove
-_URL_RE: Final[re.Pattern[str]] = re.compile(r"https?://\S+")
+_URL_RE: Final[re.Pattern[str]] = re.compile(r'https?://\S+')
 # Smart quotes and special characters
 _SPECIAL_CHARS: Final[dict[str, str]] = {
-    "\u2018": "'",  # left single quote
-    "\u2019": "'",  # right single quote
-    "\u201c": '"',  # left double quote
-    "\u201d": '"',  # right double quote
-    "\u2014": ",",  # em dash → comma pause
-    "\u2013": ",",  # en dash → comma pause
-    "\u2026": ".",  # ellipsis
-    "\u00a0": " ",  # non-breaking space
-    "\u200b": "",  # zero-width space
-    "\u2060": "",  # word joiner
+    '\u2018': "'",  # left single quote
+    '\u2019': "'",  # right single quote
+    '\u201c': '"',  # left double quote
+    '\u201d': '"',  # right double quote
+    '\u2014': ',',  # em dash → comma pause
+    '\u2013': ',',  # en dash → comma pause
+    '\u2026': '.',  # ellipsis
+    '\u00a0': ' ',  # non-breaking space
+    '\u200b': '',  # zero-width space
+    '\u2060': '',  # word joiner
 }
 
 
@@ -110,24 +110,24 @@ def clean_text_for_tts(text: str) -> str:
         text = text.replace(char, replacement)
 
     # Strip remaining markdown artifacts
-    text = _MARKDOWN_RE.sub("", text)
+    text = _MARKDOWN_RE.sub('', text)
 
     # Remove URLs (LLM should have converted to spoken form)
-    text = _URL_RE.sub("", text)
+    text = _URL_RE.sub('', text)
 
     # Expand abbreviations (word-boundary safe)
     for abbr, expansion in _ABBREVIATIONS.items():
-        text = re.sub(re.escape(abbr) + r"\b", expansion, text)
+        text = re.sub(re.escape(abbr) + r'\b', expansion, text)
 
     # Normalize ellipsis and repeated punctuation
-    text = _MULTI_PUNCT_RE.sub(r"\1", text)
+    text = _MULTI_PUNCT_RE.sub(r'\1', text)
 
     # Remove empty brackets
-    text = _EMPTY_BRACKETS_RE.sub("", text)
+    text = _EMPTY_BRACKETS_RE.sub('', text)
 
     # Normalize whitespace
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
 
     # Strip leading/trailing whitespace
     text = text.strip()
@@ -139,28 +139,28 @@ def clean_text_for_tts(text: str) -> str:
 # Only genuine topic-transition openers — not common sentence starters like
 # "the", "for", "so", "if", "this" which match nearly every sentence.
 _TRANSITION_STARTERS: Final[tuple[str, ...]] = (
-    "now,",
-    "however",
-    "meanwhile",
-    "turning to",
-    "on the other hand",
-    "in other news",
-    "speaking of",
-    "that said",
-    "moving on",
-    "in contrast",
-    "furthermore",
-    "moreover",
-    "additionally",
-    "but despite",
-    "yet despite",
-    "looking ahead",
-    "in summary",
-    "to summarize",
-    "finally,",
-    "lastly,",
-    "in other words",
-    "put another way",
+    'now,',
+    'however',
+    'meanwhile',
+    'turning to',
+    'on the other hand',
+    'in other news',
+    'speaking of',
+    'that said',
+    'moving on',
+    'in contrast',
+    'furthermore',
+    'moreover',
+    'additionally',
+    'but despite',
+    'yet despite',
+    'looking ahead',
+    'in summary',
+    'to summarize',
+    'finally,',
+    'lastly,',
+    'in other words',
+    'put another way',
 )
 
 
@@ -190,18 +190,18 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
         return []
 
     # Normalize whitespace
-    text = re.sub(r"\r\n", "\n", text)
-    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r'\r\n', '\n', text)
+    text = re.sub(r'[ \t]+', ' ', text)
 
     # Split into paragraphs
-    paragraphs = [p.strip() for p in re.split(r"\n\n+", text) if p.strip()]
+    paragraphs = [p.strip() for p in re.split(r'\n\n+', text) if p.strip()]
 
     chunks: list[str] = []
 
     for para in paragraphs:
         # Split paragraph into sentences using common sentence endings
         # Keep the punctuation with the sentence
-        sentences = re.split(r"(?<=[.!?])\s+", para.strip())
+        sentences = re.split(r'(?<=[.!?])\s+', para.strip())
         sentences = [s.strip() for s in sentences if s.strip()]
 
         current_chunk_words: list[str] = []
@@ -217,11 +217,8 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
 
             # If adding this sentence exceeds max_words and we already have content,
             # flush current chunk and start a new one
-            if (
-                current_word_count + sentence_word_count > max_words
-                and current_chunk_words
-            ):
-                chunks.append(" ".join(current_chunk_words))
+            if current_word_count + sentence_word_count > max_words and current_chunk_words:
+                chunks.append(' '.join(current_chunk_words))
                 current_chunk_words = []
                 current_word_count = 0
 
@@ -230,7 +227,7 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
             if sentence_word_count > max_words:
                 # Flush any accumulated chunk first
                 if current_chunk_words:
-                    chunks.append(" ".join(current_chunk_words))
+                    chunks.append(' '.join(current_chunk_words))
                     current_chunk_words = []
                     current_word_count = 0
 
@@ -249,13 +246,13 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
 
             # If this single sentence is already at/over the limit, flush immediately
             if current_word_count >= max_words:
-                chunks.append(" ".join(current_chunk_words))
+                chunks.append(' '.join(current_chunk_words))
                 current_chunk_words = []
                 current_word_count = 0
 
         # Flush remaining words in this paragraph
         if current_chunk_words:
-            chunks.append(" ".join(current_chunk_words))
+            chunks.append(' '.join(current_chunk_words))
 
     # Filter empty or trivially short chunks
     chunks = [c.strip() for c in chunks if c.strip()]
@@ -263,8 +260,8 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
     if not chunks:
         # All content was filtered — return full text as one chunk and warn
         logger.warning(
-            f"Text chunking produced no valid chunks for {len(text)}-char input; "
-            "returning as single chunk (may exceed max_words limit)"
+            f'Text chunking produced no valid chunks for {len(text)}-char input; '
+            'returning as single chunk (may exceed max_words limit)'
         )
         return [text.strip()]
     return chunks
@@ -285,11 +282,11 @@ def _split_sentence_at_clauses(sentence: str, max_words: int) -> list[str]:
     """
     # Split at clause boundaries: comma, semicolon, or conjunction
     # Keep the punctuation with the preceding clause
-    parts = re.split(r"(?<=[,;])\s+", sentence)
+    parts = re.split(r'(?<=[,;])\s+', sentence)
     if len(parts) == 1:
         # No clause boundaries found — split at "and", "but", "or", "because"
         parts = re.split(
-            r"\s+(?=and\s|but\s|or\s|because\s|which\s|that\s|while\s|whereas\s)",
+            r'\s+(?=and\s|but\s|or\s|because\s|which\s|that\s|while\s|whereas\s)',
             sentence,
         )
     if len(parts) == 1:
@@ -297,10 +294,10 @@ def _split_sentence_at_clauses(sentence: str, max_words: int) -> list[str]:
         words = sentence.split()
         chunks = []
         for i in range(0, len(words), max_words):
-            chunk = " ".join(words[i : i + max_words])
+            chunk = ' '.join(words[i : i + max_words])
             # Add period if this chunk doesn't end with punctuation
-            if i + max_words < len(words) and chunk[-1] not in ".!?,":
-                chunk += ","
+            if i + max_words < len(words) and chunk[-1] not in '.!?,':
+                chunk += ','
             chunks.append(chunk)
         return chunks
 
@@ -312,7 +309,7 @@ def _split_sentence_at_clauses(sentence: str, max_words: int) -> list[str]:
     for part in parts:
         part_words = len(part.split())
         if current_words + part_words > max_words and current:
-            result.append(" ".join(current))
+            result.append(' '.join(current))
             current = [part]
             current_words = part_words
         else:
@@ -320,7 +317,7 @@ def _split_sentence_at_clauses(sentence: str, max_words: int) -> list[str]:
             current_words += part_words
 
     if current:
-        result.append(" ".join(current))
+        result.append(' '.join(current))
 
     return result or [sentence]
 
@@ -347,11 +344,7 @@ def get_pause_ms_after_chunk(chunk: str, next_chunk: str | None) -> int:
     chunk_stripped = chunk.strip()
 
     # Paragraph-level break: current ends with sentence-final punctuation
-    if (
-        chunk_stripped.endswith(".")
-        or chunk_stripped.endswith("!")
-        or chunk_stripped.endswith("?")
-    ):
+    if chunk_stripped.endswith('.') or chunk_stripped.endswith('!') or chunk_stripped.endswith('?'):
         # Check if next chunk seems to be a new thought (starts with transition words)
         next_lower = next_chunk.lower().strip()
         if any(next_lower.startswith(t) for t in _TRANSITION_STARTERS):

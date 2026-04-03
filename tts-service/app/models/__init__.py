@@ -36,10 +36,10 @@ from app.models.schemas import (
 )
 
 __all__ = [
-    "ErrorResponse",
-    "GenerateRequest",
-    "GenerateResponse",
-    "HealthResponse",
-    "JobListResponse",
-    "StatusResponse",
+    'ErrorResponse',
+    'GenerateRequest',
+    'GenerateResponse',
+    'HealthResponse',
+    'JobListResponse',
+    'StatusResponse',
 ]
