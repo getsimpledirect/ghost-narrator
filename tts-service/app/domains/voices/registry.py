@@ -27,6 +27,7 @@ Manages voice profiles under a voices/ directory.
 """
 
 from __future__ import annotations
+import re
 from pathlib import Path
 
 
@@ -39,10 +40,17 @@ class VoiceRegistry:
         voices/profiles/<name>.wav     → named profile "<name>"
     """
 
+    _VALID_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
     def __init__(self, voices_dir: Path) -> None:
         self._voices_dir = voices_dir
         self._profiles_dir = voices_dir / 'profiles'
         self._profiles_dir.mkdir(parents=True, exist_ok=True)
+
+    def _validate_name(self, name: str) -> None:
+        """Validate that a profile name is alphanumeric (hyphens/underscores allowed)."""
+        if not self._VALID_NAME_PATTERN.match(name):
+            raise ValueError('Profile name must be alphanumeric (hyphens/underscores allowed)')
 
     def resolve(self, profile_name: str) -> Path:
         """Return Path to the WAV file for profile_name. Raises FileNotFoundError if not found."""
@@ -57,6 +65,7 @@ class VoiceRegistry:
                 'Voice profile not found: default. '
                 'Place a reference.wav in voices/default/ or voices/'
             )
+        self._validate_name(profile_name)
         path = self._profiles_dir / f'{profile_name}.wav'
         if not path.exists():
             raise FileNotFoundError(f'Voice profile not found: {profile_name}. Expected at {path}')
@@ -64,6 +73,7 @@ class VoiceRegistry:
 
     def profile_path(self, name: str) -> Path:
         """Return the path where a named profile WAV should be stored."""
+        self._validate_name(name)
         return self._profiles_dir / f'{name}.wav'
 
     def list_profiles(self) -> list[str]:
@@ -77,5 +87,6 @@ class VoiceRegistry:
         """Delete a named profile. Raises ValueError if trying to delete 'default'."""
         if profile_name == 'default':
             raise ValueError('Cannot delete the default voice profile')
+        self._validate_name(profile_name)
         path = self.resolve(profile_name)
-        path.unlink()
+        path.unlink(missing_ok=True)

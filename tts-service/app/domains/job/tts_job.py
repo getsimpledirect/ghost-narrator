@@ -53,11 +53,18 @@ from app.config import (
     MAX_CHUNK_WORDS,
     MP3_BITRATE,
     OUTPUT_DIR,
-    get_narration_strategy,
 )
-from app.domains.synthesis.normalize import normalize_audio as normalize_chunk_to_target_lufs
+from app.domains.narration.factory import get_narration_strategy
+from app.domains.synthesis.normalize import (
+    normalize_audio as normalize_chunk_to_target_lufs,
+    DEFAULT_TARGET_LUFS,
+)
 from app.domains.synthesis.concatenate import concatenate_audio_auto as concatenate_wavs_auto
 from app.domains.synthesis.quality import validate_audio_quality, apply_final_mastering
+from app.domains.synthesis.quality_check import (
+    _quality_check_and_resynthesize,
+    _resynthesize_chunk,
+)
 from app.domains.job.store import get_job_store
 from app.domains.job.notification import notify_job_completed, notify_job_failed
 from app.domains.storage import get_storage_backend
@@ -69,99 +76,6 @@ from app.domains.synthesis.service import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-async def _quality_check_and_resynthesize(
-    chunk_wav_paths: list[str],
-    chunk_texts: list[str],
-    job_id: str,
-    engine,
-    loop,
-    executor,
-) -> list[str]:
-    """Check audio quality of each chunk and re-synthesize bad ones.
-
-    HIGH_VRAM only — checks for:
-    - Excessive silence (>50% of chunk is silence)
-    - Clipping (samples at 0dBFS)
-    - Very low energy (likely failed synthesis)
-
-    Re-synthesizes failed chunks once, then uses original if still bad.
-    """
-
-    checked_paths = list(chunk_wav_paths)
-    resynth_count = 0
-
-    for i, wav_path in enumerate(chunk_wav_paths):
-        try:
-            seg = _AudioSegment.from_wav(wav_path)
-            duration_ms = len(seg)
-            if duration_ms < 100:
-                # Extremely short — likely failed
-                logger.warning(f'[{job_id}] Chunk {i} is only {duration_ms}ms — re-synthesizing')
-                checked_paths[i] = await _resynthesize_chunk(
-                    i, chunk_texts, job_id, engine, loop, executor
-                )
-                resynth_count += 1
-                continue
-
-            # Check silence ratio
-            silence_threshold = seg.dBFS - 30  # 30dB below average = silence
-            silence_ms = 0
-            chunk_size = 50  # ms
-            for j in range(0, duration_ms, chunk_size):
-                c = seg[j : j + chunk_size]
-                if c.dBFS < silence_threshold:
-                    silence_ms += chunk_size
-            silence_ratio = silence_ms / duration_ms
-
-            if silence_ratio > 0.5:
-                logger.warning(
-                    f'[{job_id}] Chunk {i} is {silence_ratio:.0%} silence — re-synthesizing'
-                )
-                checked_paths[i] = await _resynthesize_chunk(
-                    i, chunk_texts, job_id, engine, loop, executor
-                )
-                resynth_count += 1
-
-        except Exception as exc:
-            logger.debug(f'[{job_id}] Quality check for chunk {i} skipped: {exc}')
-
-    if resynth_count > 0:
-        logger.info(f'[{job_id}] Re-synthesized {resynth_count} chunks after quality check')
-
-    return checked_paths
-
-
-async def _resynthesize_chunk(
-    chunk_idx: int,
-    chunk_texts: list[str],
-    job_id: str,
-    engine,
-    loop,
-    executor,
-) -> str:
-    """Re-synthesize a single chunk. Returns the path (may be original if re-synth fails)."""
-    from app.config import OUTPUT_DIR
-
-    if chunk_idx >= len(chunk_texts):
-        return ''
-
-    job_dir = OUTPUT_DIR / job_id
-    wav_path = str(job_dir / f'chunk_{chunk_idx:04d}.wav')
-
-    try:
-        await loop.run_in_executor(
-            executor,
-            engine.synthesize_to_file,
-            chunk_texts[chunk_idx],
-            wav_path,
-            job_id,
-        )
-        return wav_path
-    except Exception as exc:
-        logger.warning(f'[{job_id}] Re-synthesis of chunk {chunk_idx} failed: {exc}')
-        return wav_path  # Return original path
 
 
 async def run_tts_job(
@@ -383,7 +297,7 @@ async def run_tts_job(
                     executor,
                     normalize_chunk_to_target_lufs,
                     wav_path,
-                    -23.0,
+                    DEFAULT_TARGET_LUFS,
                 )
                 if normalized_path != wav_path:
                     normalized_temp_files.append(normalized_path)
