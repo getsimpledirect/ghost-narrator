@@ -196,6 +196,35 @@ else
     fi
 fi
 
+# ─── GPU Detection ───────────────────────────────────────────────────────
+echo ""
+info "Detecting GPU..."
+if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
+    GPU_DETECTED=true
+    ok "NVIDIA GPU detected — GPU compose override will be used"
+else
+    GPU_DETECTED=false
+    info "No NVIDIA GPU detected — running in CPU mode"
+    echo "  (If you have a GPU, ensure nvidia-smi is available)"
+fi
+
+# Write COMPOSE_FILE to .env so docker compose picks it up automatically
+if grep -q "^COMPOSE_FILE=" .env 2>/dev/null; then
+    if [ "$GPU_DETECTED" = true ]; then
+        sed -i.bak "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml|" .env
+    else
+        sed -i.bak "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml|" .env
+    fi
+    rm -f .env.bak
+else
+    if [ "$GPU_DETECTED" = true ]; then
+        echo "COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml" >> .env
+    else
+        echo "COMPOSE_FILE=docker-compose.yml" >> .env
+    fi
+fi
+ok "Compose configuration written to .env"
+
 # ─── Pull Docker Images ───────────────────────────────────────────────────────
 echo ""
 info "Pulling Docker images (this may take a few minutes on first run)..."
@@ -211,10 +240,10 @@ echo -e "${GREEN}  Installation complete!${NC}"
 echo -e "${GREEN}══════════════════════════════════════════════════════════════${NC}"
 echo ""
 echo "  Start the stack:"
-echo -e "    ${BLUE}./start.sh up -d${NC}"
+echo -e "    ${BLUE}docker compose up -d${NC}"
 echo ""
 echo "  View logs:"
-echo -e "    ${BLUE}./start.sh logs -f${NC}"
+echo -e "    ${BLUE}docker compose logs -f${NC}"
 echo ""
 echo "  Open n8n dashboard:"
 echo -e "    ${BLUE}http://$(grep SERVER_EXTERNAL_IP .env | cut -d= -f2):5678${NC}"

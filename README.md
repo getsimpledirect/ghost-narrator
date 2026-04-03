@@ -108,7 +108,7 @@ cd ghost-narrator
 ./install.sh
 
 # Start
-./start.sh up -d
+docker compose up -d
 ```
 
 Then configure your Ghost site to send webhooks to:
