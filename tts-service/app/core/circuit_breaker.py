@@ -2,12 +2,13 @@ from enum import Enum
 from datetime import datetime, timedelta
 from typing import Optional
 import threading
+import asyncio
 
 
 class CircuitState(Enum):
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
+    CLOSED = 'closed'
+    OPEN = 'open'
+    HALF_OPEN = 'half_open'
 
 
 class CircuitBreaker:
@@ -39,9 +40,7 @@ class CircuitBreaker:
     def _can_recover(self) -> bool:
         if self._last_failure_time is None:
             return False
-        return datetime.now() - self._last_failure_time >= timedelta(
-            seconds=self.recovery_timeout
-        )
+        return datetime.now() - self._last_failure_time >= timedelta(seconds=self.recovery_timeout)
 
     def can_execute(self) -> bool:
         with self._lock:
@@ -70,9 +69,24 @@ class CircuitBreaker:
 
     async def call(self, func, *args, **kwargs):
         if not self.can_execute():
-            raise CircuitBreakerOpenError(f"Circuit {self.name} is open")
+            raise CircuitBreakerOpenError(f'Circuit {self.name} is open')
         try:
-            result = await func(*args, **kwargs)
+            if asyncio.iscoroutinefunction(func):
+                result = await func(*args, **kwargs)
+            else:
+                result = func(*args, **kwargs)
+            self.record_success()
+            return result
+        except Exception as e:
+            self.record_failure()
+            raise e
+
+    def call_sync(self, func, *args, **kwargs):
+        """Execute a synchronous function through the circuit breaker."""
+        if not self.can_execute():
+            raise CircuitBreakerOpenError(f'Circuit {self.name} is open')
+        try:
+            result = func(*args, **kwargs)
             self.record_success()
             return result
         except Exception as e:

@@ -127,7 +127,7 @@ async def run_tts_job(
                 paused_iterations += 1
                 if paused_iterations >= max_paused_iterations:
                     raise JobDeletedError(f'Job {job_id} exceeded maximum pause duration')
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
                 continue
             paused_iterations = 0  # Reset counter when job is no longer paused
             return

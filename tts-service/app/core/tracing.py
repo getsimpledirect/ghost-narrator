@@ -13,32 +13,38 @@ try:
 except ImportError:
     OPENTELEMETRY_AVAILABLE = False
     trace = propagate = None
-    TracerProvider = BatchSpanProcessor = Resource = OTLPSpanExporter = Status = (
-        StatusCode
-    ) = None
+    TracerProvider = BatchSpanProcessor = Resource = OTLPSpanExporter = Status = StatusCode = None
 
 TELEMETRY_AVAILABLE = OPENTELEMETRY_AVAILABLE
 
 if OPENTELEMETRY_AVAILABLE:
-    SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "ghost-narrator-tts")
+    try:
+        SERVICE_NAME = os.getenv('OTEL_SERVICE_NAME', 'ghost-narrator-tts')
 
-    resource = Resource.create(
-        {
-            "service.name": SERVICE_NAME,
-            "service.version": os.getenv("APP_VERSION", "dev"),
-        }
-    )
+        resource = Resource.create(
+            {
+                'service.name': SERVICE_NAME,
+                'service.version': os.getenv('APP_VERSION', 'dev'),
+            }
+        )
 
-    provider = TracerProvider(resource=resource)
+        provider = TracerProvider(resource=resource)
 
-    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-    if otlp_endpoint:
-        exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
-        provider.add_span_processor(BatchSpanProcessor(exporter))
+        otlp_endpoint = os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT')
+        if otlp_endpoint:
+            exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+            provider.add_span_processor(BatchSpanProcessor(exporter))
 
-    trace.set_tracer_provider(provider)
+        trace.set_tracer_provider(provider)
 
-    tracer = trace.get_tracer(__name__)
+        tracer = trace.get_tracer(__name__)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            f'OpenTelemetry setup failed, using no-op tracer: {exc}'
+        )
+        tracer = None
 else:
     tracer = None
 

@@ -1,3 +1,17 @@
+"""
+Rate limiting middleware for the TTS service API.
+
+WARNING: This rate limiter uses an in-memory dictionary to track requests.
+It is NOT distributed-safe — each worker process maintains its own independent
+counter. In a multi-worker deployment (e.g., multiple gunicorn workers or
+Kubernetes pods), the effective rate limit will be multiplied by the number
+of workers.
+
+For multi-worker deployments, replace this with a Redis-backed rate limiter
+(e.g., using Redis INCR/EXPIRE or a dedicated library like slowapi with
+Redis storage) to ensure consistent rate limiting across all workers.
+"""
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -28,20 +42,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self._requests[key].append(datetime.now())
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in ["/health", "/health/ready", "/metrics"]:
+        if request.url.path in ['/health', '/health/ready', '/metrics']:
             return await call_next(request)
 
-        client_ip = request.headers.get("X-Forwarded-For", request.client.host)
-        key = f"{client_ip}:{request.url.path}"
+        client_ip = request.headers.get('X-Forwarded-For', request.client.host)
+        key = f'{client_ip}:{request.url.path}'
 
         if self._is_rate_limited(key):
             return JSONResponse(
                 status_code=429,
                 content={
-                    "error": "Rate limit exceeded",
-                    "retry_after": 60,
+                    'error': 'Rate limit exceeded',
+                    'retry_after': 60,
                 },
-                headers={"Retry-After": "60"},
+                headers={'Retry-After': '60'},
             )
 
         self._record_request(key)

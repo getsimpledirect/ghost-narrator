@@ -1,8 +1,11 @@
 import json
 import hashlib
+import logging
 from functools import wraps
 from typing import Callable, Any
 from app.cache.redis_cache import get_cache
+
+logger = logging.getLogger(__name__)
 
 
 def cached(key_template: str, ttl: int = 3600):
@@ -32,7 +35,12 @@ def cached(key_template: str, ttl: int = 3600):
                 return json.loads(cached_value)
 
             result = await func(*args, **kwargs)
-            await cache.set(key, json.dumps(result), ttl)
+            try:
+                await cache.set(key, json.dumps(result), ttl)
+            except TypeError as exc:
+                logger.warning(
+                    f"Result for key '{key}' is not JSON-serializable, skipping cache: {exc}"
+                )
 
             return result
 

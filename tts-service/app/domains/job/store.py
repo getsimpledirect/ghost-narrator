@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, Optional
 
 import redis.asyncio as redis
@@ -64,6 +65,7 @@ class JobStore:
         self.lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
         self._max_memory_jobs: int = 1000
+        self._memory_job_ttl: int = 3600
 
     async def initialize(self, redis_url: Optional[str] = None) -> None:
         """
@@ -121,6 +123,19 @@ class JobStore:
 
         return serializable_data
 
+    def _cleanup_expired_memory_jobs(self) -> None:
+        """Remove expired entries from the memory store."""
+        now = time.time()
+        expired_keys = [
+            key
+            for key, entry in self.memory_store.items()
+            if isinstance(entry, dict) and 'expires_at' in entry and entry['expires_at'] < now
+        ]
+        for key in expired_keys:
+            del self.memory_store[key]
+        if expired_keys:
+            logger.debug(f'Cleaned up {len(expired_keys)} expired memory store entries')
+
     async def set(self, job_id: str, job_data: dict[str, Any]) -> None:
         """
         Store job data with TTL.
@@ -156,7 +171,10 @@ class JobStore:
                 # Fall through to memory store for this write only.
 
         async with self.lock:
-            self.memory_store[job_id] = serializable_data
+            self.memory_store[job_id] = {
+                'data': serializable_data,
+                'expires_at': time.time() + self._memory_job_ttl,
+            }
 
     async def get(self, job_id: str) -> Optional[dict[str, Any]]:
         """
@@ -177,10 +195,18 @@ class JobStore:
             except Exception as exc:
                 logger.error(f'Redis get failed for job {job_id}: {exc}. Checking memory')
                 async with self.lock:
-                    return self.memory_store.get(job_id)
+                    self._cleanup_expired_memory_jobs()
+                    entry = self.memory_store.get(job_id)
+                    if entry and isinstance(entry, dict) and 'data' in entry:
+                        return entry['data']
+                    return None
 
         async with self.lock:
-            return self.memory_store.get(job_id)
+            self._cleanup_expired_memory_jobs()
+            entry = self.memory_store.get(job_id)
+            if entry and isinstance(entry, dict) and 'data' in entry:
+                return entry['data']
+            return None
 
     async def exists(self, job_id: str) -> bool:
         """
@@ -199,9 +225,11 @@ class JobStore:
             except Exception as exc:
                 logger.error(f'Redis exists failed for job {job_id}: {exc}. Checking memory')
                 async with self.lock:
+                    self._cleanup_expired_memory_jobs()
                     return job_id in self.memory_store
 
         async with self.lock:
+            self._cleanup_expired_memory_jobs()
             return job_id in self.memory_store
 
     async def create_if_not_exists(self, job_id: str, job_data: dict[str, Any]) -> bool:
@@ -248,7 +276,10 @@ class JobStore:
                     f'Memory store at capacity ({self._max_memory_jobs}), '
                     f'evicted oldest job: {oldest}'
                 )
-            self.memory_store[job_id] = serializable_data
+            self.memory_store[job_id] = {
+                'data': serializable_data,
+                'expires_at': time.time() + self._memory_job_ttl,
+            }
             return True
 
     async def update(self, job_id: str, updates: dict[str, Any]) -> None:
@@ -272,7 +303,10 @@ class JobStore:
                 lua_script = """
                 local data = redis.call('GET', KEYS[1])
                 if data then
-                    local decoded = cjson.decode(data)
+                    local ok, decoded = pcall(cjson.decode, data)
+                    if not ok then
+                        return -1
+                    end
                     local updates = cjson.decode(ARGV[1])
                     for k, v in pairs(updates) do
                         decoded[k] = v
@@ -294,6 +328,11 @@ class JobStore:
 
                 if result == 1:
                     return
+                elif result == -1:
+                    logger.warning(
+                        f'Redis Lua script failed to decode JSON for job {job_id}, '
+                        'falling back to memory store'
+                    )
                 else:
                     logger.warning(f'Cannot update non-existent job in Redis: {job_id}')
                     return
@@ -304,12 +343,18 @@ class JobStore:
                 # Fallback to in-memory
 
         async with self.lock:
-            job_data = self.memory_store.get(job_id)
-            if job_data is None:
+            entry = self.memory_store.get(job_id)
+            if entry is None:
                 logger.warning(f'Cannot update non-existent job in memory: {job_id}')
                 return
+            job_data = entry if isinstance(entry, dict) and 'data' in entry else entry
+            if isinstance(entry, dict) and 'data' in entry:
+                job_data = entry['data']
             job_data.update(serializable_updates)
-            self.memory_store[job_id] = job_data
+            self.memory_store[job_id] = {
+                'data': job_data,
+                'expires_at': time.time() + self._memory_job_ttl,
+            }
 
     async def delete(self, job_id: str) -> bool:
         """
@@ -358,10 +403,18 @@ class JobStore:
             except Exception as exc:
                 logger.error(f'Redis list failed: {exc}. Returning memory store')
                 async with self.lock:
-                    return self.memory_store.copy()
+                    self._cleanup_expired_memory_jobs()
+                    return {
+                        k: v['data'] if isinstance(v, dict) and 'data' in v else v
+                        for k, v in self.memory_store.items()
+                    }
 
         async with self.lock:
-            return self.memory_store.copy()
+            self._cleanup_expired_memory_jobs()
+            return {
+                k: v['data'] if isinstance(v, dict) and 'data' in v else v
+                for k, v in self.memory_store.items()
+            }
 
     async def count(self) -> int:
         """
@@ -383,9 +436,11 @@ class JobStore:
             except Exception as exc:
                 logger.error(f'Redis count failed: {exc}. Counting memory store')
                 async with self.lock:
+                    self._cleanup_expired_memory_jobs()
                     return len(self.memory_store)
 
         async with self.lock:
+            self._cleanup_expired_memory_jobs()
             return len(self.memory_store)
 
     async def close(self) -> None:

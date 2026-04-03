@@ -24,6 +24,7 @@ class ConnectionPool:
         factory: Callable[..., Any],
         max_size: int = 10,
         min_size: int = 1,
+        health_check: Optional[Callable[[Any], bool]] = None,
     ):
         """
         Initialize connection pool.
@@ -32,10 +33,12 @@ class ConnectionPool:
             factory: Async function to create new connections
             max_size: Maximum number of connections in pool
             min_size: Minimum number of connections to keep alive
+            health_check: Optional callable to verify connection health before returning
         """
         self.factory = factory
         self.max_size = max_size
         self.min_size = min_size
+        self._health_check = health_check
         self._pool: asyncio.Queue = asyncio.Queue(max_size)
         self._created = 0
         self._lock = asyncio.Lock()
@@ -78,6 +81,20 @@ class ConnectionPool:
                         self._created += 1
                     else:
                         # Wait for available connection
+                        conn = await self._pool.get()
+
+            # Verify connection health if a health_check is configured
+            if self._health_check is not None and not self._health_check(conn):
+                await self._close_connection(conn)
+                async with self._lock:
+                    self._created -= 1
+                conn = None
+                # Retry: create a new connection
+                async with self._lock:
+                    if self._created < self.max_size:
+                        conn = await self.factory()
+                        self._created += 1
+                    else:
                         conn = await self._pool.get()
 
             try:
