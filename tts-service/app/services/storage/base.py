@@ -1,15 +1,5 @@
-"""StorageBackend abstract base class."""
+"""StorageBackend abstract base class - backward compatibility layer."""
 
-from __future__ import annotations
-from abc import ABC, abstractmethod
-from pathlib import Path
+from app.domains.storage import StorageBackend
 
-
-class StorageBackend(ABC):
-    @abstractmethod
-    async def upload(self, local_path: Path, job_id: str, site_slug: str) -> str:
-        """Upload audio file. Returns audio_uri string (e.g. 'local://', 'gs://', 's3://')."""
-
-    @abstractmethod
-    def make_public_url(self, audio_uri: str) -> str:
-        """Convert storage URI to HTTP URL suitable for embedding in Ghost audio player."""
+__all__ = ['StorageBackend']
