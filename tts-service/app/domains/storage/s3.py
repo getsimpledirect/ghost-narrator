@@ -20,24 +20,30 @@ logger = logging.getLogger(__name__)
 
 class S3StorageBackend(StorageBackend):
     def __init__(self, config: dict = None) -> None:
-        import boto3
-
         self._bucket = S3_BUCKET_NAME
         self._region = AWS_REGION
-        self._client = boto3.client(
-            's3',
-            region_name=AWS_REGION,
-            aws_access_key_id=AWS_ACCESS_KEY_ID or None,
-            aws_secret_access_key=AWS_SECRET_ACCESS_KEY or None,
-        )
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            import boto3
+
+            self._client = boto3.client(
+                's3',
+                region_name=AWS_REGION,
+                aws_access_key_id=AWS_ACCESS_KEY_ID or None,
+                aws_secret_access_key=AWS_SECRET_ACCESS_KEY or None,
+            )
+        return self._client
 
     async def upload(self, local_path: Path, job_id: str, site_slug: str) -> str:
         key = f'{S3_AUDIO_PREFIX}/{site_slug}/{job_id}.mp3'
         uri = f's3://{self._bucket}/{key}'
+        client = self._get_client()
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 await asyncio.to_thread(
-                    self._client.upload_file,
+                    client.upload_file,
                     str(local_path),
                     self._bucket,
                     key,

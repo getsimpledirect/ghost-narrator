@@ -29,6 +29,7 @@ job completion status via HTTP webhooks with retry logic.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Optional
 
@@ -155,9 +156,16 @@ async def notify_n8n(
 
     try:
         return await send_callback_with_circuit_breaker(url, payload)
-    except Exception as exc:
+    except (ConnectionError, OSError, asyncio.TimeoutError) as exc:
         logger.error(f'n8n callback failed for job {job_id}: {exc}')
         return False
+    except Exception as exc:
+        import httpx
+
+        if isinstance(exc, httpx.HTTPError):
+            logger.error(f'n8n callback failed for job {job_id}: {exc}')
+            return False
+        raise
 
 
 async def notify_job_completed(

@@ -54,15 +54,16 @@ class ConnectionPool:
                 except Exception as e:
                     logger.warning(f'Failed to create initial connection: {e}')
 
-    def _ensure_initialized(self):
+    async def _ensure_initialized(self):
         """Lazy initialization."""
-        if self._init_task is None:
-            self._init_task = asyncio.create_task(self._initialize())
+        async with self._lock:
+            if self._init_task is None:
+                self._init_task = asyncio.create_task(self._initialize())
 
     @asynccontextmanager
     async def acquire(self):
         """Acquire a connection from the pool."""
-        self._ensure_initialized()
+        await self._ensure_initialized()
 
         conn = None
         try:

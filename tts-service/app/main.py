@@ -35,8 +35,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
 
 from fastapi import FastAPI
-import logging
-
 from app import __version__
 from app.api.middleware import APIVersionMiddleware
 from app.api.rate_limit_middleware.rate_limit import RateLimitMiddleware
@@ -51,7 +49,7 @@ from app.domains.job.notification import close_http_client, initialize_http_clie
 from app.domains.storage import cleanup_gcs_client, initialize_gcs_client
 from app.domains.synthesis.service import initialize_executor, shutdown_executor
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 # OpenTelemetry instrumentation - optional
 try:
@@ -110,6 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager for startup and shutdown."""
     global _model_loader_task
 
+    setup_logging()
     logger.info('Starting TTS service...')
 
     # Start model loading in the background so the API comes up immediately.
