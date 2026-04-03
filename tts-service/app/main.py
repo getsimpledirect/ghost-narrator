@@ -37,6 +37,7 @@ from typing import AsyncGenerator, Optional
 from fastapi import FastAPI
 
 from app import __version__
+from app.api.middleware import APIVersionMiddleware
 from app.api.routes import health, tts
 from app.api.routes.voices import router as voices_router
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
@@ -205,6 +206,8 @@ app = FastAPI(
         "url": "https://opensource.org/licenses/MIT",
     },
 )
+
+app.add_middleware(APIVersionMiddleware, default_version="v1")
 
 app.include_router(health.router)
 app.include_router(tts.router)
