@@ -4,7 +4,15 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-import soundfile as sf
+
+try:
+    import soundfile as sf
+
+    SOUNDFILE_AVAILABLE = True
+except ImportError:
+    sf = None
+    SOUNDFILE_AVAILABLE = False
+
 from app.core.exceptions import TTSEngineError
 
 logger = logging.getLogger(__name__)
@@ -16,6 +24,9 @@ MIN_SAMPLE_RATE = 16000
 
 def validate_and_save(source_path: Path, dest_path: Path) -> None:
     """Validate WAV file quality and save to dest_path. Raises TTSEngineError on failure."""
+    if not SOUNDFILE_AVAILABLE:
+        raise TTSEngineError("soundfile library not installed - cannot validate audio")
+
     try:
         info = sf.info(str(source_path))
     except Exception as e:

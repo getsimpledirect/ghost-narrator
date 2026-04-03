@@ -6,7 +6,6 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from app.services.voices.registry import VoiceRegistry
-from app.services.voices.upload import validate_and_save
 from app.config import VOICE_SAMPLE_PATH
 
 router = APIRouter(prefix="/voices", tags=["voices"])
@@ -15,6 +14,13 @@ router = APIRouter(prefix="/voices", tags=["voices"])
 def _get_registry() -> VoiceRegistry:
     voices_dir = Path(VOICE_SAMPLE_PATH).parent.parent
     return VoiceRegistry(voices_dir)
+
+
+def _validate_and_save(source_path: Path, dest_path: Path) -> None:
+    """Lazy import wrapper for validate_and_save."""
+    from app.services.voices.upload import validate_and_save
+
+    return validate_and_save(source_path, dest_path)
 
 
 @router.get("")
@@ -49,7 +55,7 @@ async def upload_voice(name: str, file: UploadFile = File(...)):
         tmp_path = Path(tmp.name)
 
     try:
-        validate_and_save(tmp_path, dest)
+        _validate_and_save(tmp_path, dest)
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
     finally:
