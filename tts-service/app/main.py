@@ -48,6 +48,8 @@ from app.services.notification import close_http_client, initialize_http_client
 from app.services.storage import cleanup_gcs_client, initialize_gcs_client
 from app.services.synthesis import initialize_executor, shutdown_executor
 
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -214,6 +216,8 @@ app.include_router(health.router)
 app.include_router(tts.router)
 app.include_router(voices_router)
 app.include_router(metrics_router.router)
+
+FastAPIInstrumentor.instrument_app(app)
 
 
 if __name__ == "__main__":
