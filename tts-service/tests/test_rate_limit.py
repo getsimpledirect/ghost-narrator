@@ -2,7 +2,7 @@ import pytest
 import time
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
-from app.api.middleware.rate_limit import RateLimitMiddleware
+from app.api.rate_limit_middleware.rate_limit import RateLimitMiddleware
 
 
 class TestRateLimitMiddleware:

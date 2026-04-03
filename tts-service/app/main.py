@@ -38,6 +38,7 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.api.middleware import APIVersionMiddleware
+from app.api.rate_limit_middleware.rate_limit import RateLimitMiddleware
 from app.api.routes import health, tts
 from app.api.routes import metrics as metrics_router
 from app.api.routes.voices import router as voices_router
@@ -211,6 +212,7 @@ app = FastAPI(
 )
 
 app.add_middleware(APIVersionMiddleware, default_version="v1")
+app.add_middleware(RateLimitMiddleware, requests_per_minute=60)
 
 app.include_router(health.router)
 app.include_router(tts.router)
