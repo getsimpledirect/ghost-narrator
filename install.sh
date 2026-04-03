@@ -82,8 +82,8 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
         sed -i.bak "s/N8N_PASSWORD=.*/N8N_PASSWORD=${N8N_PASS}/" .env
     fi
 
-    # Generate encryption key if not set
-    if grep -q "N8N_ENCRYPTION_KEY=changeme" .env 2>/dev/null || grep -q "N8N_ENCRYPTION_KEY=$" .env 2>/dev/null; then
+    # Generate encryption key if placeholder or empty
+    if grep -qE "N8N_ENCRYPTION_KEY=(changeme|your-encryption-key-here|)$" .env 2>/dev/null; then
         ENC_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
         sed -i.bak "s/N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=${ENC_KEY}/" .env
         ok "Generated N8N_ENCRYPTION_KEY"
@@ -136,7 +136,7 @@ case "$STORAGE_CHOICE" in
 
         sed -i.bak "s/STORAGE_BACKEND=.*/STORAGE_BACKEND=gcs/" .env
         sed -i.bak "s/GCS_BUCKET_NAME=.*/GCS_BUCKET_NAME=${GCS_BUCKET}/" .env
-        sed -i.bak "s|GCS_SERVICE_ACCOUNT_KEY_PATH=.*|GCS_SERVICE_ACCOUNT_KEY_PATH=/run/secrets/${SA_NAME}-key.json|" .env
+        sed -i.bak "s|GCS_SERVICE_ACCOUNT_KEY_PATH=.*|GCS_SERVICE_ACCOUNT_KEY_PATH=/app/secrets/${SA_NAME}-key.json|" .env
         rm -f .env.bak
         ok "GCS configured — key saved to secrets/"
         ;;
@@ -246,7 +246,8 @@ echo "  View logs:"
 echo -e "    ${BLUE}docker compose logs -f${NC}"
 echo ""
 echo "  Open n8n dashboard:"
-echo -e "    ${BLUE}http://$(grep SERVER_EXTERNAL_IP .env | cut -d= -f2):5678${NC}"
+SERVER_IP=$(grep SERVER_EXTERNAL_IP .env 2>/dev/null | cut -d= -f2 || echo "YOUR_SERVER_IP")
+echo -e "    ${BLUE}http://${SERVER_IP}:5678${NC}"
 echo ""
 echo "  Import n8n workflows from: n8n/workflows/"
 echo ""

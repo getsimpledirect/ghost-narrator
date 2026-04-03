@@ -215,6 +215,7 @@ services:
       - voices_data:/app/voices
       - tts_output:/app/output
       - tier_data:/shared:ro
+      - ./secrets:/app/secrets:ro
     networks:
       - pipeline_net
     depends_on:

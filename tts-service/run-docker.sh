@@ -192,14 +192,20 @@ fi
 
 if [ ! -d "./voices" ]; then
     info "Creating voices directory..."
-    mkdir -p ./voices
+    mkdir -p ./voices/default
 fi
 
-if [ ! -f "./voices/reference.wav" ]; then
+# Check new path first, then legacy path
+if [ -f "./voices/default/reference.wav" ]; then
+    success "✓ Reference voice file found (voices/default/reference.wav)."
+elif [ -f "./voices/reference.wav" ]; then
+    warning "Legacy voice file found at voices/reference.wav — please move to voices/default/reference.wav"
+    success "✓ Reference voice file found (legacy path)."
+else
     warning "WARNING: Reference voice file not found!"
     echo ""
     echo "Please add your reference voice WAV file to:"
-    echo "  ./voices/reference.wav"
+    echo "  ./voices/default/reference.wav"
     echo ""
     echo "Requirements:"
     echo "  - Format: WAV, 22.05 kHz, mono"
@@ -207,7 +213,7 @@ if [ ! -f "./voices/reference.wav" ]; then
     echo "  - Quality: Clear speech, no background noise"
     echo ""
     echo "To convert audio:"
-    echo "  ffmpeg -i input.mp3 -ar 22050 -ac 1 ./voices/reference.wav"
+    echo "  ffmpeg -i input.mp3 -ar 22050 -ac 1 ./voices/default/reference.wav"
     echo ""
     error "Cannot continue without reference voice file."
     exit 1
