@@ -1,6 +1,6 @@
 [project]
 name = "ghost-narrator-tts"
-version = "0.1.0"
+version = "2.1.0"
 description = "Studio-quality Text-to-Speech API powered by Qwen3-TTS"
 readme = "README.md"
 requires-python = ">=3.11"
