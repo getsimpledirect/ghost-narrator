@@ -212,7 +212,7 @@ async def generate(
     },
 )
 async def get_status(
-    job_id: str = FastApiPath(..., pattern=r'^[a-zA-Z0-9_-]+$', max_length=200),
+    job_id: str = FastApiPath(..., pattern=r'^[a-zA-Z0-9_-]{1,200}$'),
 ) -> StatusResponse:
     """Get the status of a TTS job."""
     job_store = get_job_store()

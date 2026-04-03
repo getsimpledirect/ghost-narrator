@@ -249,7 +249,7 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | `MAX_CHUNK_WORDS` | `200` | Max words per synthesis chunk |
 | `DEVICE` | `cpu` | PyTorch device: `cpu` or `cuda` |
 | `MAX_WORKERS` | `4` | Thread pool size for parallel synthesis (CPU mode) |
-| `TTS_TIER` | `auto` | Hardware tier: auto/cpu/low/mid/high |
+| `HARDWARE_TIER` | `auto` | Hardware tier: auto/cpu/low/mid/high |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL for job persistence |
 | `REDIS_JOB_TTL` | `86400` | Job retention time in seconds (24 hours) |
 | `STORAGE_BACKEND` | `local` | Storage backend: local/gcs/s3 |
