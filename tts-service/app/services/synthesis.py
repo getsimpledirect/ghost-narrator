@@ -39,6 +39,11 @@ from app.config import MAX_CHUNK_WORDS
 from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
+from app.domains.synthesis.base import SynthesisPipeline
+from app.domains.synthesis.chunker import chunk_text, TextChunker
+from app.domains.synthesis.concatenate import concatenate_audio, concatenate_audio_auto
+from app.domains.synthesis.normalize import normalize_audio, normalize_audio_if_long_enough
+from app.domains.synthesis.mastering import master_audio, master_audio_with_fallback
 from app.utils.text import split_into_chunks, clean_text_for_tts
 
 if TYPE_CHECKING:
@@ -63,7 +68,7 @@ def initialize_executor(max_workers: int) -> concurrent.futures.ThreadPoolExecut
     global _executor
 
     _executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
-    logger.info(f"Thread pool executor initialized with {max_workers} workers")
+    logger.info(f'Thread pool executor initialized with {max_workers} workers')
     return _executor
 
 
@@ -90,14 +95,14 @@ def shutdown_executor(wait: bool = True, cancel_futures: bool = True) -> None:
     if _executor:
         try:
             _executor.shutdown(wait=wait, cancel_futures=cancel_futures)
-            logger.info("Thread pool executor shut down")
+            logger.info('Thread pool executor shut down')
         except Exception as exc:
-            logger.error(f"Error shutting down executor: {exc}")
+            logger.error(f'Error shutting down executor: {exc}')
         finally:
             _executor = None
 
 
-def synthesize_chunk(text: str, output_path: str, job_id: str = "default") -> str:
+def synthesize_chunk(text: str, output_path: str, job_id: str = 'default') -> str:
     """
     Synthesize a single text chunk using Qwen3-TTS voice cloning.
 
@@ -116,8 +121,8 @@ def synthesize_chunk(text: str, output_path: str, job_id: str = "default") -> st
     """
     if not text or not text.strip():
         raise SynthesisError(
-            "Cannot synthesize empty text",
-            details=f"output_path={output_path}",
+            'Cannot synthesize empty text',
+            details=f'output_path={output_path}',
         )
 
     engine = get_tts_engine()
@@ -149,12 +154,12 @@ async def synthesize_chunks_sequential(
         SynthesisError: If synthesis fails for any chunk.
     """
     if not chunks:
-        raise SynthesisError("Cannot synthesize empty chunks list")
+        raise SynthesisError('Cannot synthesize empty chunks list')
 
     if not _executor:
         raise SynthesisError(
-            "Executor not initialized",
-            details="Call initialize_executor() during startup",
+            'Executor not initialized',
+            details='Call initialize_executor() during startup',
         )
 
     loop = asyncio.get_running_loop()
@@ -165,13 +170,10 @@ async def synthesize_chunks_sequential(
         if status_check_callback:
             await status_check_callback()
 
-        chunk_wav = str(job_dir / f"chunk_{chunk_offset + idx:04d}.wav")
+        chunk_wav = str(job_dir / f'chunk_{chunk_offset + idx:04d}.wav')
         word_count = len(chunk.split())
 
-        logger.info(
-            f"[{job_id}] Synthesizing chunk {idx + 1}/{len(chunks)} "
-            f"({word_count} words)"
-        )
+        logger.info(f'[{job_id}] Synthesizing chunk {idx + 1}/{len(chunks)} ({word_count} words)')
 
         try:
             wav_path = await loop.run_in_executor(
@@ -184,11 +186,11 @@ async def synthesize_chunks_sequential(
             chunk_wav_paths.append(wav_path)
         except Exception as exc:
             raise SynthesisError(
-                f"Sequential synthesis failed at chunk {idx + 1}",
+                f'Sequential synthesis failed at chunk {idx + 1}',
                 details=str(exc),
             ) from exc
 
-    logger.info(f"[{job_id}] Sequential synthesis complete - {len(chunks)} chunks")
+    logger.info(f'[{job_id}] Sequential synthesis complete - {len(chunks)} chunks')
     return chunk_wav_paths
 
 
@@ -217,12 +219,12 @@ async def synthesize_chunks_parallel(
         SynthesisError: If synthesis fails for any chunk.
     """
     if not chunks:
-        raise SynthesisError("Cannot synthesize empty chunks list")
+        raise SynthesisError('Cannot synthesize empty chunks list')
 
     if not _executor:
         raise SynthesisError(
-            "Executor not initialized",
-            details="Call initialize_executor() during startup",
+            'Executor not initialized',
+            details='Call initialize_executor() during startup',
         )
 
     loop = asyncio.get_running_loop()
@@ -241,15 +243,12 @@ async def synthesize_chunks_parallel(
 
         for offset, chunk in enumerate(batch):
             idx = batch_start + offset
-            chunk_wav = str(job_dir / f"chunk_{chunk_offset + idx:04d}.wav")
-            task = loop.run_in_executor(
-                _executor, synthesize_chunk, chunk, chunk_wav, job_id
-            )
+            chunk_wav = str(job_dir / f'chunk_{chunk_offset + idx:04d}.wav')
+            task = loop.run_in_executor(_executor, synthesize_chunk, chunk, chunk_wav, job_id)
             tasks.append(task)
 
         logger.info(
-            f"[{job_id}] Synthesizing batch {batch_start // workers + 1} "
-            f"({len(batch)} chunks)"
+            f'[{job_id}] Synthesizing batch {batch_start // workers + 1} ({len(batch)} chunks)'
         )
 
         try:
@@ -263,11 +262,11 @@ async def synthesize_chunks_parallel(
             await asyncio.gather(*tasks, return_exceptions=True)
 
             raise SynthesisError(
-                f"Parallel synthesis failed at batch starting chunk {batch_start}",
+                f'Parallel synthesis failed at batch starting chunk {batch_start}',
                 details=str(exc),
             ) from exc
 
-    logger.info(f"[{job_id}] Parallel synthesis complete - {len(chunks)} chunks")
+    logger.info(f'[{job_id}] Parallel synthesis complete - {len(chunks)} chunks')
     return chunk_wav_paths
 
 
@@ -302,16 +301,14 @@ async def synthesize_chunks_auto(
 
     if workers <= 1 or len(chunks) <= 1:
         logger.debug(
-            f"[{job_id}] Using sequential synthesis for {len(chunks)} chunks "
-            f"(workers={workers})"
+            f'[{job_id}] Using sequential synthesis for {len(chunks)} chunks (workers={workers})'
         )
         return await synthesize_chunks_sequential(
             chunks, job_dir, job_id, status_check_callback, chunk_offset
         )
     else:
         logger.debug(
-            f"[{job_id}] Using parallel synthesis for {len(chunks)} chunks "
-            f"with {workers} workers"
+            f'[{job_id}] Using parallel synthesis for {len(chunks)} chunks with {workers} workers'
         )
         return await synthesize_chunks_parallel(
             chunks, job_dir, job_id, status_check_callback, chunk_offset
@@ -339,7 +336,7 @@ def prepare_text_for_synthesis(
         SynthesisError: If text is empty or chunking fails.
     """
     if not text or not text.strip():
-        raise SynthesisError("Cannot prepare empty text for synthesis")
+        raise SynthesisError('Cannot prepare empty text for synthesis')
 
     # Clean text for TTS (abbreviations, markdown, special chars)
     cleaned = clean_text_for_tts(text)
@@ -348,15 +345,15 @@ def prepare_text_for_synthesis(
 
     if not chunks:
         raise SynthesisError(
-            "Text chunking resulted in empty chunks",
-            details=f"Original text length: {len(text)}",
+            'Text chunking resulted in empty chunks',
+            details=f'Original text length: {len(text)}',
         )
 
     total_words = sum(len(chunk.split()) for chunk in chunks)
 
     logger.debug(
-        f"Prepared {len(chunks)} chunks with {total_words} total words "
-        f"(max {max_chunk_words} words per chunk)"
+        f'Prepared {len(chunks)} chunks with {total_words} total words '
+        f'(max {max_chunk_words} words per chunk)'
     )
 
     return chunks, total_words
@@ -375,6 +372,6 @@ def cleanup_chunk_files(job_dir: Path, job_id: str) -> None:
 
         if job_dir.exists():
             shutil.rmtree(job_dir, ignore_errors=True)
-            logger.debug(f"[{job_id}] Cleaned up chunk files in {job_dir}")
+            logger.debug(f'[{job_id}] Cleaned up chunk files in {job_dir}')
     except Exception as exc:
-        logger.warning(f"[{job_id}] Failed to cleanup chunk files: {exc}")
+        logger.warning(f'[{job_id}] Failed to cleanup chunk files: {exc}')
