@@ -9,21 +9,19 @@ from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
 from app.core.hardware import HardwareTier
-from app.services.narration.prompt import (
+from app.domains.narration.prompt import (
     get_system_prompt,
     get_continuity_instruction,
     get_completeness_check_prompt,
 )
-from app.services.narration.validator import NarrationValidator
+from app.domains.narration.validator import NarrationValidator
 
 logger = logging.getLogger(__name__)
 
 _validator = NarrationValidator()
 
 
-def _split_into_chunks(
-    text: str, chunk_words: int, overlap_paragraphs: int = 1
-) -> list[str]:
+def _split_into_chunks(text: str, chunk_words: int, overlap_paragraphs: int = 1) -> list[str]:
     """Split text at paragraph boundaries with optional overlap.
 
     Args:
@@ -35,7 +33,7 @@ def _split_into_chunks(
     Returns:
         List of text chunks with overlapping paragraphs at boundaries.
     """
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
     if len(paragraphs) <= 1:
         return [text]
 
@@ -56,7 +54,7 @@ def _split_into_chunks(
         raw_chunks.append(current)
 
     if len(raw_chunks) <= 1:
-        return ["\n\n".join(raw_chunks[0])] if raw_chunks else [text]
+        return ['\n\n'.join(raw_chunks[0])] if raw_chunks else [text]
 
     # Add overlap: prepend last N paragraphs from previous chunk
     chunks: list[str] = []
@@ -64,27 +62,21 @@ def _split_into_chunks(
         if i > 0 and overlap_paragraphs > 0:
             overlap = raw_chunks[i - 1][-overlap_paragraphs:]
             chunk_paras = overlap + chunk_paras
-        chunks.append("\n\n".join(chunk_paras))
+        chunks.append('\n\n'.join(chunk_paras))
 
     return chunks
 
 
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.?!]) +")
+_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.?!]) +')
 
 
 def _tail_sentences(text: str, n: int = 3) -> str:
     """Return last n sentences of text for continuity seeding."""
-    sentences = [
-        s.strip()
-        for s in _SENTENCE_SPLIT_RE.split(text.replace("\n", " "))
-        if s.strip()
-    ]
-    return " ".join(sentences[-n:])
+    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text.replace('\n', ' ')) if s.strip()]
+    return ' '.join(sentences[-n:])
 
 
-async def _call_llm(
-    client, messages: list[dict], model: str, timeout: float = 120.0
-) -> str:
+async def _call_llm(client, messages: list[dict], model: str, timeout: float = 120.0) -> str:
     response = await client.chat.completions.create(
         model=model,
         messages=messages,
@@ -108,9 +100,7 @@ class NarrationStrategy(ABC):
 
 
 class ChunkedStrategy(NarrationStrategy):
-    def __init__(
-        self, llm_client, chunk_words: int, tier: HardwareTier, model: str = ""
-    ) -> None:
+    def __init__(self, llm_client, chunk_words: int, tier: HardwareTier, model: str = '') -> None:
         self._client = llm_client
         self._chunk_words = chunk_words
         self._tier = tier
@@ -118,25 +108,23 @@ class ChunkedStrategy(NarrationStrategy):
         self._system_prompt = get_system_prompt(tier)
 
     async def _narrate_chunk(
-        self, chunk: str, previous_output_tail: str, previous_source_tail: str = ""
+        self, chunk: str, previous_output_tail: str, previous_source_tail: str = ''
     ) -> str:
-        continuity = get_continuity_instruction(
-            previous_output_tail, previous_source_tail
-        )
+        continuity = get_continuity_instruction(previous_output_tail, previous_source_tail)
         messages = [
-            {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": chunk + continuity},
+            {'role': 'system', 'content': self._system_prompt},
+            {'role': 'user', 'content': chunk + continuity},
         ]
         result = await _call_llm(self._client, messages, self._model)
         validation = _validator.validate(chunk, result)
         if not validation.passed:
             logger.warning(
-                "Validation failed for chunk — retrying. Missing: %s",
+                'Validation failed for chunk — retrying. Missing: %s',
                 validation.missing_entities,
             )
             retry_prompt = _validator.build_retry_prompt(validation, chunk)
-            messages.append({"role": "assistant", "content": result})
-            messages.append({"role": "user", "content": retry_prompt})
+            messages.append({'role': 'assistant', 'content': result})
+            messages.append({'role': 'user', 'content': retry_prompt})
             result = await _call_llm(self._client, messages, self._model)
         return result
 
@@ -150,54 +138,52 @@ class ChunkedStrategy(NarrationStrategy):
             raw = await _call_llm(self._client, messages, self._model, timeout=60.0)
             # Parse JSON array from response
             raw = raw.strip()
-            if raw.startswith("```"):
-                raw = re.sub(r"^```(?:json)?\s*", "", raw)
-                raw = re.sub(r"\s*```$", "", raw)
+            if raw.startswith('```'):
+                raw = re.sub(r'^```(?:json)?\s*', '', raw)
+                raw = re.sub(r'\s*```$', '', raw)
             missing = json.loads(raw)
             if isinstance(missing, list) and missing:
                 logger.warning(
-                    "LLM completeness check found %d issues: %s",
+                    'LLM completeness check found %d issues: %s',
                     len(missing),
                     missing[:3],
                 )
                 # Re-narrate with explicit missing items
                 fix_messages = [
-                    {"role": "system", "content": self._system_prompt},
+                    {'role': 'system', 'content': self._system_prompt},
                     {
-                        "role": "user",
-                        "content": (
-                            "Your previous narration was missing these items:\n"
-                            + "\n".join(f"- {item}" for item in missing)
-                            + f"\n\nRewrite the narration for this source, "
-                            f"ensuring all items above are included:\n\n{source}"
+                        'role': 'user',
+                        'content': (
+                            'Your previous narration was missing these items:\n'
+                            + '\n'.join(f'- {item}' for item in missing)
+                            + f'\n\nRewrite the narration for this source, '
+                            f'ensuring all items above are included:\n\n{source}'
                         ),
                     },
                 ]
                 return await _call_llm(self._client, fix_messages, self._model)
         except json.JSONDecodeError as exc:
-            logger.debug("LLM completeness check returned invalid JSON: %s", exc)
+            logger.debug('LLM completeness check returned invalid JSON: %s', exc)
         except Exception as exc:
-            logger.warning("LLM completeness check failed: %s", exc)
+            logger.warning('LLM completeness check failed: %s', exc)
         return narration
 
     async def narrate(self, text: str) -> str:
         chunks = _split_into_chunks(text, self._chunk_words)
         outputs: list[str] = []
-        previous_output_tail = ""
-        previous_source_tail = ""
+        previous_output_tail = ''
+        previous_source_tail = ''
         for chunk in chunks:
-            output = await self._narrate_chunk(
-                chunk, previous_output_tail, previous_source_tail
-            )
+            output = await self._narrate_chunk(chunk, previous_output_tail, previous_source_tail)
             outputs.append(output)
             previous_output_tail = _tail_sentences(output)
             previous_source_tail = _tail_sentences(chunk)
 
-        full_narration = "\n\n".join(outputs)
+        full_narration = '\n\n'.join(outputs)
 
         # Layer 4: LLM completeness check — HIGH_VRAM only
         if self._tier == HardwareTier.HIGH_VRAM:
-            logger.info("Running LLM completeness check (HIGH_VRAM)...")
+            logger.info('Running LLM completeness check (HIGH_VRAM)...')
             full_narration = await self._llm_completeness_check(text, full_narration)
 
         return full_narration
@@ -210,12 +196,10 @@ class ChunkedStrategy(NarrationStrategy):
         completeness checking is needed.
         """
         chunks = _split_into_chunks(text, self._chunk_words)
-        previous_output_tail = ""
-        previous_source_tail = ""
+        previous_output_tail = ''
+        previous_source_tail = ''
         for chunk in chunks:
-            output = await self._narrate_chunk(
-                chunk, previous_output_tail, previous_source_tail
-            )
+            output = await self._narrate_chunk(chunk, previous_output_tail, previous_source_tail)
             previous_output_tail = _tail_sentences(output)
             previous_source_tail = _tail_sentences(chunk)
             yield output
@@ -228,7 +212,7 @@ class SingleShotStrategy(NarrationStrategy):
         fallback_threshold_words: int,
         fallback_chunk_words: int,
         tier: HardwareTier,
-        model: str = "",
+        model: str = '',
     ) -> None:
         self._client = llm_client
         self._fallback_threshold = fallback_threshold_words
@@ -241,7 +225,7 @@ class SingleShotStrategy(NarrationStrategy):
         word_count = len(text.split())
         if word_count > self._fallback_threshold:
             logger.info(
-                "Content (%d words) exceeds threshold — using chunked fallback",
+                'Content (%d words) exceeds threshold — using chunked fallback',
                 word_count,
             )
             fallback = ChunkedStrategy(
@@ -252,17 +236,15 @@ class SingleShotStrategy(NarrationStrategy):
             )
             return await fallback.narrate(text)
         messages = [
-            {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": text},
+            {'role': 'system', 'content': self._system_prompt},
+            {'role': 'user', 'content': text},
         ]
         result = await _call_llm(self._client, messages, self._model)
         validation = _validator.validate(text, result)
         if not validation.passed:
-            logger.warning(
-                "Validation failed — retrying. Missing: %s", validation.missing_entities
-            )
+            logger.warning('Validation failed — retrying. Missing: %s', validation.missing_entities)
             retry_prompt = _validator.build_retry_prompt(validation, text)
-            messages.append({"role": "assistant", "content": result})
-            messages.append({"role": "user", "content": retry_prompt})
+            messages.append({'role': 'assistant', 'content': result})
+            messages.append({'role': 'user', 'content': retry_prompt})
             result = await _call_llm(self._client, messages, self._model)
         return result

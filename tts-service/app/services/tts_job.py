@@ -65,7 +65,7 @@ from app.services.audio import (
 )
 from app.services.job_store import get_job_store
 from app.services.notification import notify_job_completed, notify_job_failed
-from app.services.storage import get_storage_backend
+from app.domains.storage import get_storage_backend
 from app.services.synthesis import (
     cleanup_chunk_files,
     get_executor,

@@ -42,7 +42,6 @@ from app.domains.storage import get_storage_backend
 from app.models.schemas import HealthResponse
 from app.services.job_store import get_job_store
 from app.services.notification import get_http_client
-from app.services.storage import get_storage_backend
 from app.services.synthesis import get_executor
 
 logger = logging.getLogger(__name__)
