@@ -49,7 +49,13 @@ from app.services.notification import close_http_client, initialize_http_client
 from app.services.storage import cleanup_gcs_client, initialize_gcs_client
 from app.services.synthesis import initialize_executor, shutdown_executor
 
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+# OpenTelemetry instrumentation - optional
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+    OPENTELEMETRY_AVAILABLE = True
+except ImportError:
+    OPENTELEMETRY_AVAILABLE = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -219,7 +225,8 @@ app.include_router(tts.router)
 app.include_router(voices_router)
 app.include_router(metrics_router.router)
 
-FastAPIInstrumentor.instrument_app(app)
+if OPENTELEMETRY_AVAILABLE:
+    FastAPIInstrumentor.instrument_app(app)
 
 
 if __name__ == "__main__":

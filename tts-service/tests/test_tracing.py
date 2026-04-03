@@ -4,12 +4,24 @@ from unittest.mock import MagicMock, patch
 
 class TestTracing:
     def test_tracer_initialization(self):
-        from app.core.tracing import tracer
+        from app.core.tracing import tracer, OPENTELEMETRY_AVAILABLE
 
-        assert tracer is not None
+        if OPENTELEMETRY_AVAILABLE:
+            assert tracer is not None
+        else:
+            assert tracer is None
 
     def test_trace_context_propagation(self):
-        from app.core.tracing import inject_trace_context, extract_trace_context, tracer
+        from app.core.tracing import (
+            inject_trace_context,
+            extract_trace_context,
+            tracer,
+            OPENTELEMETRY_AVAILABLE,
+        )
+
+        if not OPENTELEMETRY_AVAILABLE:
+            pytest.skip("OpenTelemetry not available")
+
         from opentelemetry import trace
 
         # Test extraction from carrier with traceparent
