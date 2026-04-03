@@ -1,0 +1,1 @@
+"""Storage domain module."""
