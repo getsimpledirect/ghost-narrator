@@ -1,18 +1,21 @@
 """LocalStorage backend — saves audio to a mounted output directory."""
 
 from __future__ import annotations
+
 import shutil
 from pathlib import Path
+from typing import Optional
+
 from app.domains.storage.base import StorageBackend
 
 
 class LocalStorageBackend(StorageBackend):
     def __init__(
         self,
-        config: dict = None,
-        output_dir: str = None,
-        server_ip: str = None,
-        port: int = None,
+        config: Optional[dict] = None,
+        output_dir: Optional[str] = None,
+        server_ip: Optional[str] = None,
+        port: Optional[int] = None,
     ) -> None:
         config = config or {}
         from app.config import (

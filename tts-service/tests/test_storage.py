@@ -117,8 +117,6 @@ def test_gcs_make_public_url():
             del sys.modules['app.config']
         if 'app.domains.storage.gcs' in sys.modules:
             del sys.modules['app.domains.storage.gcs']
-        if 'app.domains.storage.gcs' in sys.modules:
-            del sys.modules['app.domains.storage.gcs']
 
         from app.domains.storage import GCSStorageBackend
 
@@ -146,8 +144,6 @@ async def test_s3_storage_upload(tmp_path):
         # Clear cached config and both storage modules
         if 'app.config' in sys.modules:
             del sys.modules['app.config']
-        if 'app.domains.storage.s3' in sys.modules:
-            del sys.modules['app.domains.storage.s3']
         if 'app.domains.storage.s3' in sys.modules:
             del sys.modules['app.domains.storage.s3']
 
@@ -183,8 +179,6 @@ def test_s3_make_public_url():
         # Clear cached config and both storage modules
         if 'app.config' in sys.modules:
             del sys.modules['app.config']
-        if 'app.domains.storage.s3' in sys.modules:
-            del sys.modules['app.domains.storage.s3']
         if 'app.domains.storage.s3' in sys.modules:
             del sys.modules['app.domains.storage.s3']
 

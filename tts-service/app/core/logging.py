@@ -1,10 +1,12 @@
+"""Structured logging setup with correlation IDs."""
+
+import json
 import logging
 import sys
-import json
-from typing import Any, Dict, Optional
+import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
-import uuid
+from typing import Any, Dict, Optional
 
 correlation_id: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
 job_id: ContextVar[Optional[str]] = ContextVar('job_id', default=None)

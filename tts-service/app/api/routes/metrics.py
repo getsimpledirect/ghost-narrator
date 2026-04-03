@@ -135,7 +135,7 @@ if PROMETHEUS_AVAILABLE:
 
 def record_job_created():
     """Record a new job creation."""
-    if PROMETHEUS_AVAILABLE and 'jobs_created_total' in dir():
+    if PROMETHEUS_AVAILABLE:
         jobs_created_total.inc()
 
 

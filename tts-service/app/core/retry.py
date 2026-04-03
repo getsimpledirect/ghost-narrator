@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from functools import wraps
-from typing import Callable, Type, Tuple, Optional
+from typing import Any, Callable, Type, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ async def retry_async(
     delay: float = 1.0,
     backoff: float = 2.0,
     exceptions: Tuple[Type[Exception], ...] = (Exception,),
-) -> any:
+) -> Any:
     """
     Utility function for retrying async operations.
 
@@ -111,7 +111,7 @@ async def retry_with_circuit_breaker(
     circuit_breaker,
     max_attempts: int = 3,
     base_delay: float = 1.0,
-) -> any:
+) -> Any:
     """
     Retry a function with circuit breaker protection.
 

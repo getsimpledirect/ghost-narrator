@@ -1,9 +1,12 @@
 """S3Storage backend — uploads to AWS S3."""
 
 from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import Path
+from typing import Optional
+
 from app.domains.storage.base import StorageBackend
 from app.core.exceptions import StorageUploadError
 from app.config import (
@@ -19,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class S3StorageBackend(StorageBackend):
-    def __init__(self, config: dict = None) -> None:
+    def __init__(self, config: Optional[dict] = None) -> None:
         self._bucket = S3_BUCKET_NAME
         self._region = AWS_REGION
         self._client = None

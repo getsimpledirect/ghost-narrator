@@ -1,9 +1,12 @@
 """GCSStorage backend — uploads to Google Cloud Storage."""
 
 from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import Path
+from typing import Optional
+
 from app.domains.storage.base import StorageBackend
 from app.core.exceptions import StorageUploadError
 from app.config import (
@@ -18,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class GCSStorageBackend(StorageBackend):
-    def __init__(self, config: dict = None) -> None:
+    def __init__(self, config: Optional[dict] = None) -> None:
         pass  # Config check deferred to runtime
 
     def _get_client(self):
