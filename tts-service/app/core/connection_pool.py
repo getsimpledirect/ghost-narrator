@@ -109,12 +109,12 @@ class ConnectionPool:
                         await self._close_connection(conn)
                         async with self._lock:
                             self._created -= 1
-        except Exception as e:
+        except Exception:
             # Connection failed - remove from pool
             if conn is not None:
                 try:
                     await self._close_connection(conn)
-                except:
+                except Exception:
                     pass
                 async with self._lock:
                     self._created -= 1

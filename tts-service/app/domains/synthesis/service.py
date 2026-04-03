@@ -39,10 +39,6 @@ from app.config import MAX_CHUNK_WORDS
 from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
-from app.domains.synthesis.chunker import chunk_text, TextChunker
-from app.domains.synthesis.concatenate import concatenate_audio, concatenate_audio_auto
-from app.domains.synthesis.normalize import normalize_audio, normalize_audio_if_long_enough
-from app.domains.synthesis.mastering import master_audio, master_audio_with_fallback
 from app.utils.text import split_into_chunks, clean_text_for_tts
 
 if TYPE_CHECKING:

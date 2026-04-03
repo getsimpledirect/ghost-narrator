@@ -1,5 +1,4 @@
 from typing import Optional
-import json
 import logging
 
 logger = logging.getLogger(__name__)

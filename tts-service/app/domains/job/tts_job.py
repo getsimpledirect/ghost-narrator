@@ -63,7 +63,6 @@ from app.domains.synthesis.concatenate import concatenate_audio_auto as concaten
 from app.domains.synthesis.quality import validate_audio_quality, apply_final_mastering
 from app.domains.synthesis.quality_check import (
     _quality_check_and_resynthesize,
-    _resynthesize_chunk,
 )
 from app.domains.job.store import get_job_store
 from app.domains.job.notification import notify_job_completed, notify_job_failed
