@@ -200,18 +200,18 @@ The TTS service uses a **modern uv-based Dockerfile** for deterministic and ligh
 
 ### Service Startup
 
-Use `start.sh` to bring up all services:
+Use `docker compose` to bring up all services:
 
 ```bash
-./start.sh up -d        # Start all services in background
-./start.sh down          # Stop all services
-./start.sh logs          # Tail logs from all services
-./start.sh restart tts   # Restart a single service
+docker compose up -d        # Start all services in background
+docker compose down          # Stop all services
+docker compose logs -f       # Tail logs from all services
+docker compose restart tts   # Restart a single service
 ```
 
-`start.sh` handles:
-1. Hardware detection and model selection
-2. `.env` validation
+`install.sh` handles:
+1. Hardware detection and model selection (writes `COMPOSE_FILE` to `.env`)
+2. `.env` creation and validation
 3. Docker Compose orchestration
 4. Health check polling
 
@@ -322,7 +322,7 @@ After build completes, verify the installation:
 docker run --rm ghost-tts-service:latest python -c "import torch; print('OK')"
 
 # Check service starts
-./start.sh up -d
+docker compose up -d
 # Wait 2-3 minutes for startup
 curl http://localhost:8020/health
 ```
@@ -670,7 +670,7 @@ Services must start in a specific order to satisfy dependencies:
 4. n8n            (depends on TTS Service, Ollama)
 ```
 
-`./start.sh up -d` handles this automatically via Docker Compose `depends_on` directives. If starting manually:
+`docker compose up -d` handles this automatically via Docker Compose `depends_on` directives. If starting manually:
 
 ```bash
 docker compose up -d redis
@@ -700,7 +700,7 @@ ghost-narrator/
 ├── NOTICE                         # Third-party attribution
 ├── README.md                      # Project overview
 ├── SECURITY.md
-├── start.sh                       # Service startup script
+├── install.sh                     # One-command installer (GPU detection, .env setup)
 │
 ├── docs/
 │   └── ARCHITECTURE.md            # This architecture document
@@ -849,11 +849,11 @@ nano .env
 ### Step 4: Start the Services
 
 ```bash
-./start.sh up -d
+docker compose up -d
 ```
 
 This will:
-1. Detect your hardware and select the right TTS model
+1. Use the `COMPOSE_FILE` from `.env` (set by `install.sh` with GPU detection)
 2. Pull the Ollama model on first run
 3. Start all services in dependency order
 4. Wait for health checks to pass

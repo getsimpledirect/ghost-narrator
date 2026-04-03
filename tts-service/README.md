@@ -22,7 +22,7 @@ The Dockerfile uses **uv** (by Astral) for blazingly fast and deterministic depe
 
 ```bash
 # From the ghost-narrator directory
-./start.sh up -d
+docker compose up -d
 ```
 
 The service will be available at `http://localhost:8020`
@@ -515,8 +515,8 @@ tts-service/
 ### Running the Service
 
 ```bash
-# With start.sh (recommended)
-./start.sh up -d
+# With Docker Compose (recommended)
+docker compose up -d
 
 # Or run directly (requires Python 3.12)
 uvicorn app.main:app --host 0.0.0.0 --port 8020 --reload
