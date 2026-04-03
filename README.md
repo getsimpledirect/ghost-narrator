@@ -215,7 +215,7 @@ You are responsible for complying with the licenses of the underlying models you
 
 ## Documentation
 
-- [Architecture Guide](docs/ARCHITECTURE.md) — full pipeline walkthrough
+- [Architecture Guide](docs/ARCHITECTURE.md) — full pipeline walkthrough including resilience & observability features
 - [TTS Service Docs](tts-service/README.md) — API reference & standalone usage
 - [TTS Quick Start](tts-service/QUICKSTART.md) — get TTS running in 5 minutes
 - [n8n Setup Guide](n8n/SETUP_GUIDE.md) — workflow configuration
