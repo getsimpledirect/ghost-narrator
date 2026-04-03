@@ -93,6 +93,7 @@ rich>=13.5.3
 loguru>=0.6.0
 einops>=0.7.0
 einx[torch]==0.4.3
+prometheus-client>=0.19.0
 
 # ── Data Processing ────────────────────────────────────────────────────────────
 datasets==2.18.0

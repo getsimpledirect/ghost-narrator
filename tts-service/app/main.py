@@ -39,6 +39,7 @@ from fastapi import FastAPI
 from app import __version__
 from app.api.middleware import APIVersionMiddleware
 from app.api.routes import health, tts
+from app.api.routes import metrics as metrics_router
 from app.api.routes.voices import router as voices_router
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
 from app.core.tts_engine import initialize_tts_engine
@@ -212,6 +213,7 @@ app.add_middleware(APIVersionMiddleware, default_version="v1")
 app.include_router(health.router)
 app.include_router(tts.router)
 app.include_router(voices_router)
+app.include_router(metrics_router.router)
 
 
 if __name__ == "__main__":
