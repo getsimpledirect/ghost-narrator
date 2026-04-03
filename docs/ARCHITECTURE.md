@@ -71,6 +71,53 @@ flowchart TD
 
 ---
 
+## Resilience & Observability Features
+
+### Circuit Breaker
+The notification service uses a circuit breaker pattern to prevent cascading failures when external services (n8n, Ghost API) are unavailable. If the failure threshold is exceeded, the circuit opens and fails fast, allowing the external service time to recover.
+
+Configuration (via environment):
+- `CIRCUIT_BREAKER_FAILURE_THRESHOLD`: Number of failures before opening (default: 5)
+- `CIRCUIT_BREAKER_RECOVERY_TIMEOUT`: Seconds before attempting recovery (default: 30)
+
+### API Versioning
+All TTS service endpoints support versioning via the `Accept-Version` header. This allows clients to specify which API version they expect.
+
+Example:
+```bash
+curl -H "Accept-Version: v1" http://localhost:8020/tts/generate
+```
+
+### Prometheus Metrics
+The service exposes Prometheus metrics at `/metrics` for monitoring:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `tts_jobs_total` | Counter | Total TTS jobs by status |
+| `tts_synthesis_duration_seconds` | Histogram | Audio synthesis time |
+| `tts_narration_duration_seconds` | Histogram | LLM narration time |
+| `tts_chunks_total` | Counter | Audio chunks processed |
+| `tts_storage_upload_duration_seconds` | Histogram | Storage upload time |
+
+### Distributed Tracing
+OpenTelemetry tracing is integrated for distributed request tracing across services. Configure via environment:
+
+- `OTEL_SERVICE_NAME`: Service name for traces (default: ghost-narrator-tts)
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP collector endpoint (optional)
+
+### Bulkhead Pattern
+Job processing uses bulkhead isolation to separate short and long article processing:
+- Short jobs (<1000 words): Up to 4 concurrent, 60s timeout
+- Long jobs (>=1000 words): 1 concurrent, 300s timeout
+
+### Rate Limiting
+API endpoints are rate-limited to prevent abuse:
+- Default: 60 requests per minute per IP
+- Health and metrics endpoints are excluded
+- Returns 429 status with `Retry-After` header when exceeded
+
+---
+
 ## Hardware Tier Detection
 
 Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS model and output settings.
