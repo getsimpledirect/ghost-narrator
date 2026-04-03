@@ -88,11 +88,13 @@ async def test_gcs_storage_upload(tmp_path):
         os.environ,
         {'GCS_BUCKET_NAME': 'my-bucket', 'GCS_AUDIO_PREFIX': 'audio/articles'},
     ):
-        # Clear cached config
+        # Clear cached config and both storage modules (services and domains)
         if 'app.config' in sys.modules:
             del sys.modules['app.config']
         if 'app.services.storage.gcs' in sys.modules:
             del sys.modules['app.services.storage.gcs']
+        if 'app.domains.storage.gcs' in sys.modules:
+            del sys.modules['app.domains.storage.gcs']
 
         from app.services.storage.gcs import GCSStorage
 
@@ -116,11 +118,13 @@ async def test_gcs_storage_upload(tmp_path):
 def test_gcs_make_public_url():
     """Test GCSStorage generates correct public URL."""
     with patch.dict(os.environ, {'GCS_BUCKET_NAME': 'my-bucket'}):
-        # Clear cached config
+        # Clear cached config and both storage modules
         if 'app.config' in sys.modules:
             del sys.modules['app.config']
         if 'app.services.storage.gcs' in sys.modules:
             del sys.modules['app.services.storage.gcs']
+        if 'app.domains.storage.gcs' in sys.modules:
+            del sys.modules['app.domains.storage.gcs']
 
         from app.services.storage.gcs import GCSStorage
 
@@ -145,11 +149,13 @@ async def test_s3_storage_upload(tmp_path):
             'S3_AUDIO_PREFIX': 'audio/articles',
         },
     ):
-        # Clear cached config
+        # Clear cached config and both storage modules
         if 'app.config' in sys.modules:
             del sys.modules['app.config']
         if 'app.services.storage.s3' in sys.modules:
             del sys.modules['app.services.storage.s3']
+        if 'app.domains.storage.s3' in sys.modules:
+            del sys.modules['app.domains.storage.s3']
 
         from app.services.storage.s3 import S3Storage
 
@@ -180,11 +186,13 @@ def test_s3_make_public_url():
             'S3_BUCKET_NAME': 'my-bucket',
         },
     ):
-        # Clear cached config
+        # Clear cached config and both storage modules
         if 'app.config' in sys.modules:
             del sys.modules['app.config']
         if 'app.services.storage.s3' in sys.modules:
             del sys.modules['app.services.storage.s3']
+        if 'app.domains.storage.s3' in sys.modules:
+            del sys.modules['app.domains.storage.s3']
 
         from app.services.storage.s3 import S3Storage
 

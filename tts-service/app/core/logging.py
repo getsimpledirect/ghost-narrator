@@ -3,7 +3,7 @@ import sys
 import json
 from typing import Any, Dict, Optional
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 correlation_id: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
@@ -13,7 +13,7 @@ job_id: ContextVar[Optional[str]] = ContextVar('job_id', default=None)
 class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         log_data: Dict[str, Any] = {
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             'level': record.levelname,
             'message': record.getMessage(),
             'module': record.name,

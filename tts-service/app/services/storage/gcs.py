@@ -3,10 +3,7 @@
 from app.domains.storage.gcs import GCSStorageBackend
 
 
-def __getattr__(name):
-    if name == '_get_client':
-        return GCSStorageBackend._get_client
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
-
-
 GCSStorage = GCSStorageBackend
+
+# Expose _get_client properly for tests
+GCSStorage._get_client = GCSStorageBackend._get_client
