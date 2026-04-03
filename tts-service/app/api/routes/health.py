@@ -34,32 +34,33 @@ from typing import Any
 
 from fastapi import APIRouter, Response
 
+from app.cache.redis_cache import get_cache
 from app.config import DEVICE, MAX_WORKERS, STORAGE_BACKEND, VOICE_SAMPLE_PATH
-from app.core.hardware import ENGINE_CONFIG
+from app.core.hardware import ENGINE_CONFIG, get_hardware_info
 from app.core.tts_engine import get_tts_engine
+from app.domains.storage import get_storage_backend
 from app.models.schemas import HealthResponse
-from app.services.job_store import get_job_store
-from app.services.notification import get_http_client
-from app.services.storage import get_storage_backend
-from app.services.synthesis import get_executor
+from app.domains.job.store import get_job_store
+from app.domains.job.notification import get_http_client
+from app.domains.synthesis.service import get_executor
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Health"])
+router = APIRouter(tags=['Health'])
 
 
 @router.get(
-    "/health",
+    '/health',
     response_model=HealthResponse,
-    summary="Health check",
-    description="Returns service health status and component information.",
+    summary='Health check',
+    description='Returns service health status and component information.',
 )
 async def health() -> HealthResponse:
     """Health check endpoint for Docker and load balancers."""
     voice_ok = Path(VOICE_SAMPLE_PATH).exists()
     voice_dir = Path(VOICE_SAMPLE_PATH).parent
     reference_audio_present = voice_ok
-    reference_tokens_present = (voice_dir / "reference_vq_tokens.npy").exists()
+    reference_tokens_present = (voice_dir / 'reference_vq_tokens.npy').exists()
     engine = get_tts_engine()
     model_ok = engine.is_ready
     tts_engine_ready = engine.is_ready
@@ -70,13 +71,13 @@ async def health() -> HealthResponse:
     try:
         jobs_count = await job_store.count()
     except Exception as exc:
-        logger.error(f"Error listing jobs in health check: {exc}")
+        logger.error(f'Error listing jobs in health check: {exc}')
 
     executor = get_executor()
     storage = get_storage_backend()
 
     return HealthResponse(
-        status="healthy" if is_healthy else "degraded",
+        status='healthy' if is_healthy else 'degraded',
         device=DEVICE,
         model=ENGINE_CONFIG.tts_model,
         voice_sample=voice_ok,
@@ -96,9 +97,9 @@ async def health() -> HealthResponse:
 
 
 @router.get(
-    "/health/ready",
-    summary="Readiness probe",
-    description="Kubernetes readiness probe. Returns 200 if the service is ready to accept traffic.",
+    '/health/ready',
+    summary='Readiness probe',
+    description='Kubernetes readiness probe. Returns 200 if the service is ready to accept traffic.',
 )
 async def readiness(response: Response) -> dict[str, Any]:
     """Kubernetes readiness probe endpoint."""
@@ -107,48 +108,48 @@ async def readiness(response: Response) -> dict[str, Any]:
 
     if not engine.is_ready:
         response.status_code = 503
-        return {"ready": False, "reason": "TTS engine not loaded"}
+        return {'ready': False, 'reason': 'TTS engine not loaded'}
 
     if not voice_ok:
         response.status_code = 503
-        return {"ready": False, "reason": "Voice sample not found"}
+        return {'ready': False, 'reason': 'Voice sample not found'}
 
-    return {"ready": True}
+    return {'ready': True}
 
 
 @router.get(
-    "/health/live",
-    summary="Liveness probe",
-    description="Kubernetes liveness probe. Returns 200 if the service process is running.",
+    '/health/live',
+    summary='Liveness probe',
+    description='Kubernetes liveness probe. Returns 200 if the service process is running.',
 )
 async def liveness() -> dict[str, bool]:
     """Kubernetes liveness probe endpoint."""
-    return {"alive": True}
+    return {'alive': True}
 
 
 @router.get(
-    "/health/detailed",
-    summary="Detailed health",
-    description="Returns detailed component-level health information for debugging.",
+    '/health/detailed',
+    summary='Detailed health',
+    description='Returns detailed component-level health information for debugging.',
 )
 async def detailed_health() -> dict[str, Any]:
     """Detailed health check with component-level status."""
     engine = get_tts_engine()
-    engine_status = {"is_ready": engine.is_ready}
+    engine_status = {'is_ready': engine.is_ready}
 
     job_store = get_job_store()
     try:
         jobs_count = await job_store.count()
         job_store_status = {
-            "type": job_store.storage_type,
-            "connected": True,
-            "jobs_count": jobs_count,
+            'type': job_store.storage_type,
+            'connected': True,
+            'jobs_count': jobs_count,
         }
     except Exception as exc:
         job_store_status = {
-            "type": job_store.storage_type,
-            "connected": False,
-            "error": str(exc),
+            'type': job_store.storage_type,
+            'connected': False,
+            'error': str(exc),
         }
 
     executor = get_executor()
@@ -162,21 +163,80 @@ async def detailed_health() -> dict[str, Any]:
     except OSError:
         voice_size = 0
     voice_status = {
-        "path": VOICE_SAMPLE_PATH,
-        "exists": voice_exists,
-        "size_bytes": voice_size,
+        'path': VOICE_SAMPLE_PATH,
+        'exists': voice_exists,
+        'size_bytes': voice_size,
     }
 
-    is_healthy = engine_status.get("is_ready", False) and voice_status["exists"]
+    is_healthy = engine_status.get('is_ready', False) and voice_status['exists']
 
     return {
-        "status": "healthy" if is_healthy else "degraded",
-        "components": {
-            "tts_engine": engine_status,
-            "job_store": job_store_status,
-            "executor": {"active": executor is not None, "max_workers": MAX_WORKERS},
-            "storage": {"enabled": storage is not None, "backend": STORAGE_BACKEND},
-            "http_client": {"enabled": http_client is not None},
-            "voice_sample": voice_status,
+        'status': 'healthy' if is_healthy else 'degraded',
+        'components': {
+            'tts_engine': engine_status,
+            'job_store': job_store_status,
+            'executor': {'active': executor is not None, 'max_workers': MAX_WORKERS},
+            'storage': {'enabled': storage is not None, 'backend': STORAGE_BACKEND},
+            'http_client': {'enabled': http_client is not None},
+            'voice_sample': voice_status,
         },
     }
+
+
+@router.get(
+    '/health/dependencies',
+    summary='Dependency health check',
+    description='Returns status of all service dependencies: cache, storage, and hardware.',
+)
+async def dependency_health() -> dict[str, Any]:
+    """
+    Health check with dependency status.
+
+    Returns:
+        JSON with status of each dependency:
+        - cache: Redis connection status
+        - storage: Storage backend status
+        - hardware: Hardware detection status
+    """
+    health: dict[str, Any] = {
+        'status': 'ready',
+        'service': 'ghost-narrator-tts',
+        'dependencies': {},
+    }
+
+    try:
+        cache = get_cache()
+        if cache.is_available:
+            health['dependencies']['cache'] = {'status': 'healthy', 'type': 'redis'}
+        else:
+            health['dependencies']['cache'] = {
+                'status': 'unhealthy',
+                'type': 'redis',
+                'reason': 'not available',
+            }
+            health['status'] = 'degraded'
+    except Exception as e:
+        health['dependencies']['cache'] = {'status': 'unhealthy', 'error': str(e)}
+        health['status'] = 'degraded'
+
+    try:
+        storage = get_storage_backend()
+        health['dependencies']['storage'] = {
+            'status': 'healthy',
+            'type': storage.__class__.__name__,
+        }
+    except Exception as e:
+        health['dependencies']['storage'] = {'status': 'unhealthy', 'error': str(e)}
+        health['status'] = 'degraded'
+
+    try:
+        hw_info = get_hardware_info()
+        health['dependencies']['hardware'] = {
+            'status': 'healthy',
+            'tier': hw_info.tier.value if hasattr(hw_info, 'tier') else 'unknown',
+            'has_gpu': hw_info.has_gpu if hasattr(hw_info, 'has_gpu') else False,
+        }
+    except Exception as e:
+        health['dependencies']['hardware'] = {'status': 'unhealthy', 'error': str(e)}
+
+    return health

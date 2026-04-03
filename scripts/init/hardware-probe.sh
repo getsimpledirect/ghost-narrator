@@ -23,7 +23,7 @@ detect_tier() {
     fi
     VRAM_MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
     echo "GPU VRAM: ${VRAM_MIB} MiB" >&2
-    if [ "$VRAM_MIB" -lt 9216 ]; then
+    if [ "$VRAM_MIB" -lt 10240 ]; then
         echo "low_vram"
     elif [ "$VRAM_MIB" -lt 18432 ]; then
         echo "mid_vram"
@@ -37,7 +37,7 @@ case "$TIER" in
     cpu_only) TTS_MODEL="Qwen/Qwen3-TTS-0.6B"; LLM_MODEL="qwen3:1.7b" ;;
     low_vram) TTS_MODEL="Qwen/Qwen3-TTS-0.6B"; LLM_MODEL="qwen3:4b-q4" ;;
     mid_vram) TTS_MODEL="Qwen/Qwen3-TTS-1.7B"; LLM_MODEL="qwen3:8b-q4" ;;
-    high_vram) TTS_MODEL="Qwen/Qwen3-TTS-1.7B"; LLM_MODEL="qwen3:8b-q4" ;;
+    high_vram) TTS_MODEL="Qwen/Qwen3-TTS-1.7B"; LLM_MODEL="qwen3:14b-q4" ;;
     *) echo "Unknown tier '$TIER' — defaulting to cpu_only" >&2; TIER="cpu_only"; TTS_MODEL="Qwen/Qwen3-TTS-0.6B"; LLM_MODEL="qwen3:1.7b" ;;
 esac
 

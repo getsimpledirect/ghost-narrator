@@ -71,6 +71,53 @@ flowchart TD
 
 ---
 
+## Resilience & Observability Features
+
+### Circuit Breaker
+The notification service uses a circuit breaker pattern to prevent cascading failures when external services (n8n, Ghost API) are unavailable. If the failure threshold is exceeded, the circuit opens and fails fast, allowing the external service time to recover.
+
+Configuration (via environment):
+- `CIRCUIT_BREAKER_FAILURE_THRESHOLD`: Number of failures before opening (default: 5)
+- `CIRCUIT_BREAKER_RECOVERY_TIMEOUT`: Seconds before attempting recovery (default: 30)
+
+### API Versioning
+All TTS service endpoints support versioning via the `Accept-Version` header. This allows clients to specify which API version they expect.
+
+Example:
+```bash
+curl -H "Accept-Version: v1" http://localhost:8020/tts/generate
+```
+
+### Prometheus Metrics
+The service exposes Prometheus metrics at `/metrics` for monitoring:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `tts_jobs_total` | Counter | Total TTS jobs by status |
+| `tts_synthesis_duration_seconds` | Histogram | Audio synthesis time |
+| `tts_narration_duration_seconds` | Histogram | LLM narration time |
+| `tts_chunks_total` | Counter | Audio chunks processed |
+| `tts_storage_upload_duration_seconds` | Histogram | Storage upload time |
+
+### Distributed Tracing
+OpenTelemetry tracing is integrated for distributed request tracing across services. Configure via environment:
+
+- `OTEL_SERVICE_NAME`: Service name for traces (default: ghost-narrator-tts)
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP collector endpoint (optional)
+
+### Bulkhead Pattern
+Job processing uses bulkhead isolation to separate short and long article processing:
+- Short jobs (<1000 words): Up to 4 concurrent, 60s timeout
+- Long jobs (>=1000 words): 1 concurrent, 300s timeout
+
+### Rate Limiting
+API endpoints are rate-limited to prevent abuse:
+- Default: 60 requests per minute per IP
+- Health and metrics endpoints are excluded
+- Returns 429 status with `Retry-After` header when exceeded
+
+---
+
 ## Hardware Tier Detection
 
 Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS model and output settings.
@@ -153,18 +200,18 @@ The TTS service uses a **modern uv-based Dockerfile** for deterministic and ligh
 
 ### Service Startup
 
-Use `start.sh` to bring up all services:
+Use `docker compose` to bring up all services:
 
 ```bash
-./start.sh up -d        # Start all services in background
-./start.sh down          # Stop all services
-./start.sh logs          # Tail logs from all services
-./start.sh restart tts   # Restart a single service
+docker compose up -d        # Start all services in background
+docker compose down          # Stop all services
+docker compose logs -f       # Tail logs from all services
+docker compose restart tts-service   # Restart a single service
 ```
 
-`start.sh` handles:
-1. Hardware detection and model selection
-2. `.env` validation
+`install.sh` handles:
+1. Hardware detection and model selection (writes `COMPOSE_FILE` to `.env`)
+2. `.env` creation and validation
 3. Docker Compose orchestration
 4. Health check polling
 
@@ -275,7 +322,7 @@ After build completes, verify the installation:
 docker run --rm ghost-tts-service:latest python -c "import torch; print('OK')"
 
 # Check service starts
-./start.sh up -d
+docker compose up -d
 # Wait 2-3 minutes for startup
 curl http://localhost:8020/health
 ```
@@ -623,7 +670,7 @@ Services must start in a specific order to satisfy dependencies:
 4. n8n            (depends on TTS Service, Ollama)
 ```
 
-`./start.sh up -d` handles this automatically via Docker Compose `depends_on` directives. If starting manually:
+`docker compose up -d` handles this automatically via Docker Compose `depends_on` directives. If starting manually:
 
 ```bash
 docker compose up -d redis
@@ -653,7 +700,7 @@ ghost-narrator/
 ├── NOTICE                         # Third-party attribution
 ├── README.md                      # Project overview
 ├── SECURITY.md
-├── start.sh                       # Service startup script
+├── install.sh                     # One-command installer (GPU detection, .env setup)
 │
 ├── docs/
 │   └── ARCHITECTURE.md            # This architecture document
@@ -688,24 +735,63 @@ ghost-narrator/
     │   ├── dependencies.py        # FastAPI dependency injection
     │   │
     │   ├── api/
+    │   │   ├── middleware.py      # API versioning middleware
+    │   │   ├── rate_limit_middleware/
+    │   │   │   └── rate_limit.py  # Rate limiting middleware
     │   │   └── routes/
-    │   │       ├── health.py      # Health check endpoints (/health, /health/ready)
-    │   │       └── tts.py         # TTS endpoints (/generate, /status, /download)
+    │   │       ├── health.py      # Health check endpoints (/health, /health/ready, /health/dependencies)
+    │   │       ├── metrics.py     # Prometheus metrics endpoint
+    │   │       ├── tts.py         # TTS endpoints (/generate, /status, /download)
+    │   │       └── voices.py      # Voice profile management
+    │   │
+    │   ├── cache/
+    │   │   ├── redis_cache.py     # Redis caching with graceful degradation
+    │   │   └── cache_decorator.py # @cached decorator for function results
     │   │
     │   ├── core/
-    │   │   ├── exceptions.py      # Custom exceptions (SynthesisError, TTSEngineError)
-    │   │   └── tts_engine.py      # Qwen3-TTS wrapper (singleton, thread-safe)
+    │   │   ├── exceptions.py      # Custom exceptions (SynthesisError, TTSEngineError, etc.)
+    │   │   ├── tts_engine.py      # Qwen3-TTS wrapper (singleton, thread-safe)
+    │   │   ├── hardware.py        # Hardware tier detection (CPU/GPU/HIGH_VRAM)
+    │   │   ├── circuit_breaker.py # Circuit breaker for external API calls
+    │   │   ├── connection_pool.py # Generic async connection pool
+    │   │   ├── retry.py           # Exponential backoff retry logic
+    │   │   ├── tracing.py         # OpenTelemetry distributed tracing
+    │   │   ├── logging.py         # Structured logging with correlation IDs
+    │   │   └── bulkhead.py        # Bulkhead pattern for job isolation
+    │   │
+    │   ├── domains/               # Domain-driven business logic
+    │   │   ├── job/
+    │   │   │   ├── __init__.py
+    │   │   │   ├── state.py       # JobState enum and JobStatus dataclass
+    │   │   │   ├── store.py       # Redis + in-memory job storage with fallback
+    │   │   │   ├── notification.py# Webhook callbacks (n8n) with circuit breaker
+    │   │   │   ├── runner.py      # Entry point for TTS job execution
+    │   │   │   └── tts_job.py     # Complete TTS pipeline runner
+    │   │   ├── narration/
+    │   │   │   ├── factory.py     # Strategy factory (selects by hardware tier)
+    │   │   │   ├── strategy.py    # Single-shot and chunked strategies
+    │   │   │   ├── prompt.py      # System prompts and continuity instructions
+    │   │   │   └── validator.py   # Narration completeness validation
+    │   │   ├── storage/
+    │   │   │   ├── __init__.py    # Factory + exports (LocalStorageBackend, GCS, S3)
+    │   │   │   ├── local.py       # Local filesystem storage
+    │   │   │   ├── gcs.py         # Google Cloud Storage backend
+    │   │   │   └── s3.py          # AWS S3 storage backend
+    │   │   ├── synthesis/
+    │   │   │   ├── __init__.py    # Exports for synthesis module
+    │   │   │   ├── service.py     # Synthesis orchestration (parallel/sequential)
+    │   │   │   ├── chunker.py     # Text chunking logic
+    │   │   │   ├── concatenate.py # Audio concatenation utilities
+    │   │   │   ├── normalize.py   # Audio normalization
+    │   │   │   ├── mastering.py   # Audio mastering with fallback
+    │   │   │   ├── quality.py     # Audio quality validation and mastering wrapper
+    │   │   │   └── quality_check.py # Per-chunk quality check and resynthesis
+    │   │   └── voices/
+    │   │       ├── registry.py    # Voice profile management
+    │   │       └── upload.py      # Voice sample validation
     │   │
     │   ├── models/
     │   │   └── schemas.py         # Pydantic request/response models
-    │   │
-    │   ├── services/              # Business logic layer
-    │   │   ├── audio.py           # WAV concatenation, LUFS normalization, mastering
-    │   │   ├── job_store.py       # Redis + in-memory job storage with fallback
-    │   │   ├── notification.py    # Webhook callbacks (n8n) with retry logic
-    │   │   ├── storage.py         # Storage upload service (local/GCS/S3)
-    │   │   ├── synthesis.py       # Chunk synthesis orchestration (parallel/sequential)
-    │   │   └── tts_job.py         # Complete TTS pipeline runner
     │   │
     │   └── utils/
     │       └── text.py            # Text chunking at sentence boundaries
@@ -762,11 +848,11 @@ nano .env
 ### Step 4: Start the Services
 
 ```bash
-./start.sh up -d
+docker compose up -d
 ```
 
 This will:
-1. Detect your hardware and select the right TTS model
+1. Use the `COMPOSE_FILE` from `.env` (set by `install.sh` with GPU detection)
 2. Pull the Ollama model on first run
 3. Start all services in dependency order
 4. Wait for health checks to pass

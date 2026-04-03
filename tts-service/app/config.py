@@ -33,112 +33,109 @@ import re
 from pathlib import Path
 from typing import Final
 
-from app.core.hardware import ENGINE_CONFIG  # noqa: E402
+
+def _get_engine_config():
+    """Lazy accessor for ENGINE_CONFIG to avoid import-time hardware probing."""
+    from app.core.hardware import ENGINE_CONFIG
+
+    return ENGINE_CONFIG
 
 
 # Voice and TTS settings
 VOICE_SAMPLE_PATH: Final[str] = os.environ.get(
-    "VOICE_SAMPLE_PATH", "/app/voices/default/reference.wav"
+    'VOICE_SAMPLE_PATH', '/app/voices/default/reference.wav'
 )
-TTS_LANGUAGE: Final[str] = os.environ.get("TTS_LANGUAGE", "en")
+TTS_LANGUAGE: Final[str] = os.environ.get('TTS_LANGUAGE', 'en')
 
 # Hardware tier (read from ENGINE_CONFIG — set at startup)
-HARDWARE_TIER: Final[str] = ENGINE_CONFIG.tier.value
-SELECTED_TTS_MODEL: Final[str] = ENGINE_CONFIG.tts_model
-SELECTED_LLM_MODEL: Final[str] = ENGINE_CONFIG.llm_model
+HARDWARE_TIER: Final[str] = _get_engine_config().tier.value
+SELECTED_TTS_MODEL: Final[str] = _get_engine_config().tts_model
+SELECTED_LLM_MODEL: Final[str] = _get_engine_config().llm_model
 
 # Override DEVICE from engine config (replaces static env var)
-DEVICE: Final[str] = ENGINE_CONFIG.tts_device
+DEVICE: Final[str] = _get_engine_config().tts_device
 
 # Narration LLM endpoint (bundled Ollama default; override for any OpenAI-compatible API)
-LLM_BASE_URL: Final[str] = os.environ.get("LLM_BASE_URL", "http://ollama:11434/v1")
-LLM_MODEL_NAME: Final[str] = os.environ.get("LLM_MODEL_NAME", ENGINE_CONFIG.llm_model)
+LLM_BASE_URL: Final[str] = os.environ.get('LLM_BASE_URL', 'http://ollama:11434/v1')
+LLM_MODEL_NAME: Final[str] = os.environ.get('LLM_MODEL_NAME', _get_engine_config().llm_model)
 
 # Storage backend
-STORAGE_BACKEND: Final[str] = os.environ.get("STORAGE_BACKEND", "local").lower()
+STORAGE_BACKEND: Final[str] = os.environ.get('STORAGE_BACKEND', 'local').lower()
 
 # S3 settings (used when STORAGE_BACKEND=s3)
-AWS_ACCESS_KEY_ID: Final[str] = os.environ.get("AWS_ACCESS_KEY_ID", "")
-AWS_SECRET_ACCESS_KEY: Final[str] = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-AWS_REGION: Final[str] = os.environ.get("AWS_REGION", "us-east-1")
-S3_BUCKET_NAME: Final[str] = os.environ.get("S3_BUCKET_NAME", "")
-S3_AUDIO_PREFIX: Final[str] = os.environ.get("S3_AUDIO_PREFIX", "audio/articles")
+AWS_ACCESS_KEY_ID: Final[str] = os.environ.get('AWS_ACCESS_KEY_ID', '')
+AWS_SECRET_ACCESS_KEY: Final[str] = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+AWS_REGION: Final[str] = os.environ.get('AWS_REGION', 'us-east-1')
+S3_BUCKET_NAME: Final[str] = os.environ.get('S3_BUCKET_NAME', '')
+S3_AUDIO_PREFIX: Final[str] = os.environ.get('S3_AUDIO_PREFIX', 'audio/articles')
 
 # GCS service account key (optional — leave blank for ADC)
-GCS_SERVICE_ACCOUNT_KEY_PATH: Final[str] = os.environ.get(
-    "GCS_SERVICE_ACCOUNT_KEY_PATH", ""
-)
+GCS_SERVICE_ACCOUNT_KEY_PATH: Final[str] = os.environ.get('GCS_SERVICE_ACCOUNT_KEY_PATH', '')
 
 # GCS bucket settings (used when STORAGE_BACKEND=gcs)
-GCS_BUCKET_NAME: Final[str] = os.environ.get("GCS_BUCKET_NAME", "")
-GCS_AUDIO_PREFIX: Final[str] = os.environ.get("GCS_AUDIO_PREFIX", "audio/articles")
+GCS_BUCKET_NAME: Final[str] = os.environ.get('GCS_BUCKET_NAME', '')
+GCS_AUDIO_PREFIX: Final[str] = os.environ.get('GCS_AUDIO_PREFIX', 'audio/articles')
+
+_ec = _get_engine_config()
 
 # Audio quality (from ENGINE_CONFIG — overridable via env)
-MP3_BITRATE: Final[str] = os.environ.get("MP3_BITRATE", ENGINE_CONFIG.mp3_bitrate)
-AUDIO_SAMPLE_RATE: Final[int] = int(
-    os.environ.get("AUDIO_SAMPLE_RATE", str(ENGINE_CONFIG.sample_rate))
-)
-TARGET_LUFS: Final[float] = float(
-    os.environ.get("TARGET_LUFS", str(ENGINE_CONFIG.target_lufs))
-)
+MP3_BITRATE: Final[str] = os.environ.get('MP3_BITRATE', _ec.mp3_bitrate)
+AUDIO_SAMPLE_RATE: Final[int] = int(os.environ.get('AUDIO_SAMPLE_RATE', str(_ec.sample_rate)))
+TARGET_LUFS: Final[float] = float(os.environ.get('TARGET_LUFS', str(_ec.target_lufs)))
 
 # TTS chunk words (from ENGINE_CONFIG)
 try:
     MAX_CHUNK_WORDS: Final[int] = max(
         10,
         min(
-            int(os.environ.get("MAX_CHUNK_WORDS", str(ENGINE_CONFIG.tts_chunk_words))),
+            int(os.environ.get('MAX_CHUNK_WORDS', str(_ec.tts_chunk_words))),
             1000,
         ),
     )
 except ValueError:
-    MAX_CHUNK_WORDS: Final[int] = ENGINE_CONFIG.tts_chunk_words
+    MAX_CHUNK_WORDS: Final[int] = _ec.tts_chunk_words
 
 # Webhook settings
-N8N_CALLBACK_URL: Final[str] = os.environ.get("N8N_CALLBACK_URL", "")
+N8N_CALLBACK_URL: Final[str] = os.environ.get('N8N_CALLBACK_URL', '')
 
 # Worker and concurrency settings
 try:
-    MAX_WORKERS: Final[int] = max(1, min(int(os.environ.get("MAX_WORKERS", "4")), 32))
+    MAX_WORKERS: Final[int] = max(1, min(int(os.environ.get('MAX_WORKERS', '4')), 32))
 except ValueError:
     MAX_WORKERS: Final[int] = 4
 
 # Redis settings
-REDIS_URL: Final[str] = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL: Final[str] = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 try:
-    REDIS_JOB_TTL: Final[int] = max(
-        60, min(int(os.environ.get("REDIS_JOB_TTL", "86400")), 604800)
-    )
+    REDIS_JOB_TTL: Final[int] = max(60, min(int(os.environ.get('REDIS_JOB_TTL', '86400')), 604800))
 except ValueError:
     REDIS_JOB_TTL: Final[int] = 86400
 
 # Output directory
-OUTPUT_DIR: Final[Path] = Path(os.environ.get("OUTPUT_DIR", "/app/output"))
+OUTPUT_DIR: Final[Path] = Path(os.environ.get('OUTPUT_DIR', '/app/output'))
 try:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 except (PermissionError, OSError) as exc:
     import logging
 
     logging.getLogger(__name__).warning(
-        "Could not create OUTPUT_DIR %s: %s. Will attempt at runtime.", OUTPUT_DIR, exc
+        'Could not create OUTPUT_DIR %s: %s. Will attempt at runtime.', OUTPUT_DIR, exc
     )
 
 # Validation constants
 MAX_TEXT_LENGTH: Final[int] = 100_000
-VALID_JOB_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-zA-Z0-9_-]{1,200}$")
+VALID_JOB_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r'^[a-zA-Z0-9_-]{1,200}$')
 MAX_JOB_ID_LENGTH: Final[int] = 200
 
 # TTS timeout settings
 try:
     SEMANTIC_TOKEN_TIMEOUT: Final[int] = max(
-        60, int(os.environ.get("SEMANTIC_TOKEN_TIMEOUT", "360"))
+        60, int(os.environ.get('SEMANTIC_TOKEN_TIMEOUT', '360'))
     )
 except ValueError:
     SEMANTIC_TOKEN_TIMEOUT: Final[int] = 360
 try:
-    AUDIO_DECODE_TIMEOUT: Final[int] = max(
-        30, int(os.environ.get("AUDIO_DECODE_TIMEOUT", "180"))
-    )
+    AUDIO_DECODE_TIMEOUT: Final[int] = max(30, int(os.environ.get('AUDIO_DECODE_TIMEOUT', '180')))
 except ValueError:
     AUDIO_DECODE_TIMEOUT: Final[int] = 180
 
@@ -158,34 +155,11 @@ MAX_RETRIES: Final[int] = 3
 GCS_UPLOAD_TIMEOUT: Final[int] = 300
 
 # Server external IP (for local storage URLs)
-SERVER_EXTERNAL_IP: Final[str] = os.environ.get("SERVER_EXTERNAL_IP", "localhost")
+SERVER_EXTERNAL_IP: Final[str] = os.environ.get('SERVER_EXTERNAL_IP', 'localhost')
 
 
 def get_llm_client():
     """Return async OpenAI-compatible client pointed at Ollama (or override URL)."""
     from openai import AsyncOpenAI  # Ollama is OpenAI-compatible
 
-    return AsyncOpenAI(base_url=LLM_BASE_URL, api_key="ollama")
-
-
-def get_narration_strategy():
-    """Return the NarrationStrategy for the current hardware tier."""
-    from app.core.hardware import ENGINE_CONFIG, HardwareTier
-    from app.services.narration.strategy import ChunkedStrategy, SingleShotStrategy
-
-    client = get_llm_client()
-    tier = ENGINE_CONFIG.tier
-    if ENGINE_CONFIG.narration_strategy == "chunked":
-        return ChunkedStrategy(
-            llm_client=client,
-            chunk_words=ENGINE_CONFIG.narration_chunk_words,
-            tier=tier,
-            model=LLM_MODEL_NAME,
-        )
-    return SingleShotStrategy(
-        llm_client=client,
-        fallback_threshold_words=3000 if tier == HardwareTier.MID_VRAM else 999999,
-        fallback_chunk_words=ENGINE_CONFIG.narration_chunk_words,
-        tier=tier,
-        model=LLM_MODEL_NAME,
-    )
+    return AsyncOpenAI(base_url=LLM_BASE_URL, api_key='ollama')

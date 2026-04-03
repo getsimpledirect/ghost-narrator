@@ -26,10 +26,10 @@ ENV PATH="/usr/local/bin:$PATH"
 
 WORKDIR /app
 
-# Copy dependency files
-COPY requirements.txt .
+# Copy dependency files (both pyproject.toml and requirements.txt for compatibility)
+COPY pyproject.toml requirements.txt ./
 
-# Install dependencies using uv
+# Install dependencies using uv (faster than pip)
 RUN uv pip install --system --no-cache -r requirements.txt
 
 # Verify critical imports work

@@ -209,10 +209,13 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
       - SERVER_EXTERNAL_IP=${SERVER_EXTERNAL_IP:-localhost}
+      - OTEL_SERVICE_NAME=ghost-narrator-tts
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - voices_data:/app/voices
       - tts_output:/app/output
       - tier_data:/shared:ro
+      - ./secrets:/app/secrets:ro
     networks:
       - pipeline_net
     depends_on:

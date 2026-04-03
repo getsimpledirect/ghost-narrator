@@ -44,9 +44,16 @@ jobs:
 
           if [ $CZ_EXIT -eq 0 ]; then
             echo "bumped=true" >> $GITHUB_OUTPUT
-            echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+            # Read version from VERSION file (cz bump creates/updates it)
+            if [ -f VERSION ]; then
+              echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+            else
+              # Fallback: extract from the latest tag
+              echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
+            fi
           elif [ $CZ_EXIT -eq 7 ]; then
-            NEXT_VERSION=$(cz version --project)
+            # Exit code 7 = tag already exists, delete and retry
+            NEXT_VERSION=$(cz version --project 2>/dev/null || cat VERSION 2>/dev/null || echo "unknown")
             STALE_TAG="v${NEXT_VERSION}"
             echo "Stale tag ${STALE_TAG} found — deleting and retrying..."
             git tag -d "$STALE_TAG" 2>/dev/null || true
@@ -59,7 +66,11 @@ jobs:
 
             if [ $CZ_EXIT2 -eq 0 ]; then
               echo "bumped=true" >> $GITHUB_OUTPUT
-              echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+              if [ -f VERSION ]; then
+                echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+              else
+                echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
+              fi
             else
               echo "Retry failed (exit $CZ_EXIT2) — skipping release"
               echo "bumped=false" >> $GITHUB_OUTPUT

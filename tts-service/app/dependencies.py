@@ -36,10 +36,10 @@ from fastapi import Depends, HTTPException, status
 
 from app.config import VOICE_SAMPLE_PATH
 from app.core.tts_engine import TTSEngine, get_tts_engine
-from app.services.job_store import JobStore, get_job_store
-from app.services.notification import get_http_client
-from app.services.storage import get_gcs_client, is_gcs_enabled
-from app.services.synthesis import get_executor
+from app.domains.job.store import JobStore, get_job_store
+from app.domains.job.notification import get_http_client
+from app.domains.storage import get_gcs_client, is_gcs_enabled
+from app.domains.synthesis.service import get_executor
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -80,13 +80,13 @@ def get_tts_engine_dependency() -> TTSEngine:
     if not engine.is_ready:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="TTS engine is not initialized",
+            detail='TTS engine is not initialized',
         )
 
     return engine
 
 
-def get_executor_dependency() -> "concurrent.futures.ThreadPoolExecutor":
+def get_executor_dependency() -> 'concurrent.futures.ThreadPoolExecutor':
     """
     Dependency for accessing the thread pool executor.
 
@@ -101,13 +101,13 @@ def get_executor_dependency() -> "concurrent.futures.ThreadPoolExecutor":
     if executor is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Thread pool executor is not initialized",
+            detail='Thread pool executor is not initialized',
         )
 
     return executor
 
 
-def get_gcs_client_dependency() -> Optional["gcs.Client"]:
+def get_gcs_client_dependency() -> Optional['gcs.Client']:
     """
     Dependency for accessing the GCS client.
 
@@ -117,7 +117,7 @@ def get_gcs_client_dependency() -> Optional["gcs.Client"]:
     return get_gcs_client()
 
 
-def get_http_client_dependency() -> Optional["httpx.AsyncClient"]:
+def get_http_client_dependency() -> Optional['httpx.AsyncClient']:
     """
     Dependency for accessing the HTTP client.
 
@@ -147,7 +147,7 @@ def require_voice_sample() -> bool:
     if not Path(VOICE_SAMPLE_PATH).exists():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Voice sample not found at {VOICE_SAMPLE_PATH}. Mount voices/ directory.",
+            detail=f'Voice sample not found at {VOICE_SAMPLE_PATH}. Mount voices/ directory.',
         )
 
     return True
@@ -166,7 +166,7 @@ def require_gcs_enabled() -> bool:
     if not is_gcs_enabled():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="GCS storage is not configured",
+            detail='GCS storage is not configured',
         )
 
     return True
@@ -191,13 +191,13 @@ def require_tts_ready() -> TTSEngine:
     if not engine.is_ready:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="TTS engine is not loaded",
+            detail='TTS engine is not loaded',
         )
 
     if not Path(VOICE_SAMPLE_PATH).exists():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Voice sample not found at {VOICE_SAMPLE_PATH}",
+            detail=f'Voice sample not found at {VOICE_SAMPLE_PATH}',
         )
 
     return engine
@@ -211,9 +211,7 @@ def require_tts_ready() -> TTSEngine:
 
 JobStoreDep = Annotated[JobStore, Depends(get_job_store_dependency)]
 TTSEngineDep = Annotated[TTSEngine, Depends(get_tts_engine_dependency)]
-ExecutorDep = Annotated[
-    "concurrent.futures.ThreadPoolExecutor", Depends(get_executor_dependency)
-]
+ExecutorDep = Annotated['concurrent.futures.ThreadPoolExecutor', Depends(get_executor_dependency)]
 VoiceSampleDep = Annotated[bool, Depends(require_voice_sample)]
 TTSReadyDep = Annotated[TTSEngine, Depends(require_tts_ready)]
 

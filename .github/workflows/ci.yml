@@ -11,30 +11,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - run: pip install ruff
-      - run: ruff check tts-service/app/
-      - run: ruff format --check tts-service/app/
+          python-version: '3.12'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint with ruff
+        working-directory: tts-service
+        run: ruff check app/
+
+      - name: Check formatting
+        working-directory: tts-service
+        run: ruff format --check app/
 
   test:
     runs-on: ubuntu-latest
     needs: lint
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install test dependencies
-        run: |
-          pip install pytest pytest-asyncio
-          pip install fastapi uvicorn pydantic
-          pip install pydub openai redis boto3
+          python-version: '3.12'
+
+      - name: Install dependencies
         working-directory: tts-service
+        run: pip install -r requirements.txt
+
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
         working-directory: tts-service
+        run: python -m pytest tests/ -v --tb=short
         env:
           HARDWARE_TIER: cpu_only
           REDIS_URL: ""

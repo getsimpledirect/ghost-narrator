@@ -82,8 +82,8 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
         sed -i.bak "s/N8N_PASSWORD=.*/N8N_PASSWORD=${N8N_PASS}/" .env
     fi
 
-    # Generate encryption key if not set
-    if grep -q "N8N_ENCRYPTION_KEY=changeme" .env 2>/dev/null || grep -q "N8N_ENCRYPTION_KEY=$" .env 2>/dev/null; then
+    # Generate encryption key if placeholder or empty
+    if grep -qE "N8N_ENCRYPTION_KEY=(changeme|your-encryption-key-here|)$" .env 2>/dev/null; then
         ENC_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
         sed -i.bak "s/N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=${ENC_KEY}/" .env
         ok "Generated N8N_ENCRYPTION_KEY"
@@ -136,7 +136,7 @@ case "$STORAGE_CHOICE" in
 
         sed -i.bak "s/STORAGE_BACKEND=.*/STORAGE_BACKEND=gcs/" .env
         sed -i.bak "s/GCS_BUCKET_NAME=.*/GCS_BUCKET_NAME=${GCS_BUCKET}/" .env
-        sed -i.bak "s|GCS_SERVICE_ACCOUNT_KEY_PATH=.*|GCS_SERVICE_ACCOUNT_KEY_PATH=/run/secrets/${SA_NAME}-key.json|" .env
+        sed -i.bak "s|GCS_SERVICE_ACCOUNT_KEY_PATH=.*|GCS_SERVICE_ACCOUNT_KEY_PATH=/app/secrets/${SA_NAME}-key.json|" .env
         rm -f .env.bak
         ok "GCS configured — key saved to secrets/"
         ;;
@@ -196,6 +196,35 @@ else
     fi
 fi
 
+# ─── GPU Detection ───────────────────────────────────────────────────────
+echo ""
+info "Detecting GPU..."
+if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
+    GPU_DETECTED=true
+    ok "NVIDIA GPU detected — GPU compose override will be used"
+else
+    GPU_DETECTED=false
+    info "No NVIDIA GPU detected — running in CPU mode"
+    echo "  (If you have a GPU, ensure nvidia-smi is available)"
+fi
+
+# Write COMPOSE_FILE to .env so docker compose picks it up automatically
+if grep -q "^COMPOSE_FILE=" .env 2>/dev/null; then
+    if [ "$GPU_DETECTED" = true ]; then
+        sed -i.bak "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml|" .env
+    else
+        sed -i.bak "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml|" .env
+    fi
+    rm -f .env.bak
+else
+    if [ "$GPU_DETECTED" = true ]; then
+        echo "COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml" >> .env
+    else
+        echo "COMPOSE_FILE=docker-compose.yml" >> .env
+    fi
+fi
+ok "Compose configuration written to .env"
+
 # ─── Pull Docker Images ───────────────────────────────────────────────────────
 echo ""
 info "Pulling Docker images (this may take a few minutes on first run)..."
@@ -211,13 +240,14 @@ echo -e "${GREEN}  Installation complete!${NC}"
 echo -e "${GREEN}══════════════════════════════════════════════════════════════${NC}"
 echo ""
 echo "  Start the stack:"
-echo -e "    ${BLUE}./start.sh up -d${NC}"
+echo -e "    ${BLUE}docker compose up -d${NC}"
 echo ""
 echo "  View logs:"
-echo -e "    ${BLUE}./start.sh logs -f${NC}"
+echo -e "    ${BLUE}docker compose logs -f${NC}"
 echo ""
 echo "  Open n8n dashboard:"
-echo -e "    ${BLUE}http://$(grep SERVER_EXTERNAL_IP .env | cut -d= -f2):5678${NC}"
+SERVER_IP=$(grep SERVER_EXTERNAL_IP .env 2>/dev/null | cut -d= -f2 || echo "YOUR_SERVER_IP")
+echo -e "    ${BLUE}http://${SERVER_IP}:5678${NC}"
 echo ""
 echo "  Import n8n workflows from: n8n/workflows/"
 echo ""

@@ -34,7 +34,7 @@ ffmpeg -i your-voice.mp3 -ar 22050 -ac 1 -c:a pcm_s16le voices/default/reference
 
 ```bash
 # From the ghost-narrator directory
-./start.sh up -d
+docker compose up -d
 ```
 
 ---
@@ -229,7 +229,7 @@ Verify health endpoint shows `"job_store": "redis"`
 ### View detailed logs
 
 ```bash
-./start.sh logs tts-service
+docker compose logs -f tts-service
 # Or directly:
 docker logs -f tts-service
 ```

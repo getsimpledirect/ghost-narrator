@@ -20,8 +20,8 @@ jobs:
           wait-interval: 10
           allowed-conclusions: success
 
-      - name: Auto-merge if CI passes
-        run: gh pr merge "$PR_URL" --auto --squash
+      - name: Enable auto-merge for Dependabot PRs
+        run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

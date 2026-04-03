@@ -48,27 +48,6 @@ except ImportError:
 class TTSEngine:
     """Singleton Qwen3-TTS engine with voice cloning support."""
 
-    _instance: Optional["TTSEngine"] = None
-    _init_lock = threading.Lock()
-
-    def __new__(cls) -> "TTSEngine":
-        if cls._instance is None:
-            with cls._init_lock:
-                if cls._instance is None:
-                    instance = super().__new__(cls)
-                    instance._model: Optional[QwenTTS] = None
-                    instance._ready = False
-                    instance._lock = threading.Lock()
-                    instance._synthesis_lock = (
-                        threading.Lock()
-                    )  # serialises GPU inference
-                    instance._cancelled_jobs: set[str] = set()
-                    instance._cached_voice_path: Optional[str] = (
-                        None  # pre-computed voice cache
-                    )
-                    cls._instance = instance
-        return cls._instance
-
     def initialize(self) -> None:
         """Load Qwen3-TTS model into memory and pre-compute voice reference.
 
@@ -80,12 +59,12 @@ class TTSEngine:
                 return
             if QwenTTS is None:
                 raise TTSEngineError(
-                    "qwen-tts package not installed. Install with: pip install qwen-tts"
+                    'qwen-tts package not installed. Install with: pip install qwen-tts'
                 )
             from app.core.hardware import ENGINE_CONFIG
 
             logger.info(
-                "Loading %s on %s (%s)",
+                'Loading %s on %s (%s)',
                 SELECTED_TTS_MODEL,
                 DEVICE,
                 ENGINE_CONFIG.tts_precision,
@@ -101,20 +80,20 @@ class TTSEngine:
 
                 voice_path = Path(VOICE_SAMPLE_PATH)
                 if voice_path.exists():
-                    logger.info("Pre-computing voice reference: %s", voice_path)
+                    logger.info('Pre-computing voice reference: %s', voice_path)
                     self._model.load_reference(str(voice_path))
                     self._cached_voice_path = str(voice_path)
-                    logger.info("Voice reference cached in VRAM")
+                    logger.info('Voice reference cached in VRAM')
                 else:
                     logger.warning(
-                        "Voice sample not found at %s — will load per-job",
+                        'Voice sample not found at %s — will load per-job',
                         voice_path,
                     )
 
                 self._ready = True
-                logger.info("Qwen3-TTS engine ready")
+                logger.info('Qwen3-TTS engine ready')
             except Exception as e:
-                raise TTSEngineError(f"Failed to load Qwen3-TTS model: {e}") from e
+                raise TTSEngineError(f'Failed to load Qwen3-TTS model: {e}') from e
 
     @property
     def is_ready(self) -> bool:
@@ -124,8 +103,8 @@ class TTSEngine:
         self,
         text: str,
         output_path: str | Path,
-        voice_path_or_job_id: str | Path = "",
-        job_id: str = "",
+        voice_path_or_job_id: str | Path = '',
+        job_id: str = '',
     ) -> str:
         """Synthesize text to WAV using voice_path as reference.
 
@@ -133,7 +112,7 @@ class TTSEngine:
         new signature (text, output_path, voice_path).
         """
         if not self._ready or self._model is None:
-            raise TTSEngineError("Engine not initialized — call initialize() first")
+            raise TTSEngineError('Engine not initialized — call initialize() first')
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -146,16 +125,16 @@ class TTSEngine:
 
         if voice_path_or_job_id:
             vp = Path(str(voice_path_or_job_id))
-            if vp.exists() and vp.suffix.lower() in (".wav", ".mp3"):
+            if vp.exists() and vp.suffix.lower() in ('.wav', '.mp3'):
                 voice_path = vp
             else:
                 # It's a job_id string
                 actual_job_id = str(voice_path_or_job_id)
 
         if not voice_path.exists():
-            raise VoiceSampleNotFoundError(f"Voice sample not found: {voice_path}")
+            raise VoiceSampleNotFoundError(f'Voice sample not found: {voice_path}')
         if actual_job_id and actual_job_id in self._cancelled_jobs:
-            raise SynthesisError(f"Job {actual_job_id} was cancelled")
+            raise SynthesisError(f'Job {actual_job_id} was cancelled')
 
         try:
             with self._synthesis_lock:
@@ -170,7 +149,7 @@ class TTSEngine:
         except SynthesisError:
             raise
         except Exception as e:
-            raise SynthesisError(f"Synthesis failed: {e}") from e
+            raise SynthesisError(f'Synthesis failed: {e}') from e
         finally:
             if actual_job_id:
                 self._cancelled_jobs.discard(actual_job_id)
@@ -199,7 +178,13 @@ def get_tts_engine() -> TTSEngine:
     global _engine
     with _engine_lock:
         if _engine is None:
-            _engine = TTSEngine()
+            _engine = object.__new__(TTSEngine)
+            _engine._model: Optional[QwenTTS] = None
+            _engine._ready = False
+            _engine._lock = threading.Lock()
+            _engine._synthesis_lock = threading.Lock()
+            _engine._cancelled_jobs: set[str] = set()
+            _engine._cached_voice_path: Optional[str] = None
     return _engine
 
 

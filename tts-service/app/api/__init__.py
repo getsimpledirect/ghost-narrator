@@ -38,7 +38,7 @@ api_router.include_router(health.router)
 api_router.include_router(tts.router)
 
 __all__ = [
-    "api_router",
-    "health",
-    "tts",
+    'api_router',
+    'health',
+    'tts',
 ]

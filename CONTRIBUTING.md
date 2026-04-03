@@ -56,7 +56,8 @@ cp .env.example .env
 
 # Start services
 ./install.sh
-./start.sh up -d
+# Start services
+docker compose up -d
 ```
 
 ### Running Tests
