@@ -34,6 +34,7 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from app.config import MAX_RETRIES, N8N_CALLBACK_URL
+from app.core.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from app.core.exceptions import NotificationError
 
 if TYPE_CHECKING:
@@ -153,30 +154,11 @@ async def notify_n8n(
         "error": error,
     }
 
-    for attempt in range(max_retries):
-        try:
-            response = await _httpx_client.post(url, json=payload)
-            response.raise_for_status()
-            logger.info(f"Notified n8n for job {job_id} ({status})")
-            return True
-
-        except Exception as exc:
-            if attempt < max_retries - 1:
-                wait_time = min(2**attempt, 30)  # Exponential backoff capped at 30s
-                logger.warning(
-                    f"n8n callback failed for job {job_id} "
-                    f"(attempt {attempt + 1}/{max_retries}): {exc}. "
-                    f"Retrying in {wait_time}s..."
-                )
-                await asyncio.sleep(wait_time)
-            else:
-                logger.error(
-                    f"n8n callback failed for job {job_id} "
-                    f"after {max_retries} attempts: {exc}"
-                )
-                return False
-
-    return False
+    try:
+        return await send_callback_with_circuit_breaker(url, payload)
+    except Exception as exc:
+        logger.error(f"n8n callback failed for job {job_id}: {exc}")
+        return False
 
 
 async def notify_job_completed(
@@ -242,3 +224,32 @@ async def close_http_client() -> None:
             logger.error(f"Error closing HTTP client: {exc}")
         finally:
             _httpx_client = None
+
+
+callback_circuit_breaker = CircuitBreaker(
+    name="n8n_callback",
+    failure_threshold=5,
+    recovery_timeout=30,
+)
+
+
+async def _send_callback(url: str, payload: dict, client: "httpx.AsyncClient") -> bool:
+    """Internal function to send the HTTP callback."""
+    response = await client.post(url, json=payload)
+    response.raise_for_status()
+    return True
+
+
+async def send_callback_with_circuit_breaker(callback_url: str, payload: dict) -> bool:
+    """Send callback with circuit breaker protection."""
+    if not _httpx_client:
+        logger.warning("HTTP client not initialized - skipping notification")
+        return False
+
+    try:
+        return await callback_circuit_breaker.call(
+            _send_callback, callback_url, payload, _httpx_client
+        )
+    except CircuitBreakerOpenError:
+        logger.warning(f"Circuit breaker open for {callback_url}, skipping callback")
+        return False
