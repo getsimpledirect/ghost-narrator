@@ -42,7 +42,7 @@ class TTSServiceError(Exception):
 
     def __str__(self) -> str:
         if self.details:
-            return f"{self.message}: {self.details}"
+            return f'{self.message}: {self.details}'
         return self.message
 
 
@@ -85,7 +85,7 @@ class JobNotFoundError(TTSServiceError):
 
     def __init__(self, job_id: str) -> None:
         self.job_id = job_id
-        super().__init__(f"Job not found: {job_id}")
+        super().__init__(f'Job not found: {job_id}')
 
 
 class JobAlreadyExistsError(TTSServiceError):
@@ -94,7 +94,7 @@ class JobAlreadyExistsError(TTSServiceError):
     def __init__(self, job_id: str, status: str) -> None:
         self.job_id = job_id
         self.status = status
-        super().__init__(f"Job already exists with status: {status}")
+        super().__init__(f'Job already exists with status: {status}')
 
 
 class JobStoreError(TTSServiceError):
@@ -108,7 +108,7 @@ class ValidationError(TTSServiceError):
 
     def __init__(self, field: str, message: str) -> None:
         self.field = field
-        super().__init__(message, details=f"field={field}")
+        super().__init__(message, details=f'field={field}')
 
 
 class VoiceSampleNotFoundError(TTSServiceError):
@@ -116,7 +116,7 @@ class VoiceSampleNotFoundError(TTSServiceError):
 
     def __init__(self, path: str) -> None:
         self.path = path
-        super().__init__(f"Voice sample not found at {path}")
+        super().__init__(f'Voice sample not found at {path}')
 
 
 class NotificationError(TTSServiceError):
@@ -124,10 +124,40 @@ class NotificationError(TTSServiceError):
 
     def __init__(self, url: str, message: str) -> None:
         self.url = url
-        super().__init__(message, details=f"url={url}")
+        super().__init__(message, details=f'url={url}')
 
 
 class JobDeletedError(TTSServiceError):
     """Raised when a job is explicitly deleted while processing."""
+
+    pass
+
+
+class NarrationError(TTSServiceError):
+    """Narration-related errors (LLM, text transformation)."""
+
+    pass
+
+
+class ConfigurationError(TTSServiceError):
+    """Configuration-related errors."""
+
+    pass
+
+
+class HardwareError(TTSServiceError):
+    """Hardware detection or allocation errors."""
+
+    pass
+
+
+class ExternalServiceError(TTSServiceError):
+    """External service errors (n8n callbacks, Ghost API)."""
+
+    pass
+
+
+class JobCancelledError(TTSServiceError):
+    """Job was cancelled."""
 
     pass
