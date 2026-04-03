@@ -29,7 +29,6 @@ job completion status via HTTP webhooks with retry logic.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Optional
 
