@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v4
         with:
-          python-version: "3.11"
-      - run: pip install ruff
+          enable-cache: true
+      - run: uv pip install ruff
       - run: ruff check tts-service/app/
       - run: ruff format --check tts-service/app/
 
@@ -23,18 +23,16 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v4
         with:
-          python-version: "3.11"
-      - name: Install test dependencies
+          enable-cache: true
+      - name: Install dependencies
         run: |
-          pip install pytest pytest-asyncio
-          pip install fastapi uvicorn pydantic
-          pip install pydub openai redis boto3
-        working-directory: tts-service
+          uv pip install -r tts-service/requirements.txt
+        working-directory: .
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
-        working-directory: tts-service
+        run: python -m pytest tts-service/tests/ -v --tb=short
+        working-directory: .
         env:
           HARDWARE_TIER: cpu_only
           REDIS_URL: ""
