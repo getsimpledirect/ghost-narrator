@@ -10,7 +10,7 @@ from app.domains.job.runner import run_tts_job
 
 @pytest.fixture
 def mock_job_store():
-    with patch('app.services.tts_job.get_job_store') as mock_get_store:
+    with patch('app.domains.job.tts_job.get_job_store') as mock_get_store:
         mock_store = AsyncMock()
         mock_get_store.return_value = mock_store
         yield mock_store
@@ -53,23 +53,23 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
     gcs_path = 'audio/test.mp3'
 
     with (
-        patch('app.services.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.services.tts_job.synthesize_chunks_auto') as mock_synth,
-        patch('app.services.tts_job.concatenate_wavs_auto') as mock_concat,
+        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
+        patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
+        patch('app.domains.job.tts_job.concatenate_wavs_auto') as mock_concat,
         patch(
-            'app.services.tts_job.normalize_chunk_to_target_lufs',
+            'app.domains.job.tts_job.normalize_chunk_to_target_lufs',
             side_effect=lambda p, _, **kw: p,
         ),
-        patch('app.services.tts_job.apply_final_mastering', return_value=True),
-        patch('app.services.tts_job.validate_audio_quality', return_value=None),
+        patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
+        patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
         patch(
-            'app.services.tts_job.get_storage_backend',
+            'app.domains.job.tts_job.get_storage_backend',
             return_value=mock_storage_backend,
         ),
-        patch('app.services.tts_job.notify_job_completed', new_callable=AsyncMock),
-        patch('app.services.tts_job.get_executor', return_value=_make_mock_executor()),
-        patch('app.services.tts_job.cleanup_chunk_files'),
-        patch('app.services.tts_job._AudioSegment') as mock_audio_segment,
+        patch('app.domains.job.tts_job.notify_job_completed', new_callable=AsyncMock),
+        patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
+        patch('app.domains.job.tts_job.cleanup_chunk_files'),
+        patch('app.domains.job.tts_job._AudioSegment') as mock_audio_segment,
         patch.object(Path, 'mkdir'),
         patch.object(Path, 'exists', return_value=True),
         patch.object(Path, 'stat') as mock_stat,
@@ -108,7 +108,7 @@ async def test_run_tts_job_deleted_mid_process(mock_job_store, mock_tts_engine):
     gcs_path = 'audio/deleted.mp3'
 
     with (
-        patch('app.services.tts_job.get_executor', return_value=_make_mock_executor()),
+        patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch.object(Path, 'mkdir'),
     ):
         await run_tts_job(job_id, text, gcs_path)
@@ -132,10 +132,10 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
     gcs_path = 'audio/fail.mp3'
 
     with (
-        patch('app.services.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.services.tts_job.synthesize_chunks_auto') as mock_synth,
-        patch('app.services.tts_job.get_executor', return_value=_make_mock_executor()),
-        patch('app.services.tts_job.notify_job_failed', new_callable=AsyncMock),
+        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
+        patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
+        patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
+        patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
         patch.object(Path, 'mkdir'),
     ):
         mock_prepare.return_value = (['Some text to synthesize.'], 4)
@@ -166,20 +166,20 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
     failing_backend.upload.side_effect = Exception('Network error')
 
     with (
-        patch('app.services.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.services.tts_job.synthesize_chunks_auto') as mock_synth,
-        patch('app.services.tts_job.concatenate_wavs_auto'),
+        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
+        patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
+        patch('app.domains.job.tts_job.concatenate_wavs_auto'),
         patch(
-            'app.services.tts_job.normalize_chunk_to_target_lufs',
+            'app.domains.job.tts_job.normalize_chunk_to_target_lufs',
             side_effect=lambda p, _, **kw: p,
         ),
-        patch('app.services.tts_job.apply_final_mastering', return_value=True),
-        patch('app.services.tts_job.validate_audio_quality', return_value=None),
-        patch('app.services.tts_job.get_storage_backend', return_value=failing_backend),
-        patch('app.services.tts_job.notify_job_completed', new_callable=AsyncMock),
-        patch('app.services.tts_job.get_executor', return_value=_make_mock_executor()),
-        patch('app.services.tts_job.cleanup_chunk_files'),
-        patch('app.services.tts_job._AudioSegment') as mock_audio_segment,
+        patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
+        patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
+        patch('app.domains.job.tts_job.get_storage_backend', return_value=failing_backend),
+        patch('app.domains.job.tts_job.notify_job_completed', new_callable=AsyncMock),
+        patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
+        patch('app.domains.job.tts_job.cleanup_chunk_files'),
+        patch('app.domains.job.tts_job._AudioSegment') as mock_audio_segment,
         patch.object(Path, 'mkdir'),
         patch.object(Path, 'exists', return_value=True),
         patch.object(Path, 'stat') as mock_stat,
@@ -222,7 +222,7 @@ async def test_run_tts_job_executor_not_initialized(mock_job_store, mock_tts_eng
     gcs_path = 'audio/no-exec.mp3'
 
     with (
-        patch('app.services.tts_job.get_executor', return_value=None),
+        patch('app.domains.job.tts_job.get_executor', return_value=None),
         patch.object(Path, 'mkdir'),
     ):
         await run_tts_job(job_id, text, gcs_path)

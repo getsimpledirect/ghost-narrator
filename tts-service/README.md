@@ -441,24 +441,38 @@ tts-service/
 │   │   ├── __init__.py
 │   │   └── schemas.py         # Request/response models
 │   │
-│   ├── services/              # Business logic services
+│   ├── domains/               # Domain-driven business logic
 │   │   ├── __init__.py
-│   │   ├── audio.py           # Audio concatenation and processing
-│   │   ├── job_store.py       # Redis/in-memory job storage
+│   │   ├── audio/             # Audio processing domain
+│   │   │   └── __init__.py    # Concatenation, normalization, mastering, validation
+│   │   ├── job/               # Job management domain
+│   │   │   ├── __init__.py
+│   │   │   ├── state.py       # JobState enum and JobStatus dataclass
+│   │   │   ├── callbacks.py   # Job callback notifications
+│   │   │   ├── store.py       # Redis/in-memory job storage
+│   │   │   ├── notification.py # Webhook notifications (n8n)
+│   │   │   ├── runner.py      # Background job runner entry point
+│   │   │   └── tts_job.py     # Complete TTS pipeline orchestration
 │   │   ├── narration/         # LLM narration script generation
 │   │   │   ├── __init__.py
+│   │   │   ├── base.py        # NarrationStrategy ABC
 │   │   │   ├── strategy.py    # ChunkedStrategy + SingleShotStrategy
 │   │   │   ├── prompt.py      # Tier-specific system prompts
 │   │   │   └── validator.py   # NarrationValidator (entity preservation)
-│   │   ├── notification.py    # Webhook notifications (n8n)
 │   │   ├── storage/           # Pluggable storage backends
 │   │   │   ├── __init__.py    # Factory: get_storage_backend()
 │   │   │   ├── base.py        # StorageBackend ABC
-│   │   │   ├── local.py       # LocalStorage (local:// URIs)
-│   │   │   ├── gcs.py         # GCSStorage (gs:// URIs)
-│   │   │   └── s3.py          # S3Storage (s3:// URIs)
-│   │   ├── synthesis.py       # TTS synthesis orchestration
-│   │   ├── tts_job.py         # Background job runner
+│   │   │   ├── local.py       # LocalStorageBackend (local:// URIs)
+│   │   │   ├── gcs.py         # GCSStorageBackend (gs:// URIs)
+│   │   │   └── s3.py          # S3StorageBackend (s3:// URIs)
+│   │   ├── synthesis/         # TTS synthesis orchestration
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py        # SynthesisPipeline ABC
+│   │   │   ├── chunker.py     # Text chunking for synthesis
+│   │   │   ├── concatenate.py # Audio concatenation utilities
+│   │   │   ├── normalize.py   # Audio normalization
+│   │   │   ├── mastering.py   # Audio mastering with fallback
+│   │   │   └── service.py     # Synthesis orchestration (sequential/parallel)
 │   │   └── voices/            # Voice profile management
 │   │       ├── __init__.py
 │   │       ├── registry.py    # VoiceRegistry (resolve, list, delete)
@@ -487,15 +501,15 @@ tts-service/
 | `app/core/hardware.py` | Hardware tier detection and EngineConfig singleton |
 | `app/core/tts_engine.py` | Thread-safe Qwen3-TTS wrapper with singleton pattern |
 | `app/core/exceptions.py` | Domain-specific exception hierarchy |
-| `app/services/job_store.py` | Job persistence with Redis + in-memory fallback |
-| `app/services/synthesis.py` | Parallel/sequential chunk synthesis |
-| `app/services/audio.py` | WAV concatenation with streaming for large files |
-| `app/services/narration/strategy.py` | ChunkedStrategy (CPU/LOW) and SingleShotStrategy (MID/HIGH) |
-| `app/services/narration/validator.py` | Entity-level information preservation check |
-| `app/services/storage/` | Pluggable storage: LocalStorage, GCSStorage, S3Storage |
-| `app/services/voices/registry.py` | Voice profile resolution with backward-compat fallback |
-| `app/services/notification.py` | Webhook callbacks with retry logic |
-| `app/services/tts_job.py` | Complete TTS pipeline orchestration |
+| `app/domains/job/store.py` | Job persistence with Redis + in-memory fallback |
+| `app/domains/synthesis/service.py` | Parallel/sequential chunk synthesis |
+| `app/domains/audio/__init__.py` | WAV concatenation with streaming for large files |
+| `app/domains/narration/strategy.py` | ChunkedStrategy (CPU/LOW) and SingleShotStrategy (MID/HIGH) |
+| `app/domains/narration/validator.py` | Entity-level information preservation check |
+| `app/domains/storage/` | Pluggable storage: LocalStorageBackend, GCSStorageBackend, S3StorageBackend |
+| `app/domains/voices/registry.py` | Voice profile resolution with backward-compat fallback |
+| `app/domains/job/notification.py` | Webhook callbacks with retry logic |
+| `app/domains/job/tts_job.py` | Complete TTS pipeline orchestration |
 | `app/utils/text.py` | Sentence-boundary text chunking |
 
 ### Running the Service

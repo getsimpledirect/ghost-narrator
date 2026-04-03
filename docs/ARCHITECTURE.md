@@ -735,24 +735,64 @@ ghost-narrator/
     │   ├── dependencies.py        # FastAPI dependency injection
     │   │
     │   ├── api/
+    │   │   ├── middleware.py      # API versioning middleware
+    │   │   ├── rate_limit_middleware/
+    │   │   │   └── rate_limit.py  # Rate limiting middleware
     │   │   └── routes/
-    │   │       ├── health.py      # Health check endpoints (/health, /health/ready)
-    │   │       └── tts.py         # TTS endpoints (/generate, /status, /download)
+    │   │       ├── health.py      # Health check endpoints (/health, /health/ready, /health/dependencies)
+    │   │       ├── metrics.py     # Prometheus metrics endpoint
+    │   │       ├── tts.py         # TTS endpoints (/generate, /status, /download)
+    │   │       └── voices.py      # Voice profile management
+    │   │
+    │   ├── cache/
+    │   │   ├── redis_cache.py     # Redis caching with graceful degradation
+    │   │   └── cache_decorator.py # @cached decorator for function results
     │   │
     │   ├── core/
-    │   │   ├── exceptions.py      # Custom exceptions (SynthesisError, TTSEngineError)
-    │   │   └── tts_engine.py      # Qwen3-TTS wrapper (singleton, thread-safe)
+    │   │   ├── exceptions.py      # Custom exceptions (SynthesisError, TTSEngineError, etc.)
+    │   │   ├── tts_engine.py      # Qwen3-TTS wrapper (singleton, thread-safe)
+    │   │   ├── hardware.py        # Hardware tier detection (CPU/GPU/HIGH_VRAM)
+    │   │   ├── circuit_breaker.py # Circuit breaker for external API calls
+    │   │   ├── connection_pool.py # Generic async connection pool
+    │   │   ├── retry.py           # Exponential backoff retry logic
+    │   │   ├── tracing.py         # OpenTelemetry distributed tracing
+    │   │   ├── logging.py         # Structured logging with correlation IDs
+    │   │   └── bulkhead.py        # Bulkhead pattern for job isolation
+    │   │
+    │   ├── domains/               # Domain-driven business logic
+    │   │   ├── audio/
+    │   │   │   └── __init__.py    # WAV concatenation, LUFS normalization, mastering, quality validation
+    │   │   ├── job/
+    │   │   │   ├── __init__.py
+    │   │   │   ├── state.py       # JobState enum and JobStatus dataclass
+    │   │   │   ├── store.py       # Redis + in-memory job storage with fallback
+    │   │   │   ├── notification.py# Webhook callbacks (n8n) with circuit breaker
+    │   │   │   ├── callbacks.py   # Job lifecycle callbacks
+    │   │   │   ├── runner.py      # Entry point for TTS job execution
+    │   │   │   └── tts_job.py     # Complete TTS pipeline runner
+    │   │   ├── narration/
+    │   │   │   ├── base.py        # Abstract NarrationStrategy
+    │   │   │   ├── strategy.py    # Single-shot and chunked strategies
+    │   │   │   ├── prompt.py      # System prompts and continuity instructions
+    │   │   │   └── validator.py   # Narration completeness validation
+    │   │   ├── storage/
+    │   │   │   ├── base.py        # Abstract StorageBackend
+    │   │   │   ├── local.py       # Local filesystem storage
+    │   │   │   ├── gcs.py         # Google Cloud Storage backend
+    │   │   │   └── s3.py          # AWS S3 storage backend
+    │   │   ├── synthesis/
+    │   │   │   ├── base.py        # Abstract SynthesisPipeline
+    │   │   │   ├── service.py     # Synthesis orchestration (parallel/sequential)
+    │   │   │   ├── chunker.py     # Text chunking logic
+    │   │   │   ├── concatenate.py # Audio concatenation utilities
+    │   │   │   ├── normalize.py   # Audio normalization
+    │   │   │   └── mastering.py   # Audio mastering with fallback
+    │   │   └── voices/
+    │   │       ├── registry.py    # Voice profile management
+    │   │       └── upload.py      # Voice sample validation
     │   │
     │   ├── models/
     │   │   └── schemas.py         # Pydantic request/response models
-    │   │
-    │   ├── services/              # Business logic layer
-    │   │   ├── audio.py           # WAV concatenation, LUFS normalization, mastering
-    │   │   ├── job_store.py       # Redis + in-memory job storage with fallback
-    │   │   ├── notification.py    # Webhook callbacks (n8n) with retry logic
-    │   │   ├── storage.py         # Storage upload service (local/GCS/S3)
-    │   │   ├── synthesis.py       # Chunk synthesis orchestration (parallel/sequential)
-    │   │   └── tts_job.py         # Complete TTS pipeline runner
     │   │
     │   └── utils/
     │       └── text.py            # Text chunking at sentence boundaries

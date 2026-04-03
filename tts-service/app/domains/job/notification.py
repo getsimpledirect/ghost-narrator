@@ -21,7 +21,7 @@
 # SOFTWARE.
 
 """
-Notification service for webhook callbacks.
+Notification domain for webhook callbacks.
 
 Provides functions for notifying external systems (like n8n) about
 job completion status via HTTP webhooks with retry logic.
@@ -42,10 +42,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Global HTTP client instance
-_httpx_client: Optional["httpx.AsyncClient"] = None
+_httpx_client: Optional['httpx.AsyncClient'] = None
 
 
-def initialize_http_client() -> "httpx.AsyncClient":
+def initialize_http_client() -> 'httpx.AsyncClient':
     """
     Initialize the async HTTP client.
 
@@ -74,22 +74,22 @@ def initialize_http_client() -> "httpx.AsyncClient":
                 max_connections=MAX_CONNECTIONS,
             ),
         )
-        logger.info("HTTP client initialized")
+        logger.info('HTTP client initialized')
         return _httpx_client
 
     except ImportError as exc:
         raise NotificationError(
-            url="",
-            message="Failed to import httpx - ensure httpx package is installed",
+            url='',
+            message='Failed to import httpx - ensure httpx package is installed',
         ) from exc
     except Exception as exc:
         raise NotificationError(
-            url="",
-            message=f"Failed to initialize HTTP client: {exc}",
+            url='',
+            message=f'Failed to initialize HTTP client: {exc}',
         ) from exc
 
 
-def get_http_client() -> Optional["httpx.AsyncClient"]:
+def get_http_client() -> Optional['httpx.AsyncClient']:
     """
     Get the global HTTP client instance.
 
@@ -138,25 +138,25 @@ async def notify_n8n(
     url = callback_url or N8N_CALLBACK_URL
 
     if not url:
-        logger.debug("No callback URL configured - skipping notification")
+        logger.debug('No callback URL configured - skipping notification')
         return True
 
     if not _httpx_client:
-        logger.warning("HTTP client not initialized - skipping notification")
+        logger.warning('HTTP client not initialized - skipping notification')
         return False
 
     payload = {
-        "job_id": job_id,
-        "status": status,
-        "audio_uri": gcs_uri,  # New storage-agnostic field
-        "gcs_uri": gcs_uri,  # Backward compat
-        "error": error,
+        'job_id': job_id,
+        'status': status,
+        'audio_uri': gcs_uri,  # New storage-agnostic field
+        'gcs_uri': gcs_uri,  # Backward compat
+        'error': error,
     }
 
     try:
         return await send_callback_with_circuit_breaker(url, payload)
     except Exception as exc:
-        logger.error(f"n8n callback failed for job {job_id}: {exc}")
+        logger.error(f'n8n callback failed for job {job_id}: {exc}')
         return False
 
 
@@ -176,7 +176,7 @@ async def notify_job_completed(
     """
     return await notify_n8n(
         job_id=job_id,
-        status="completed",
+        status='completed',
         gcs_uri=gcs_uri,
         error=None,
     )
@@ -201,7 +201,7 @@ async def notify_job_failed(
 
     return await notify_n8n(
         job_id=job_id,
-        status="failed",
+        status='failed',
         gcs_uri=None,
         error=truncated_error,
     )
@@ -218,21 +218,21 @@ async def close_http_client() -> None:
     if _httpx_client:
         try:
             await _httpx_client.aclose()
-            logger.info("HTTP client closed")
+            logger.info('HTTP client closed')
         except Exception as exc:
-            logger.error(f"Error closing HTTP client: {exc}")
+            logger.error(f'Error closing HTTP client: {exc}')
         finally:
             _httpx_client = None
 
 
 callback_circuit_breaker = CircuitBreaker(
-    name="n8n_callback",
+    name='n8n_callback',
     failure_threshold=5,
     recovery_timeout=30,
 )
 
 
-async def _send_callback(url: str, payload: dict, client: "httpx.AsyncClient") -> bool:
+async def _send_callback(url: str, payload: dict, client: 'httpx.AsyncClient') -> bool:
     """Internal function to send the HTTP callback."""
     response = await client.post(url, json=payload)
     response.raise_for_status()
@@ -242,7 +242,7 @@ async def _send_callback(url: str, payload: dict, client: "httpx.AsyncClient") -
 async def send_callback_with_circuit_breaker(callback_url: str, payload: dict) -> bool:
     """Send callback with circuit breaker protection."""
     if not _httpx_client:
-        logger.warning("HTTP client not initialized - skipping notification")
+        logger.warning('HTTP client not initialized - skipping notification')
         return False
 
     try:
@@ -250,5 +250,5 @@ async def send_callback_with_circuit_breaker(callback_url: str, payload: dict) -
             _send_callback, callback_url, payload, _httpx_client
         )
     except CircuitBreakerOpenError:
-        logger.warning(f"Circuit breaker open for {callback_url}, skipping callback")
+        logger.warning(f'Circuit breaker open for {callback_url}, skipping callback')
         return False

@@ -21,7 +21,7 @@
 # SOFTWARE.
 
 """
-Synthesis service for TTS chunk processing.
+Synthesis service domain for TTS chunk processing.
 
 Provides functions for synthesizing text chunks into audio files
 with support for both sequential and parallel processing.
@@ -39,7 +39,6 @@ from app.config import MAX_CHUNK_WORDS
 from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
-from app.domains.synthesis.base import SynthesisPipeline
 from app.domains.synthesis.chunker import chunk_text, TextChunker
 from app.domains.synthesis.concatenate import concatenate_audio, concatenate_audio_auto
 from app.domains.synthesis.normalize import normalize_audio, normalize_audio_if_long_enough

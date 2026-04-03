@@ -4,7 +4,7 @@ import types
 
 import pytest
 
-# Mock qwen_tts so the import chain through app.services doesn't crash
+# Mock qwen_tts so the import chain through app.domains doesn't crash
 _mock = types.ModuleType('qwen_tts')
 _mock.QwenTTS = type('QwenTTS', (), {})
 sys.modules.setdefault('qwen_tts', _mock)

@@ -28,7 +28,10 @@ orchestrating the complete pipeline from narration through synthesis,
 concatenation, mastering, and storage.
 """
 
-from app.services.tts_job import run_tts_job as _run_tts_job
+# The actual job implementation is in app/domains/job/tts_job.py
+# This module provides the main entry point for backward compatibility
+
+from app.domains.job.tts_job import run_tts_job as _run_tts_job
 
 __all__ = ['run_tts_job']
 
@@ -43,7 +46,7 @@ async def run_tts_job(
     Execute the complete TTS pipeline.
 
     This is a delegation wrapper that forwards to the underlying
-    implementation in app.services.tts_job.
+    implementation in app.domains.job.tts_job.
 
     Args:
         job_id: Unique identifier for tracking and file storage.

@@ -46,10 +46,10 @@ from app.cache.redis_cache import get_cache
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
 from app.core.logging import setup_logging
 from app.core.tts_engine import initialize_tts_engine
-from app.services.job_store import get_job_store, initialize_job_store
-from app.services.notification import close_http_client, initialize_http_client
-from app.services.storage import cleanup_gcs_client, initialize_gcs_client
-from app.services.synthesis import initialize_executor, shutdown_executor
+from app.domains.job.store import get_job_store, initialize_job_store
+from app.domains.job.notification import close_http_client, initialize_http_client
+from app.domains.storage import cleanup_gcs_client, initialize_gcs_client
+from app.domains.synthesis.service import initialize_executor, shutdown_executor
 
 logger = setup_logging()
 

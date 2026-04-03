@@ -36,10 +36,10 @@ from fastapi import Depends, HTTPException, status
 
 from app.config import VOICE_SAMPLE_PATH
 from app.core.tts_engine import TTSEngine, get_tts_engine
-from app.services.job_store import JobStore, get_job_store
-from app.services.notification import get_http_client
-from app.services.storage import get_gcs_client, is_gcs_enabled
-from app.domains.synthesis import get_executor
+from app.domains.job.store import JobStore, get_job_store
+from app.domains.job.notification import get_http_client
+from app.domains.storage import get_gcs_client, is_gcs_enabled
+from app.domains.synthesis.service import get_executor
 
 if TYPE_CHECKING:
     import concurrent.futures

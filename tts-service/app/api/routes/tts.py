@@ -51,7 +51,7 @@ from app.models.schemas import (
     JobListResponse,
     StatusResponse,
 )
-from app.services.job_store import get_job_store
+from app.domains.job.store import get_job_store
 from app.domains.job.runner import run_tts_job
 
 logger = logging.getLogger(__name__)

@@ -21,7 +21,7 @@
 # SOFTWARE.
 
 """
-Job storage abstraction layer.
+Job storage domain.
 
 Provides a unified interface for job storage with Redis as primary
 backend and in-memory fallback for development/resilience.
@@ -73,7 +73,7 @@ class JobStore:
             redis_url: Optional Redis URL. Defaults to REDIS_URL from config.
         """
         if self._initialized:
-            logger.debug("JobStore already initialized")
+            logger.debug('JobStore already initialized')
             return
 
         url = redis_url or REDIS_URL
@@ -81,7 +81,7 @@ class JobStore:
         try:
             self.redis_client = redis.from_url(
                 url,
-                encoding="utf-8",
+                encoding='utf-8',
                 decode_responses=True,
                 socket_connect_timeout=5,
                 socket_timeout=5,
@@ -89,11 +89,11 @@ class JobStore:
             await self.redis_client.ping()
             self.use_redis = True
             self._initialized = True
-            logger.info("Redis connected successfully - using persistent job storage")
+            logger.info('Redis connected successfully - using persistent job storage')
         except Exception as exc:
             logger.warning(
-                f"Redis connection failed: {exc}. "
-                "Using in-memory storage (jobs will be lost on restart)"
+                f'Redis connection failed: {exc}. '
+                'Using in-memory storage (jobs will be lost on restart)'
             )
             self.use_redis = False
             self.redis_client = None
@@ -133,24 +133,24 @@ class JobStore:
             ValueError: If job_id is empty or job_data is not a dict.
         """
         if not job_id:
-            raise ValueError("job_id cannot be empty")
+            raise ValueError('job_id cannot be empty')
         if not isinstance(job_data, dict):
-            raise ValueError(f"job_data must be a dict, got {type(job_data)}")
+            raise ValueError(f'job_data must be a dict, got {type(job_data)}')
 
         serializable_data = self._make_serializable(job_data)
 
         if self.use_redis and self.redis_client:
             try:
                 await self.redis_client.setex(
-                    f"job:{job_id}",
+                    f'job:{job_id}',
                     REDIS_JOB_TTL,
                     json.dumps(serializable_data, default=str),
                 )
                 return
             except Exception as exc:
                 logger.error(
-                    f"Redis set failed for job {job_id}: {exc}. "
-                    "Using in-memory fallback for this operation (Redis connection preserved)"
+                    f'Redis set failed for job {job_id}: {exc}. '
+                    'Using in-memory fallback for this operation (Redis connection preserved)'
                 )
                 # Do NOT permanently disable Redis — this may be a transient error.
                 # Fall through to memory store for this write only.
@@ -170,14 +170,12 @@ class JobStore:
         """
         if self.use_redis and self.redis_client:
             try:
-                data = await self.redis_client.get(f"job:{job_id}")
+                data = await self.redis_client.get(f'job:{job_id}')
                 if data:
                     return json.loads(data)
                 return None
             except Exception as exc:
-                logger.error(
-                    f"Redis get failed for job {job_id}: {exc}. Checking memory"
-                )
+                logger.error(f'Redis get failed for job {job_id}: {exc}. Checking memory')
                 async with self.lock:
                     return self.memory_store.get(job_id)
 
@@ -196,12 +194,10 @@ class JobStore:
         """
         if self.use_redis and self.redis_client:
             try:
-                exists = await self.redis_client.exists(f"job:{job_id}")
+                exists = await self.redis_client.exists(f'job:{job_id}')
                 return bool(exists)
             except Exception as exc:
-                logger.error(
-                    f"Redis exists failed for job {job_id}: {exc}. Checking memory"
-                )
+                logger.error(f'Redis exists failed for job {job_id}: {exc}. Checking memory')
                 async with self.lock:
                     return job_id in self.memory_store
 
@@ -220,7 +216,7 @@ class JobStore:
             True if created, False if it already existed.
         """
         if not job_id:
-            raise ValueError("job_id cannot be empty")
+            raise ValueError('job_id cannot be empty')
 
         serializable_data = self._make_serializable(job_data)
 
@@ -228,7 +224,7 @@ class JobStore:
             try:
                 # Use SET NX EX for atomic create-with-TTL (avoids setnx+expire race)
                 created = await self.redis_client.set(
-                    f"job:{job_id}",
+                    f'job:{job_id}',
                     json.dumps(serializable_data, default=str),
                     nx=True,
                     ex=REDIS_JOB_TTL,
@@ -236,8 +232,8 @@ class JobStore:
                 return created is not None
             except Exception as exc:
                 logger.error(
-                    f"Redis create_if_not_exists failed: {exc}. "
-                    "Using in-memory fallback for this operation (Redis connection preserved)"
+                    f'Redis create_if_not_exists failed: {exc}. '
+                    'Using in-memory fallback for this operation (Redis connection preserved)'
                 )
                 # Do NOT permanently disable Redis — this may be a transient error.
 
@@ -249,8 +245,8 @@ class JobStore:
                 oldest = next(iter(self.memory_store))
                 del self.memory_store[oldest]
                 logger.warning(
-                    f"Memory store at capacity ({self._max_memory_jobs}), "
-                    f"evicted oldest job: {oldest}"
+                    f'Memory store at capacity ({self._max_memory_jobs}), '
+                    f'evicted oldest job: {oldest}'
                 )
             self.memory_store[job_id] = serializable_data
             return True
@@ -291,7 +287,7 @@ class JobStore:
                 result = await self.redis_client.eval(
                     lua_script,
                     1,
-                    f"job:{job_id}",
+                    f'job:{job_id}',
                     json.dumps(serializable_updates, default=str),
                     REDIS_JOB_TTL,
                 )
@@ -299,18 +295,18 @@ class JobStore:
                 if result == 1:
                     return
                 else:
-                    logger.warning(f"Cannot update non-existent job in Redis: {job_id}")
+                    logger.warning(f'Cannot update non-existent job in Redis: {job_id}')
                     return
             except Exception as exc:
                 logger.error(
-                    f"Redis update failed: {exc}. Falling back to non-atomic memory update"
+                    f'Redis update failed: {exc}. Falling back to non-atomic memory update'
                 )
                 # Fallback to in-memory
 
         async with self.lock:
             job_data = self.memory_store.get(job_id)
             if job_data is None:
-                logger.warning(f"Cannot update non-existent job in memory: {job_id}")
+                logger.warning(f'Cannot update non-existent job in memory: {job_id}')
                 return
             job_data.update(serializable_updates)
             self.memory_store[job_id] = job_data
@@ -327,12 +323,10 @@ class JobStore:
         """
         if self.use_redis and self.redis_client:
             try:
-                result = await self.redis_client.delete(f"job:{job_id}")
+                result = await self.redis_client.delete(f'job:{job_id}')
                 return bool(result)
             except Exception as exc:
-                logger.error(
-                    f"Redis delete failed for job {job_id}: {exc}. Deleting from memory"
-                )
+                logger.error(f'Redis delete failed for job {job_id}: {exc}. Deleting from memory')
                 async with self.lock:
                     return self.memory_store.pop(job_id, None) is not None
 
@@ -351,20 +345,18 @@ class JobStore:
                 jobs: dict[str, dict[str, Any]] = {}
                 cursor = 0
                 while True:
-                    cursor, keys = await self.redis_client.scan(
-                        cursor, match="job:*", count=100
-                    )
+                    cursor, keys = await self.redis_client.scan(cursor, match='job:*', count=100)
                     if keys:
                         values = await self.redis_client.mget(*keys)
                         for key, data in zip(keys, values):
                             if data:
-                                job_id = key.replace("job:", "", 1)
+                                job_id = key.replace('job:', '', 1)
                                 jobs[job_id] = json.loads(data)
                     if cursor == 0:
                         break
                 return jobs
             except Exception as exc:
-                logger.error(f"Redis list failed: {exc}. Returning memory store")
+                logger.error(f'Redis list failed: {exc}. Returning memory store')
                 async with self.lock:
                     return self.memory_store.copy()
 
@@ -383,15 +375,13 @@ class JobStore:
                 count = 0
                 cursor = 0
                 while True:
-                    cursor, keys = await self.redis_client.scan(
-                        cursor, match="job:*", count=100
-                    )
+                    cursor, keys = await self.redis_client.scan(cursor, match='job:*', count=100)
                     count += len(keys)
                     if cursor == 0:
                         break
                 return count
             except Exception as exc:
-                logger.error(f"Redis count failed: {exc}. Counting memory store")
+                logger.error(f'Redis count failed: {exc}. Counting memory store')
                 async with self.lock:
                     return len(self.memory_store)
 
@@ -403,9 +393,9 @@ class JobStore:
         if self.redis_client:
             try:
                 await self.redis_client.close()
-                logger.info("Redis connection closed")
+                logger.info('Redis connection closed')
             except Exception as exc:
-                logger.error(f"Error closing Redis connection: {exc}")
+                logger.error(f'Error closing Redis connection: {exc}')
             finally:
                 self.redis_client = None
                 self.use_redis = False
@@ -415,7 +405,7 @@ class JobStore:
     @property
     def storage_type(self) -> str:
         """Get the current storage backend type."""
-        return "redis" if self.use_redis else "memory"
+        return 'redis' if self.use_redis else 'memory'
 
 
 # Global singleton instance

@@ -1,6 +1,5 @@
 """Synthesis domain module."""
 
-from app.domains.synthesis.base import SynthesisPipeline
 from app.domains.synthesis.chunker import (
     TextChunker,
     chunk_text,
@@ -18,4 +17,8 @@ from app.domains.synthesis.normalize import (
 from app.domains.synthesis.mastering import (
     master_audio,
     master_audio_with_fallback,
+)
+from app.domains.synthesis.quality import (
+    apply_final_mastering,
+    validate_audio_quality,
 )
