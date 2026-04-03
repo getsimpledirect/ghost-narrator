@@ -41,7 +41,6 @@ from app.api.middleware import APIVersionMiddleware
 from app.api.rate_limit_middleware.rate_limit import RateLimitMiddleware
 from app.api.routes import health, tts
 from app.api.routes import metrics as metrics_router
-from app.api.routes.voices import router as voices_router
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
 from app.core.tts_engine import initialize_tts_engine
 from app.services.job_store import get_job_store, initialize_job_store
@@ -222,7 +221,15 @@ app.add_middleware(RateLimitMiddleware, requests_per_minute=60)
 
 app.include_router(health.router)
 app.include_router(tts.router)
-app.include_router(voices_router)
+
+# Lazy import voices router to make python-multipart optional
+try:
+    from app.api.routes.voices import router as voices_router
+
+    app.include_router(voices_router)
+except ImportError as e:
+    logger.warning(f"Voices endpoint not available: {e}")
+
 app.include_router(metrics_router.router)
 
 if OPENTELEMETRY_AVAILABLE:
