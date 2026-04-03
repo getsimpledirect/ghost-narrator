@@ -70,15 +70,18 @@ async def test_chunked_strategy_uses_continuity_seed():
     user_content = next(
         m["content"] for m in second_call_messages if m["role"] == "user"
     )
-    assert "ending here." in user_content
+    # Check that the first response text appears in the continuity context
+    assert responses[0] in user_content
 
 
 @pytest.mark.asyncio
 async def test_single_shot_strategy_one_call():
     # Return text long enough to pass word count ratio (50 source words * 0.55 = 27.5 min)
+    # Need at least 28 words in narration to pass ratio check
     client = _make_llm_client(
         "This is the full narration text that contains enough words to pass "
-        "the word count ratio validation check so no retry is triggered."
+        "the word count ratio validation check so no retry is triggered. "
+        "Here are some extra words to ensure the ratio passes."
     )
     strategy = SingleShotStrategy(
         llm_client=client,

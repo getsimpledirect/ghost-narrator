@@ -1,6 +1,7 @@
 import asyncio
+from concurrent.futures import Future
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 
 import pytest
 from app.core.exceptions import SynthesisError
@@ -33,6 +34,16 @@ def mock_storage_backend():
     return backend
 
 
+def _make_mock_executor():
+    """Create a mock executor that returns real Futures for run_in_executor."""
+    mock_exec = MagicMock()
+    # Create a real future that completes immediately
+    future = Future()
+    future.set_result(None)
+    mock_exec.submit.return_value = future
+    return mock_exec
+
+
 @pytest.mark.asyncio
 async def test_run_tts_job_success(
     mock_job_store, mock_tts_engine, mock_storage_backend
@@ -49,7 +60,7 @@ async def test_run_tts_job_success(
         patch("app.services.tts_job.concatenate_wavs_auto") as mock_concat,
         patch(
             "app.services.tts_job.normalize_chunk_to_target_lufs",
-            side_effect=lambda p, _: p,
+            side_effect=lambda p, _, **kw: p,
         ),
         patch("app.services.tts_job.apply_final_mastering", return_value=True),
         patch("app.services.tts_job.validate_audio_quality", return_value=None),
@@ -58,14 +69,19 @@ async def test_run_tts_job_success(
             return_value=mock_storage_backend,
         ),
         patch("app.services.tts_job.notify_job_completed", new_callable=AsyncMock),
-        patch("app.services.tts_job.get_executor") as mock_get_exec,
+        patch("app.services.tts_job.get_executor", return_value=_make_mock_executor()),
         patch("app.services.tts_job.cleanup_chunk_files"),
+        patch("app.services.tts_job._AudioSegment") as mock_audio_segment,
         patch.object(Path, "mkdir"),
         patch.object(Path, "exists", return_value=True),
         patch.object(Path, "stat") as mock_stat,
     ):
+        # Mock audio segment to avoid file I/O
+        mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
+        mock_audio_segment.from_file.return_value = MagicMock(duration_seconds=1.0)
+        mock_audio_segment.return_value = MagicMock()
+
         mock_stat.return_value.st_size = 1024 * 1024
-        mock_get_exec.return_value = MagicMock()
         mock_prepare.return_value = (["Hello world.", "This is a test."], 6)
         mock_synth.return_value = ["/tmp/chunk_0000.wav"]
         mock_concat.return_value = None
@@ -94,11 +110,9 @@ async def test_run_tts_job_deleted_mid_process(mock_job_store, mock_tts_engine):
     gcs_path = "audio/deleted.mp3"
 
     with (
-        patch("app.services.tts_job.get_executor") as mock_get_exec,
+        patch("app.services.tts_job.get_executor", return_value=_make_mock_executor()),
         patch.object(Path, "mkdir"),
     ):
-        mock_get_exec.return_value = MagicMock()
-
         await run_tts_job(job_id, text, gcs_path)
 
         # Job was deleted — should never be marked completed
@@ -122,11 +136,10 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
     with (
         patch("app.services.tts_job.prepare_text_for_synthesis") as mock_prepare,
         patch("app.services.tts_job.synthesize_chunks_auto") as mock_synth,
-        patch("app.services.tts_job.get_executor") as mock_get_exec,
+        patch("app.services.tts_job.get_executor", return_value=_make_mock_executor()),
         patch("app.services.tts_job.notify_job_failed", new_callable=AsyncMock),
         patch.object(Path, "mkdir"),
     ):
-        mock_get_exec.return_value = MagicMock()
         mock_prepare.return_value = (["Some text to synthesize."], 4)
         mock_synth.side_effect = SynthesisError("GPU out of memory")
 
@@ -162,20 +175,25 @@ async def test_run_tts_job_storage_failure_still_completes(
         patch("app.services.tts_job.concatenate_wavs_auto"),
         patch(
             "app.services.tts_job.normalize_chunk_to_target_lufs",
-            side_effect=lambda p, _: p,
+            side_effect=lambda p, _, **kw: p,
         ),
         patch("app.services.tts_job.apply_final_mastering", return_value=True),
         patch("app.services.tts_job.validate_audio_quality", return_value=None),
         patch("app.services.tts_job.get_storage_backend", return_value=failing_backend),
         patch("app.services.tts_job.notify_job_completed", new_callable=AsyncMock),
-        patch("app.services.tts_job.get_executor") as mock_get_exec,
+        patch("app.services.tts_job.get_executor", return_value=_make_mock_executor()),
         patch("app.services.tts_job.cleanup_chunk_files"),
+        patch("app.services.tts_job._AudioSegment") as mock_audio_segment,
         patch.object(Path, "mkdir"),
         patch.object(Path, "exists", return_value=True),
         patch.object(Path, "stat") as mock_stat,
     ):
+        # Mock audio segment to avoid file I/O
+        mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
+        mock_audio_segment.from_file.return_value = MagicMock(duration_seconds=1.0)
+        mock_audio_segment.return_value = MagicMock()
+
         mock_stat.return_value.st_size = 1024 * 1024
-        mock_get_exec.return_value = MagicMock()
         mock_prepare.return_value = (["Hello world."], 2)
         mock_synth.return_value = ["/tmp/chunk_0000.wav"]
 
