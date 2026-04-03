@@ -27,6 +27,8 @@ Provides the main job execution pipeline that orchestrates
 text chunking, synthesis, per-chunk normalization, audio
 concatenation with dynamic gaps, final mastering, upload,
 and notifications.
+
+This module has been refactored - import from app.domains.job instead.
 """
 
 from __future__ import annotations
@@ -71,6 +73,19 @@ from app.services.synthesis import (
     synthesize_chunks_auto,
 )
 
+from app.domains.job.state import JobState, JobStatus
+from app.domains.job.callbacks import notify_job_started
+
+# Re-export for backward compatibility
+__all__ = [
+    'run_tts_job',
+    'JobState',
+    'JobStatus',
+    'notify_job_started',
+    'notify_job_completed',
+    'notify_job_failed',
+]
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,20 +115,16 @@ async def _quality_check_and_resynthesize(
             seg = _AudioSegment.from_wav(wav_path)
             duration_ms = len(seg)
             if duration_ms < 100:
-                # Extremely short — likely failed
-                logger.warning(
-                    f"[{job_id}] Chunk {i} is only {duration_ms}ms — re-synthesizing"
-                )
+                logger.warning(f'[{job_id}] Chunk {i} is only {duration_ms}ms — re-synthesizing')
                 checked_paths[i] = await _resynthesize_chunk(
                     i, chunk_texts, job_id, engine, loop, executor
                 )
                 resynth_count += 1
                 continue
 
-            # Check silence ratio
-            silence_threshold = seg.dBFS - 30  # 30dB below average = silence
+            silence_threshold = seg.dBFS - 30
             silence_ms = 0
-            chunk_size = 50  # ms
+            chunk_size = 50
             for j in range(0, duration_ms, chunk_size):
                 c = seg[j : j + chunk_size]
                 if c.dBFS < silence_threshold:
@@ -122,7 +133,7 @@ async def _quality_check_and_resynthesize(
 
             if silence_ratio > 0.5:
                 logger.warning(
-                    f"[{job_id}] Chunk {i} is {silence_ratio:.0%} silence — re-synthesizing"
+                    f'[{job_id}] Chunk {i} is {silence_ratio:.0%} silence — re-synthesizing'
                 )
                 checked_paths[i] = await _resynthesize_chunk(
                     i, chunk_texts, job_id, engine, loop, executor
@@ -130,12 +141,10 @@ async def _quality_check_and_resynthesize(
                 resynth_count += 1
 
         except Exception as exc:
-            logger.debug(f"[{job_id}] Quality check for chunk {i} skipped: {exc}")
+            logger.debug(f'[{job_id}] Quality check for chunk {i} skipped: {exc}')
 
     if resynth_count > 0:
-        logger.info(
-            f"[{job_id}] Re-synthesized {resynth_count} chunks after quality check"
-        )
+        logger.info(f'[{job_id}] Re-synthesized {resynth_count} chunks after quality check')
 
     return checked_paths
 
@@ -152,10 +161,10 @@ async def _resynthesize_chunk(
     from app.config import OUTPUT_DIR
 
     if chunk_idx >= len(chunk_texts):
-        return ""
+        return ''
 
     job_dir = OUTPUT_DIR / job_id
-    wav_path = str(job_dir / f"chunk_{chunk_idx:04d}.wav")
+    wav_path = str(job_dir / f'chunk_{chunk_idx:04d}.wav')
 
     try:
         await loop.run_in_executor(
@@ -167,15 +176,15 @@ async def _resynthesize_chunk(
         )
         return wav_path
     except Exception as exc:
-        logger.warning(f"[{job_id}] Re-synthesis of chunk {chunk_idx} failed: {exc}")
-        return wav_path  # Return original path
+        logger.warning(f'[{job_id}] Re-synthesis of chunk {chunk_idx} failed: {exc}')
+        return wav_path
 
 
 async def run_tts_job(
     job_id: str,
     text: str,
     gcs_object_path: str,
-    site_slug: str = "site",
+    site_slug: str = 'site',
 ) -> None:
     """
     Execute the complete TTS pipeline with parallel processing and optimizations.
@@ -203,100 +212,91 @@ async def run_tts_job(
     start_time = time.time()
     loop = asyncio.get_running_loop()
     job_dir = OUTPUT_DIR / job_id
-    raw_wav = str(OUTPUT_DIR / f"{job_id}_raw.wav")
-    final_mp3 = str(OUTPUT_DIR / f"{job_id}.mp3")
+    raw_wav = str(OUTPUT_DIR / f'{job_id}_raw.wav')
+    final_mp3 = str(OUTPUT_DIR / f'{job_id}.mp3')
     job_store = get_job_store()
     executor = get_executor()
 
     async def _check_status() -> None:
         """Check if job is deleted or paused."""
         paused_iterations = 0
-        max_paused_iterations = 1800  # 30 minutes max pause
+        max_paused_iterations = 1800
         while True:
             job = await job_store.get(job_id)
-            if not job or job.get("status") == "deleted":
-                raise JobDeletedError(f"Job {job_id} was deleted")
-            if job.get("status") == "paused":
+            if not job or job.get('status') == 'deleted':
+                raise JobDeletedError(f'Job {job_id} was deleted')
+            if job.get('status') == 'paused':
                 paused_iterations += 1
                 if paused_iterations >= max_paused_iterations:
-                    raise JobDeletedError(
-                        f"Job {job_id} exceeded maximum pause duration"
-                    )
+                    raise JobDeletedError(f'Job {job_id} exceeded maximum pause duration')
                 await asyncio.sleep(1)
                 continue
-            paused_iterations = 0  # Reset counter when job is no longer paused
+            paused_iterations = 0
             return
 
-    # Track temp files for cleanup
     normalized_temp_files: list[str] = []
 
-    # Validate executor is initialized
     if executor is None:
-        logger.error(f"[{job_id}] Thread pool executor not initialized")
+        logger.error(f'[{job_id}] Thread pool executor not initialized')
         await job_store.update(
             job_id,
             {
-                "status": "failed",
-                "error": "Service not properly initialized: executor unavailable",
-                "completed_at": time.time(),
-                "duration_seconds": 0,
+                'status': 'failed',
+                'error': 'Service not properly initialized: executor unavailable',
+                'completed_at': time.time(),
+                'duration_seconds': 0,
             },
         )
         return
 
-    # Create job directory
     try:
         job_dir.mkdir(parents=True, exist_ok=True)
     except Exception as exc:
-        logger.error(f"[{job_id}] Failed to create job directory: {exc}")
+        logger.error(f'[{job_id}] Failed to create job directory: {exc}')
         await job_store.update(
             job_id,
             {
-                "status": "failed",
-                "error": f"Directory creation failed: {exc}",
-                "completed_at": time.time(),
-                "duration_seconds": 0,
+                'status': 'failed',
+                'error': f'Directory creation failed: {exc}',
+                'completed_at': time.time(),
+                'duration_seconds': 0,
             },
         )
         return
 
-    logger.info(f"[{job_id}] Job started - {len(text)} chars, device={DEVICE}")
+    logger.info(f'[{job_id}] Job started - {len(text)} chars, device={DEVICE}')
 
     try:
-        # Update status to processing
         await job_store.update(
             job_id,
             {
-                "status": "processing",
-                "started_at": start_time,
+                'status': 'processing',
+                'started_at': start_time,
             },
         )
 
-        # Wait for TTS engine to be ready (event-driven, no polling)
         from app.core.tts_engine import get_tts_engine, get_engine_ready_event
 
         engine = get_tts_engine()
         if not engine.is_ready:
             ready_event = get_engine_ready_event()
-            # If engine was already initialized before this event was created, set it
             if engine.is_ready:
                 ready_event.set()
             else:
                 try:
                     await asyncio.wait_for(ready_event.wait(), timeout=60.0)
                 except asyncio.TimeoutError:
-                    raise RuntimeError("TTS engine failed to initialize within timeout")
+                    raise RuntimeError('TTS engine failed to initialize within timeout')
 
         if not engine.is_ready:
-            raise RuntimeError("TTS engine failed to initialize within timeout")
+            raise RuntimeError('TTS engine failed to initialize within timeout')
 
-        # Step 1+2+3: Narrate, chunk, and synthesize (pipelined when possible)
         await _check_status()
-        logger.info(f"[{job_id}] Starting narration + synthesis pipeline...")
+        logger.info(f'[{job_id}] Starting narration + synthesis pipeline...')
         try:
             narration = get_narration_strategy()
         except Exception as exc:
-            logger.warning(f"[{job_id}] Narration strategy init failed: {exc}")
+            logger.warning(f'[{job_id}] Narration strategy init failed: {exc}')
             narration = None
 
         chunk_wav_paths: list[str] = []
@@ -305,22 +305,19 @@ async def run_tts_job(
         chunk_index = 0
 
         if narration is not None:
-            # Pipelined: narrate chunk N, synthesize chunk N while narrating chunk N+1
             try:
                 async for narrated_segment in narration.narrate_iter(text):
                     await _check_status()
-                    # Split this narrated segment into TTS-sized chunks
                     tts_chunks, seg_words = prepare_text_for_synthesis(
                         narrated_segment, MAX_CHUNK_WORDS
                     )
                     all_chunks.extend(tts_chunks)
                     total_words += seg_words
 
-                    # Synthesize these TTS chunks immediately (don't wait for next narration)
                     segment_paths = await synthesize_chunks_auto(
                         chunks=tts_chunks,
                         job_dir=job_dir,
-                        job_id=f"{job_id}",
+                        job_id=f'{job_id}',
                         status_check_callback=_check_status,
                         chunk_offset=chunk_index,
                     )
@@ -328,21 +325,18 @@ async def run_tts_job(
                     chunk_index += len(tts_chunks)
 
                 logger.info(
-                    f"[{job_id}] Pipelined narration+synthesis complete — "
-                    f"{len(chunk_wav_paths)} audio chunks, {total_words} words"
+                    f'[{job_id}] Pipelined narration+synthesis complete — '
+                    f'{len(chunk_wav_paths)} audio chunks, {total_words} words'
                 )
             except Exception as exc:
                 logger.warning(
-                    f"[{job_id}] Pipelined narration failed, falling back to sequential: {exc}"
+                    f'[{job_id}] Pipelined narration failed, falling back to sequential: {exc}'
                 )
-                # Fallback: narrate all, then synthesize all
                 try:
                     narrated_text = await narration.narrate(text)
                 except Exception:
                     narrated_text = text
-                all_chunks, total_words = prepare_text_for_synthesis(
-                    narrated_text, MAX_CHUNK_WORDS
-                )
+                all_chunks, total_words = prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
                 chunk_wav_paths = await synthesize_chunks_auto(
                     chunks=all_chunks,
                     job_dir=job_dir,
@@ -350,7 +344,6 @@ async def run_tts_job(
                     status_check_callback=_check_status,
                 )
         else:
-            # No narration available — synthesize raw text directly
             all_chunks, total_words = prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
             chunk_wav_paths = await synthesize_chunks_auto(
                 chunks=all_chunks,
@@ -360,37 +353,26 @@ async def run_tts_job(
             )
 
         if not chunk_wav_paths:
-            raise RuntimeError("No audio chunks were synthesized")
+            raise RuntimeError('No audio chunks were synthesized')
 
-        # Step 3b: Quality check and re-synthesis (HIGH_VRAM only)
         from app.core.hardware import ENGINE_CONFIG, HardwareTier
 
         if ENGINE_CONFIG.tier == HardwareTier.HIGH_VRAM:
             await _check_status()
-            logger.info(
-                f"[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks..."
-            )
+            logger.info(f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...')
             chunk_wav_paths = await _quality_check_and_resynthesize(
                 chunk_wav_paths, all_chunks, job_id, engine, loop, executor
             )
 
-        # Step 4: Normalize chunks to -23 LUFS (skip very short chunks —
-        # single-pass loudnorm is inaccurate under ~10s, and final mastering
-        # re-normalizes the whole file anyway)
         await _check_status()
-        logger.info(
-            f"[{job_id}] Normalizing {len(chunk_wav_paths)} chunks (parallel)..."
-        )
+        logger.info(f'[{job_id}] Normalizing {len(chunk_wav_paths)} chunks (parallel)...')
 
         async def _normalize_one(i: int, wav_path: str) -> str:
             try:
-                # Skip normalization for very short chunks (<10s) — not enough
-                # signal for loudnorm to measure accurately, and final mastering
-                # will re-normalize the concatenated file
                 seg = _AudioSegment.from_wav(wav_path)
-                if len(seg) < 10_000:  # <10 seconds
+                if len(seg) < 10_000:
                     logger.debug(
-                        f"[{job_id}] Chunk {i} is {len(seg) / 1000:.1f}s — skipping per-chunk norm"
+                        f'[{job_id}] Chunk {i} is {len(seg) / 1000:.1f}s — skipping per-chunk norm'
                     )
                     return wav_path
 
@@ -404,20 +386,15 @@ async def run_tts_job(
                     normalized_temp_files.append(normalized_path)
                 return normalized_path
             except Exception as exc:
-                logger.warning(
-                    f"[{job_id}] Chunk {i} normalization failed, using original: {exc}"
-                )
+                logger.warning(f'[{job_id}] Chunk {i} normalization failed, using original: {exc}')
                 return wav_path
 
         normalized_wav_paths = list(
-            await asyncio.gather(
-                *[_normalize_one(i, p) for i, p in enumerate(chunk_wav_paths)]
-            )
+            await asyncio.gather(*[_normalize_one(i, p) for i, p in enumerate(chunk_wav_paths)])
         )
 
-        logger.info(f"[{job_id}] Normalization complete")
+        logger.info(f'[{job_id}] Normalization complete')
 
-        # Step 4: Concatenate WAVs with dynamic gaps into raw WAV
         await _check_status()
         try:
             await loop.run_in_executor(
@@ -425,21 +402,19 @@ async def run_tts_job(
                 concatenate_wavs_auto,
                 normalized_wav_paths,
                 raw_wav,
-                all_chunks,  # Pass chunk texts for dynamic pause detection
+                all_chunks,
             )
         except Exception as exc:
-            raise RuntimeError(f"Audio concatenation failed: {exc}") from exc
+            raise RuntimeError(f'Audio concatenation failed: {exc}') from exc
 
-        # Verify raw WAV was created
         if not Path(raw_wav).exists():
-            raise RuntimeError("Raw WAV file was not created")
+            raise RuntimeError('Raw WAV file was not created')
 
         raw_size = Path(raw_wav).stat().st_size / (1024 * 1024)
-        logger.info(f"[{job_id}] Raw WAV created ({raw_size:.2f} MB)")
+        logger.info(f'[{job_id}] Raw WAV created ({raw_size:.2f} MB)')
 
-        # Step 5: Apply final mastering (tier-based LUFS, sample rate, bitrate)
         await _check_status()
-        logger.info(f"[{job_id}] Applying final mastering...")
+        logger.info(f'[{job_id}] Applying final mastering...')
         mastering_ok = await loop.run_in_executor(
             executor,
             apply_final_mastering,
@@ -449,22 +424,18 @@ async def run_tts_job(
 
         mastering_used_fallback = False
         if not mastering_ok:
-            # Fallback: use the raw MP3 if mastering fails
-            logger.warning(f"[{job_id}] Mastering failed, falling back to raw export")
-            # Fallback: export raw WAV to MP3 without mastering
+            logger.warning(f'[{job_id}] Mastering failed, falling back to raw export')
             if Path(raw_wav).exists():
                 seg = _AudioSegment.from_wav(raw_wav)
-                seg.export(final_mp3, format="mp3", bitrate=MP3_BITRATE)
+                seg.export(final_mp3, format='mp3', bitrate=MP3_BITRATE)
                 mastering_used_fallback = True
 
-        # Verify final MP3 was created
         if not Path(final_mp3).exists():
-            raise RuntimeError("Final MP3 file was not created")
+            raise RuntimeError('Final MP3 file was not created')
 
         mp3_size = Path(final_mp3).stat().st_size / (1024 * 1024)
-        logger.info(f"[{job_id}] Final MP3 created ({mp3_size:.2f} MB)")
+        logger.info(f'[{job_id}] Final MP3 created ({mp3_size:.2f} MB)')
 
-        # Step 6: Quality validation (non-fatal, log only)
         try:
             quality = await loop.run_in_executor(
                 executor,
@@ -472,11 +443,10 @@ async def run_tts_job(
                 final_mp3,
             )
             if quality:
-                logger.info(f"[{job_id}] Quality metrics: {quality}")
+                logger.info(f'[{job_id}] Quality metrics: {quality}')
         except Exception as exc:
-            logger.warning(f"[{job_id}] Quality check failed (non-fatal): {exc}")
+            logger.warning(f'[{job_id}] Quality check failed (non-fatal): {exc}')
 
-        # Step 7: Upload to storage backend
         await _check_status()
         audio_uri: Optional[str] = None
         upload_failed = False
@@ -488,43 +458,35 @@ async def run_tts_job(
                 site_slug,
             )
         except Exception as exc:
-            logger.error(f"[{job_id}] Storage upload failed (non-fatal): {exc}")
+            logger.error(f'[{job_id}] Storage upload failed (non-fatal): {exc}')
             audio_uri = None
             upload_failed = True
 
-        # Step 8: Cleanup chunk directory and temp files
         cleanup_chunk_files(job_dir, job_id)
         _cleanup_temp_files(normalized_temp_files, job_id)
         _cleanup_intermediate(raw_wav, job_id)
 
-        # Calculate total duration
         total_duration = time.time() - start_time
 
-        # Update job status to completed
         completed_data: dict = {
-            "status": "completed",
-            "audio_uri": audio_uri,
-            "gcs_uri": audio_uri,  # backward compat
-            "local_path": final_mp3,
-            "completed_at": time.time(),
-            "duration_seconds": total_duration,
+            'status': 'completed',
+            'audio_uri': audio_uri,
+            'gcs_uri': audio_uri,
+            'local_path': final_mp3,
+            'completed_at': time.time(),
+            'duration_seconds': total_duration,
         }
         if mastering_used_fallback:
-            completed_data["mastering_warning"] = (
-                "Audio mastering failed; raw export used"
-            )
+            completed_data['mastering_warning'] = 'Audio mastering failed; raw export used'
         if upload_failed:
-            completed_data["upload_warning"] = (
-                "Storage upload failed; audio available locally only"
-            )
+            completed_data['upload_warning'] = 'Storage upload failed; audio available locally only'
         await job_store.update(job_id, completed_data)
 
         logger.info(
-            f"[{job_id}] ✓ Job completed in {total_duration:.1f}s "
-            f"({total_words} words, {len(all_chunks)} chunks)"
+            f'[{job_id}] ✓ Job completed in {total_duration:.1f}s '
+            f'({total_words} words, {len(all_chunks)} chunks)'
         )
 
-        # Step 9: Notify webhook
         await notify_job_completed(job_id, audio_uri)
 
     except (
@@ -535,7 +497,7 @@ async def run_tts_job(
     ) as exc:
         duration = time.time() - start_time
         logger.error(
-            f"[{job_id}] ✗ Job failed due to specific domain error after {duration:.1f}s: {exc}"
+            f'[{job_id}] ✗ Job failed due to specific domain error after {duration:.1f}s: {exc}'
         )
 
         _cleanup_failed_job(job_dir, final_mp3, job_id)
@@ -548,100 +510,75 @@ async def run_tts_job(
         await job_store.update(
             job_id,
             {
-                "status": "failed",
-                "error": f"{error_name}: {error_msg}",
-                "completed_at": time.time(),
-                "duration_seconds": duration,
+                'status': 'failed',
+                'error': f'{error_name}: {error_msg}',
+                'completed_at': time.time(),
+                'duration_seconds': duration,
             },
         )
-        await notify_job_failed(job_id, f"{error_name}: {error_msg}")
+        await notify_job_failed(job_id, f'{error_name}: {error_msg}')
 
     except Exception as exc:
         duration = time.time() - start_time
         logger.error(
-            f"[{job_id}] ✗ Job failed after {duration:.1f}s: {exc}",
+            f'[{job_id}] ✗ Job failed after {duration:.1f}s: {exc}',
             exc_info=not isinstance(exc, JobDeletedError),
         )
 
-        # Handle explicit deletion
         if isinstance(exc, JobDeletedError):
-            logger.info(f"[{job_id}] Aborting job due to deletion")
+            logger.info(f'[{job_id}] Aborting job due to deletion')
             _cleanup_failed_job(job_dir, final_mp3, job_id)
             _cleanup_temp_files(normalized_temp_files, job_id)
             _cleanup_intermediate(raw_wav, job_id)
             return
 
-        # Cleanup on failure
         _cleanup_failed_job(job_dir, final_mp3, job_id)
         _cleanup_temp_files(normalized_temp_files, job_id)
         _cleanup_intermediate(raw_wav, job_id)
 
-        # Update job status to failed
-        error_message = str(exc)[:450]  # Truncate long error messages
+        error_message = str(exc)[:450]
         await job_store.update(
             job_id,
             {
-                "status": "failed",
-                "error": error_message,
-                "completed_at": time.time(),
-                "duration_seconds": duration,
+                'status': 'failed',
+                'error': error_message,
+                'completed_at': time.time(),
+                'duration_seconds': duration,
             },
         )
 
-        # Notify webhook of failure
         await notify_job_failed(job_id, error_message)
 
 
 def _cleanup_failed_job(job_dir: Path, final_mp3: str, job_id: str) -> None:
-    """
-    Clean up resources after a failed job.
-
-    Args:
-        job_dir: Directory containing chunk files.
-        final_mp3: Path to the (possibly partial) MP3 file.
-        job_id: Job identifier for logging.
-    """
-    # Remove chunk directory
+    """Clean up resources after a failed job."""
     try:
         shutil.rmtree(job_dir, ignore_errors=True)
     except Exception as cleanup_exc:
-        logger.warning(f"[{job_id}] Cleanup failed: {cleanup_exc}")
+        logger.warning(f'[{job_id}] Cleanup failed: {cleanup_exc}')
 
-    # Remove partial MP3 if it exists
     try:
         mp3_path = Path(final_mp3)
         if mp3_path.exists():
             mp3_path.unlink(missing_ok=True)
     except Exception as cleanup_exc:
-        logger.warning(f"[{job_id}] Failed to remove partial MP3: {cleanup_exc}")
+        logger.warning(f'[{job_id}] Failed to remove partial MP3: {cleanup_exc}')
 
 
 def _cleanup_temp_files(temp_files: list[str], job_id: str) -> None:
-    """
-    Clean up temporary normalized WAV files.
-
-    Args:
-        temp_files: List of temp file paths to remove.
-        job_id: Job identifier for logging.
-    """
+    """Clean up temporary normalized WAV files."""
     for temp_file in temp_files:
         try:
             if os.path.exists(temp_file):
                 os.unlink(temp_file)
         except Exception as exc:
-            logger.warning(f"[{job_id}] Failed to remove temp file {temp_file}: {exc}")
+            logger.warning(f'[{job_id}] Failed to remove temp file {temp_file}: {exc}')
 
 
 def _cleanup_intermediate(path: str, job_id: str) -> None:
-    """
-    Clean up an intermediate file (raw WAV or MP3).
-
-    Args:
-        path: Path to the intermediate file.
-        job_id: Job identifier for logging.
-    """
+    """Clean up an intermediate file (raw WAV or MP3)."""
     try:
         if os.path.exists(path):
             os.unlink(path)
     except Exception as exc:
-        logger.warning(f"[{job_id}] Failed to remove {path}: {exc}")
+        logger.warning(f'[{job_id}] Failed to remove {path}: {exc}')
