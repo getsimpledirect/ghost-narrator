@@ -22,14 +22,19 @@ logger = logging.getLogger(__name__)
 
 class GCSStorageBackend(StorageBackend):
     def __init__(self, config: Optional[dict] = None) -> None:
-        pass  # Config check deferred to runtime
+        self._client = None
 
     def _get_client(self):
-        from google.cloud import storage
+        if self._client is None:
+            from google.cloud import storage
 
-        if GCS_SERVICE_ACCOUNT_KEY_PATH:
-            return storage.Client.from_service_account_json(GCS_SERVICE_ACCOUNT_KEY_PATH)
-        return storage.Client()
+            if GCS_SERVICE_ACCOUNT_KEY_PATH:
+                self._client = storage.Client.from_service_account_json(
+                    GCS_SERVICE_ACCOUNT_KEY_PATH
+                )
+            else:
+                self._client = storage.Client()
+        return self._client
 
     async def upload(self, local_path: Path, job_id: str, site_slug: str) -> str:
         blob_path = f'{GCS_AUDIO_PREFIX}/{site_slug}/{job_id}.mp3'
