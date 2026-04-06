@@ -78,14 +78,22 @@ jobs:
           VERSION: ${{ steps.bump.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
-          export PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
-
           python3 << 'PYEOF'
-          import os, re
+          import os, re, subprocess
+          from packaging.version import Version
 
-          version  = os.environ['VERSION']
-          prev_tag = os.environ.get('PREV_TAG', '')
-          repo     = os.environ['REPO']
+          version = os.environ['VERSION']
+          repo    = os.environ['REPO']
+
+          # Find the previous tag by sorting all tags — git describe ancestry
+          # traversal is unreliable after squash-merges detach tags from main.
+          raw = subprocess.check_output(['git', 'tag']).decode().strip().split('\n')
+          tags = sorted(
+              (t.lstrip('v') for t in raw if re.match(r'^v?\d+\.\d+\.\d+', t) and t.lstrip('v') != version),
+              key=lambda v: Version(v),
+              reverse=True,
+          )
+          prev_tag = f'v{tags[0]}' if tags else ''
 
           with open('CHANGELOG.md') as f:
               content = f.read()
@@ -137,7 +145,7 @@ jobs:
             CHANGELOG.md > /tmp/release_notes.md
           # Fall back to git log when no manual entry exists (e.g. patch releases).
           if [ ! -s /tmp/release_notes.md ]; then
-            PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+            PREV_TAG=$(git tag | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^v${VERSION}$" | sort -V | tail -1)
             if [ -n "$PREV_TAG" ]; then
               echo "### Changes since ${PREV_TAG}" > /tmp/release_notes.md
               echo "" >> /tmp/release_notes.md
