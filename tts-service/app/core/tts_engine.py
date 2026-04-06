@@ -35,14 +35,10 @@ from app.core.exceptions import SynthesisError, TTSEngineError, VoiceSampleNotFo
 
 logger = logging.getLogger(__name__)
 
-# ── Verify these imports match the installed qwen-tts package ─────────────────
-# Run: python -c "import qwen_tts; print(qwen_tts.__version__)"
-# Adjust import path if the package uses a different module name.
 try:
-    from qwen_tts import QwenTTS  # type: ignore[import]
+    from qwen_tts import Qwen3TTSModel  # type: ignore[import]
 except ImportError:
-    QwenTTS = None  # type: ignore[assignment,misc]
-# ─────────────────────────────────────────────────────────────────────────────
+    Qwen3TTSModel = None  # type: ignore[assignment,misc]
 
 
 class TTSEngine:
@@ -57,7 +53,7 @@ class TTSEngine:
         with self._lock:
             if self._ready:
                 return
-            if QwenTTS is None:
+            if Qwen3TTSModel is None:
                 raise TTSEngineError(
                     'qwen-tts package not installed. Install with: pip install qwen-tts'
                 )
@@ -70,20 +66,22 @@ class TTSEngine:
                 ENGINE_CONFIG.tts_precision,
             )
             try:
-                self._model = QwenTTS(
-                    model_name=SELECTED_TTS_MODEL,
-                    device=DEVICE,
+                self._model = Qwen3TTSModel.from_pretrained(
+                    SELECTED_TTS_MODEL,
+                    device_map=DEVICE,
                     dtype=ENGINE_CONFIG.tts_precision,
                 )
-                # Pre-compute and cache the default voice reference embedding
+                # Pre-compute and cache the default voice clone prompt
                 from app.config import VOICE_SAMPLE_PATH
 
                 voice_path = Path(VOICE_SAMPLE_PATH)
                 if voice_path.exists():
-                    logger.info('Pre-computing voice reference: %s', voice_path)
-                    self._model.load_reference(str(voice_path))
+                    logger.info('Pre-computing voice clone prompt: %s', voice_path)
+                    self._cached_voice_prompt = self._model.create_voice_clone_prompt(
+                        str(voice_path), ref_text=''
+                    )
                     self._cached_voice_path = str(voice_path)
-                    logger.info('Voice reference cached in VRAM')
+                    logger.info('Voice clone prompt cached')
                 else:
                     logger.warning(
                         'Voice sample not found at %s — will load per-job',
@@ -137,14 +135,26 @@ class TTSEngine:
             raise SynthesisError(f'Job {actual_job_id} was cancelled')
 
         try:
+            import soundfile as sf
+            from app.config import TTS_LANGUAGE
+
             with self._synthesis_lock:
-                # Only reload voice reference if it's different from the cached one
                 voice_path_str = str(voice_path)
-                if voice_path_str != self._cached_voice_path:
-                    self._model.load_reference(voice_path_str)
+                # Reuse cached prompt if same voice, otherwise create a new one
+                if voice_path_str == self._cached_voice_path and self._cached_voice_prompt is not None:
+                    prompt = self._cached_voice_prompt
+                else:
+                    prompt = self._model.create_voice_clone_prompt(
+                        voice_path_str, ref_text=""
+                    )
+                    self._cached_voice_prompt = prompt
                     self._cached_voice_path = voice_path_str
-                audio_data = self._model.synthesize(text)
-                self._model.save_wav(audio_data, str(output_path))
+                wavs, sr = self._model.generate_voice_clone(
+                    text=text,
+                    language=TTS_LANGUAGE,
+                    ref_audio=prompt,
+                )
+                sf.write(str(output_path), wavs[0], sr)
             return str(output_path)
         except SynthesisError:
             raise
@@ -179,12 +189,13 @@ def get_tts_engine() -> TTSEngine:
     with _engine_lock:
         if _engine is None:
             _engine = object.__new__(TTSEngine)
-            _engine._model: Optional[QwenTTS] = None
+            _engine._model: Optional[Qwen3TTSModel] = None
             _engine._ready = False
             _engine._lock = threading.Lock()
             _engine._synthesis_lock = threading.Lock()
             _engine._cancelled_jobs: set[str] = set()
             _engine._cached_voice_path: Optional[str] = None
+            _engine._cached_voice_prompt = None
     return _engine
 
 
