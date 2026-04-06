@@ -25,7 +25,7 @@ OLLAMA_PID=$!
 
 MAX_WAIT=300
 i=0
-until curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; do
+until ollama list >/dev/null 2>&1; do
     if [ "$i" -ge "$MAX_WAIT" ]; then
         echo "ERROR: Ollama API not ready after ${MAX_WAIT}s" >&2
         exit 1
