@@ -80,6 +80,43 @@ jobs:
             echo "bumped=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Update CHANGELOG reference links
+        if: steps.bump.outputs.bumped == 'true'
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          export PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+
+          python3 << 'PYEOF'
+          import os, re
+
+          version  = os.environ['VERSION']
+          prev_tag = os.environ.get('PREV_TAG', '')
+          repo     = os.environ['REPO']
+
+          with open('CHANGELOG.md') as f:
+              content = f.read()
+
+          # Update [Unreleased] pointer to the new tag
+          new_unreleased = f'[Unreleased]: https://github.com/{repo}/compare/v{version}...HEAD'
+          content = re.sub(r'^\[Unreleased\]:.*$', new_unreleased, content, flags=re.MULTILINE)
+
+          # Insert [VERSION] compare link after [Unreleased] if missing
+          if f'[{version}]:' not in content and prev_tag:
+              version_line = f'[{version}]: https://github.com/{repo}/compare/{prev_tag}...v{version}'
+              content = content.replace(
+                  new_unreleased + '\n',
+                  new_unreleased + '\n' + version_line + '\n',
+              )
+
+          with open('CHANGELOG.md', 'w') as f:
+              f.write(content)
+          PYEOF
+
+          git add CHANGELOG.md
+          git diff --staged --quiet || git commit -m "docs: update CHANGELOG.md reference links for v${VERSION}"
+
       - name: Create bump PR
         if: steps.bump.outputs.bumped == 'true'
         env:
