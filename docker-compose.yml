@@ -161,7 +161,7 @@ services:
       redis:
         condition: service_healthy
       tts-service:
-        condition: service_started
+        condition: service_healthy
       ollama:
         condition: service_healthy
     deploy:
