@@ -99,7 +99,15 @@ jobs:
 
       - name: Generate release notes
         if: steps.bump.outputs.bumped == 'true'
-        run: cz changelog --dry-run > /tmp/release_notes.md
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          # Extract the section for this version from CHANGELOG.md.
+          # cz bump already wrote it; --dry-run would find no unreleased commits.
+          awk "/^## \[?v?${VERSION}\]?/{found=1; next} found && /^## /{exit} found{print}" \
+            CHANGELOG.md > /tmp/release_notes.md
+          if [ ! -s /tmp/release_notes.md ]; then
+            echo "No changelog entry found for v${VERSION}." > /tmp/release_notes.md
+          fi
 
       - name: Create GitHub Release
         if: steps.bump.outputs.bumped == 'true'

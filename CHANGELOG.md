@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.0] — 2026-04-06
+
+### Fixed
+- **GCS client leak** — `GCSStorageBackend._get_client()` created a new connection on every retry attempt; now caches the client instance as a singleton
+- **n8n startup race** — n8n `depends_on` condition was `service_started` instead of `service_healthy`, allowing n8n to boot before the TTS service was ready
+- **Qwen3-TTS API** — updated engine from removed `QwenTTS` class to `Qwen3TTSModel` with correct `from_pretrained()`, `create_voice_clone_prompt()`, and `generate_voice_clone()` calls
+- **Narration fallback** — silent `except` swallowed narration errors and sent raw markdown to TTS; now logs the error and surfaces `narration_skipped: true` in job status
+- **HuggingFace model names** — all four hardware tiers updated from `Qwen/Qwen3-TTS-{0.6,1.7}B` to correct `Qwen/Qwen3-TTS-12Hz-{0.6,1.7}B-CustomVoice` IDs in `hardware.py` and `hardware-probe.sh`
+- **Ollama init timeout** — raised `MAX_WAIT` from 60 s to 300 s to prevent premature failure on first-run model pull
+- **sox missing from Docker image** — added `sox` to Dockerfile apt-get; tightened build-time import to `from qwen_tts import Qwen3TTSModel`
+- **`qwen-tts` version pin** — corrected from fabricated CalVer `2026.1.22` to actual PyPI release `0.1.1`
+- **Test mocks** — updated all four test files from stale `_mock.QwenTTS` to `_mock.Qwen3TTSModel` after API rename
+
+### CI
+- Restrict `ci.yml` permissions to `contents: read`
+- Explicitly pass `GITHUB_TOKEN` to both checkout steps to fix auth error in GitHub Actions
+
+### Docs
+- Replace stale `TTS_DEVICE` / `TTS_TIER` env vars with `HARDWARE_TIER` in `QUICKSTART.md`
+
+---
+
 ## [2.1.1] — 2026-04-03
 
 ### Security
