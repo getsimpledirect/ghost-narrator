@@ -5,9 +5,9 @@ import types
 from unittest.mock import MagicMock
 
 # Mock qwen_tts before any app imports
-_mock = types.ModuleType('qwen_tts')
-_mock.QwenTTS = MagicMock
-sys.modules.setdefault('qwen_tts', _mock)
+_mock = types.ModuleType("qwen_tts")
+_mock.Qwen3TTSModel = MagicMock
+sys.modules.setdefault("qwen_tts", _mock)
 
 from app.domains.voices.registry import VoiceRegistry
 

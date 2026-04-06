@@ -207,6 +207,7 @@ async def run_tts_job(
         all_chunks: list[str] = []
         total_words = 0
         chunk_index = 0
+        narration_skipped = False
 
         if narration is not None:
             # Pipelined: narrate chunk N, synthesize chunk N while narrating chunk N+1
@@ -242,8 +243,12 @@ async def run_tts_job(
                 # Fallback: narrate all, then synthesize all
                 try:
                     narrated_text = await narration.narrate(text)
-                except Exception:
+                except Exception as narration_exc:
+                    logger.warning(
+                        f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
+                    )
                     narrated_text = text
+                    narration_skipped = True
                 all_chunks, total_words = prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
                 chunk_wav_paths = await synthesize_chunks_auto(
                     chunks=all_chunks,
@@ -403,6 +408,10 @@ async def run_tts_job(
             'completed_at': time.time(),
             'duration_seconds': total_duration,
         }
+        if narration_skipped:
+            completed_data['narration_skipped'] = (
+                'Narration failed; raw article text was synthesized'
+            )
         if mastering_used_fallback:
             completed_data['mastering_warning'] = 'Audio mastering failed; raw export used'
         if upload_failed:

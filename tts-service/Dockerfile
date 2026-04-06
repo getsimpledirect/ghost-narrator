@@ -8,6 +8,7 @@ ENV PYTHONUNBUFFERED=1
 # Install system dependencies and curl for uv
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    sox \
     espeak-ng \
     libsndfile1 \
     git \
@@ -33,7 +34,7 @@ COPY pyproject.toml requirements.txt ./
 RUN uv pip install --system --no-cache -r requirements.txt
 
 # Verify critical imports work
-RUN python -c "import torch, transformers, fastapi, google.cloud.storage, redis, librosa, qwen_tts" && \
+RUN python -c "import torch, transformers, fastapi, google.cloud.storage, redis, librosa; from qwen_tts import Qwen3TTSModel" && \
     echo "✓ All critical packages validated"
 
 # Copy application code

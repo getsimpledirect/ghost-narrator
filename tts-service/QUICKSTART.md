@@ -67,7 +67,7 @@ curl http://localhost:8020/health
 {
   "status": "healthy",
   "device": "cpu",
-  "model": "Qwen/Qwen3-TTS-0.6B",
+  "model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
   "voice_sample": true,
   "model_loaded": true,
   "reference_audio_present": true,
@@ -79,7 +79,7 @@ curl http://localhost:8020/health
   "executor_active": true,
   "gcs_client_active": true,
   "hardware_tier": "cpu_only",
-  "tts_model": "Qwen/Qwen3-TTS-0.6B",
+  "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
   "llm_model": "qwen3:1.7b"
 }
 ```
@@ -130,7 +130,7 @@ Set these before running if you want to customize:
 ```bash
 export TTS_LANGUAGE="en"           # Language code (en, es, fr, de, etc.)
 export MAX_CHUNK_WORDS="200"       # Max words per synthesis chunk
-export TTS_DEVICE="cpu"            # Use "cuda" for GPU acceleration
+export HARDWARE_TIER="cpu_only"    # Override auto-detection: cpu_only, low_vram, mid_vram, high_vram
 export MAX_WORKERS="4"             # Thread pool size for parallel synthesis
 ```
 
@@ -140,12 +140,12 @@ The service auto-detects hardware and selects the appropriate Qwen3-TTS model:
 
 | Tier | VRAM | TTS Model | Output Quality |
 |---|---|---|---|
-| CPU only | None | Qwen3-TTS-0.6B | 192kbps, 44.1kHz |
-| Low (4–8 GB) | 4–8 GB | Qwen3-TTS-0.6B | 192kbps, 44.1kHz |
-| Mid (10–16 GB) | 10–16 GB | Qwen3-TTS-1.7B | 192kbps, 44.1kHz |
-| High (20+ GB) | 20+ GB | Qwen3-TTS-1.7B | 256kbps, 48kHz, −14 LUFS |
+| CPU only | None | Qwen3-TTS-12Hz-0.6B-CustomVoice | 192kbps, 44.1kHz |
+| Low (4–8 GB) | 4–8 GB | Qwen3-TTS-12Hz-0.6B-CustomVoice | 192kbps, 44.1kHz |
+| Mid (10–16 GB) | 10–16 GB | Qwen3-TTS-12Hz-1.7B-CustomVoice | 192kbps, 44.1kHz |
+| High (20+ GB) | 20+ GB | Qwen3-TTS-12Hz-1.7B-CustomVoice | 256kbps, 48kHz, −14 LUFS |
 
-Override with `TTS_TIER=cpu|low|mid|high` in `.env`.
+Override with `HARDWARE_TIER=cpu_only|low_vram|mid_vram|high_vram` in `.env`.
 
 ### Performance Configuration
 
@@ -214,7 +214,7 @@ This is normal for CPU mode with default settings. For faster generation:
 
 2. Use GPU mode (requires NVIDIA GPU with 4GB+ VRAM):
    ```bash
-   export TTS_DEVICE="cuda"
+   export HARDWARE_TIER="low_vram"   # 4–8 GB VRAM
    ```
 
 ### First run calibration

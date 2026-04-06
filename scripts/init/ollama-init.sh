@@ -23,7 +23,7 @@ echo "Hardware tier: $HARDWARE_TIER — LLM: $SELECTED_LLM_MODEL" >&2
 ollama serve &
 OLLAMA_PID=$!
 
-MAX_WAIT=60
+MAX_WAIT=300
 i=0
 until curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; do
     if [ "$i" -ge "$MAX_WAIT" ]; then
