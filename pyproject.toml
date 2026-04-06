@@ -1,0 +1,28 @@
+[project]
+name = "ghost-narrator"
+version = "2.2.0"
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["tts-service/app/__init__.py:__version__"]
+# Sync the standalone VERSION file on every release
+build_command = "echo $NEW_VERSION > VERSION"
+tag_format = "v{version}"
+commit_message = "chore(release): v{version} [skip ci]"
+
+[tool.semantic_release.changelog]
+changelog_file = "CHANGELOG.md"
+exclude_commit_patterns = [
+    "^chore\\(release\\):",
+    "^Merge pull request",
+    "^Merge branch",
+]
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = ["feat", "fix", "perf", "refactor", "docs", "style", "test", "chore", "ci", "revert"]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf", "refactor"]
+
+[tool.semantic_release.branches.main]
+match = "main"
+prerelease = false

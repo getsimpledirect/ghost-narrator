@@ -1,19 +1,9 @@
+# Commitizen is used for commit message validation only.
+# Versioning and releases are handled by python-semantic-release (pyproject.toml).
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "2.2.1"
-tag_format = "v$version"
-version_files = [
-    "VERSION",
-    "tts-service/app/__init__.py:__version__"
-]
-update_changelog_on_bump = false
-changelog_file = "CHANGELOG.md"
 
 [tool.commitizen.customize]
 message_template = "{{change_type}}: {{message}}"
 example = "feat: add dynamic site support"
-schema_pattern = "(feat|fix|docs|style|refactor|perf|test|chore|revert|bump)"
-bump_pattern = "^(feat|fix|perf|refactor)"
-bump_map = {"feat" = "MINOR", "fix" = "PATCH", "perf" = "PATCH", "refactor" = "PATCH"}
-change_type_map = {"feat" = "Features", "fix" = "Bug Fixes", "docs" = "Documentation", "style" = "Styles", "refactor" = "Refactoring", "perf" = "Performance", "test" = "Tests", "chore" = "Maintenance"}
-change_type_order = ["Features", "Bug Fixes", "Performance", "Refactoring", "Documentation", "Styles", "Maintenance"]
+schema_pattern = "(feat|fix|docs|style|refactor|perf|test|chore|revert|ci)"
