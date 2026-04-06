@@ -132,12 +132,22 @@ jobs:
         if: steps.bump.outputs.bumped == 'true'
         run: |
           VERSION="${{ steps.bump.outputs.version }}"
-          # Extract the section for this version from CHANGELOG.md.
-          # cz bump already wrote it; --dry-run would find no unreleased commits.
+          # Try to extract the section for this version from CHANGELOG.md first.
           awk "/^## \[?v?${VERSION}\]?/{found=1; next} found && /^## /{exit} found{print}" \
             CHANGELOG.md > /tmp/release_notes.md
+          # Fall back to git log when no manual entry exists (e.g. patch releases).
           if [ ! -s /tmp/release_notes.md ]; then
-            echo "No changelog entry found for v${VERSION}." > /tmp/release_notes.md
+            PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              echo "### Changes since ${PREV_TAG}" > /tmp/release_notes.md
+              echo "" >> /tmp/release_notes.md
+              git log "${PREV_TAG}..v${VERSION}" \
+                --pretty=format:"- %s" \
+                --no-merges \
+                >> /tmp/release_notes.md
+            else
+              echo "No changelog entry found for v${VERSION}." > /tmp/release_notes.md
+            fi
           fi
 
       - name: Create GitHub Release
