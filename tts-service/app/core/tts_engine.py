@@ -141,12 +141,13 @@ class TTSEngine:
             with self._synthesis_lock:
                 voice_path_str = str(voice_path)
                 # Reuse cached prompt if same voice, otherwise create a new one
-                if voice_path_str == self._cached_voice_path and self._cached_voice_prompt is not None:
+                if (
+                    voice_path_str == self._cached_voice_path
+                    and self._cached_voice_prompt is not None
+                ):
                     prompt = self._cached_voice_prompt
                 else:
-                    prompt = self._model.create_voice_clone_prompt(
-                        voice_path_str, ref_text=""
-                    )
+                    prompt = self._model.create_voice_clone_prompt(voice_path_str, ref_text='')
                     self._cached_voice_prompt = prompt
                     self._cached_voice_path = voice_path_str
                 wavs, sr = self._model.generate_voice_clone(

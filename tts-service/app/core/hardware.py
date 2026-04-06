@@ -46,7 +46,6 @@ class EngineConfig:
 _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
     HardwareTier.CPU_ONLY: EngineConfig(
         tier=HardwareTier.CPU_ONLY,
-
         tts_model='Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
         tts_device='cpu',
         tts_precision='fp32',
@@ -61,7 +60,6 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
     ),
     HardwareTier.LOW_VRAM: EngineConfig(
         tier=HardwareTier.LOW_VRAM,
-
         tts_model='Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
         tts_device='cuda',
         tts_precision='fp16',
@@ -76,7 +74,6 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
     ),
     HardwareTier.MID_VRAM: EngineConfig(
         tier=HardwareTier.MID_VRAM,
-
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
         tts_device='cuda',
         tts_precision='fp16',
@@ -91,7 +88,6 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
     ),
     HardwareTier.HIGH_VRAM: EngineConfig(
         tier=HardwareTier.HIGH_VRAM,
-
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
         tts_device='cuda',
         tts_precision='fp32',  # fp32 for cleaner audio (have the VRAM)

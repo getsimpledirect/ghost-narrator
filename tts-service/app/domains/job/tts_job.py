@@ -245,13 +245,11 @@ async def run_tts_job(
                     narrated_text = await narration.narrate(text)
                 except Exception as narration_exc:
                     logger.warning(
-                        f"[{job_id}] Sequential narration also failed, using raw text: {narration_exc}"
+                        f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
                     )
                     narrated_text = text
                     narration_skipped = True
-                all_chunks, total_words = prepare_text_for_synthesis(
-                    narrated_text, MAX_CHUNK_WORDS
-                )
+                all_chunks, total_words = prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
                 chunk_wav_paths = await synthesize_chunks_auto(
                     chunks=all_chunks,
                     job_dir=job_dir,
@@ -411,8 +409,8 @@ async def run_tts_job(
             'duration_seconds': total_duration,
         }
         if narration_skipped:
-            completed_data["narration_skipped"] = (
-                "Narration failed; raw article text was synthesized"
+            completed_data['narration_skipped'] = (
+                'Narration failed; raw article text was synthesized'
             )
         if mastering_used_fallback:
             completed_data['mastering_warning'] = 'Audio mastering failed; raw export used'
