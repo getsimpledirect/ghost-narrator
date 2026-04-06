@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import types
 
 # Mock qwen_tts before any app imports
-_mock = types.ModuleType('qwen_tts')
-_mock.QwenTTS = MagicMock
-sys.modules.setdefault('qwen_tts', _mock)
+_mock = types.ModuleType("qwen_tts")
+_mock.Qwen3TTSModel = MagicMock
+sys.modules.setdefault("qwen_tts", _mock)
 
 import pytest
 from app.domains.narration.strategy import ChunkedStrategy, SingleShotStrategy

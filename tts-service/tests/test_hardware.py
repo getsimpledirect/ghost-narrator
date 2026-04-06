@@ -14,8 +14,8 @@ def test_cpu_only_when_cuda_unavailable():
         mock_torch.cuda.is_available.return_value = False
         config = get_engine_config()
     assert config.tier == HardwareTier.CPU_ONLY
-    assert config.tts_device == 'cpu'
-    assert config.tts_model == 'Qwen/Qwen3-TTS-0.6B'
+    assert config.tts_device == "cpu"
+    assert config.tts_model == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
     assert config.synthesis_workers == 4
     assert config.llm_model == 'qwen3:1.7b'
     assert config.mp3_bitrate == '192k'
@@ -35,8 +35,8 @@ def test_low_vram_when_6gb():
         mock_torch.cuda.get_device_properties.return_value = props
         config = get_engine_config()
     assert config.tier == HardwareTier.LOW_VRAM
-    assert config.tts_model == 'Qwen/Qwen3-TTS-0.6B'
-    assert config.llm_model == 'qwen3:4b-q4'
+    assert config.tts_model == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    assert config.llm_model == "qwen3:4b-q4"
     assert config.synthesis_workers == 1
 
 
@@ -53,7 +53,7 @@ def test_low_vram_when_9gb():
         mock_torch.cuda.get_device_properties.return_value = props
         config = get_engine_config()
     assert config.tier == HardwareTier.LOW_VRAM
-    assert config.tts_model == 'Qwen/Qwen3-TTS-0.6B'
+    assert config.tts_model == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 
 
 def test_mid_vram_when_12gb():
@@ -68,8 +68,8 @@ def test_mid_vram_when_12gb():
         mock_torch.cuda.get_device_properties.return_value = props
         config = get_engine_config()
     assert config.tier == HardwareTier.MID_VRAM
-    assert config.tts_model == 'Qwen/Qwen3-TTS-1.7B'
-    assert config.llm_model == 'qwen3:8b-q4'
+    assert config.tts_model == "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+    assert config.llm_model == "qwen3:8b-q4"
     assert config.synthesis_workers == 1
 
 
@@ -85,8 +85,8 @@ def test_high_vram_when_24gb():
         mock_torch.cuda.get_device_properties.return_value = props
         config = get_engine_config()
     assert config.tier == HardwareTier.HIGH_VRAM
-    assert config.tts_model == 'Qwen/Qwen3-TTS-1.7B'
-    assert config.llm_model == 'qwen3:14b-q4'
+    assert config.tts_model == "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+    assert config.llm_model == "qwen3:14b-q4"
     assert config.synthesis_workers == 2
     assert config.mp3_bitrate == '256k'
     assert config.sample_rate == 48000
