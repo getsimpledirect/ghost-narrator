@@ -208,22 +208,16 @@ else
     echo "  (If you have a GPU, ensure nvidia-smi is available)"
 fi
 
-# Write COMPOSE_FILE to .env so docker compose picks it up automatically
-if grep -q "^COMPOSE_FILE=" .env 2>/dev/null; then
-    if [ "$GPU_DETECTED" = true ]; then
-        sed -i.bak "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml|" .env
-    else
-        sed -i.bak "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml|" .env
-    fi
-    rm -f .env.bak
+# Activate GPU overlay via docker-compose.override.yml symlink.
+# Docker Compose v2 automatically merges override.yml — this is more reliable
+# than COMPOSE_FILE in .env, which Compose v2 ignores for file selection.
+if [ "$GPU_DETECTED" = true ]; then
+    ln -sf docker-compose.gpu.yml docker-compose.override.yml
+    ok "Created docker-compose.override.yml → docker-compose.gpu.yml"
 else
-    if [ "$GPU_DETECTED" = true ]; then
-        echo "COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml" >> .env
-    else
-        echo "COMPOSE_FILE=docker-compose.yml" >> .env
-    fi
+    rm -f docker-compose.override.yml
+    ok "No GPU — skipped docker-compose.override.yml (CPU mode)"
 fi
-ok "Compose configuration written to .env"
 
 # ─── Pull Docker Images ───────────────────────────────────────────────────────
 echo ""
