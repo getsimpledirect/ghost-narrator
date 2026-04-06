@@ -1,4 +1,4 @@
-name: Automated Versioning
+name: Release
 
 on:
   push:
@@ -7,13 +7,13 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
+  id-token: write
 
 jobs:
-  bump-version:
-    # Skip if this push IS the bump commit itself (prevents infinite loop).
-    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+  release:
     runs-on: ubuntu-latest
+    concurrency: release
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,148 +21,9 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Python Semantic Release
+        uses: python-semantic-release/python-semantic-release@v9
         with:
-          python-version: '3.12'
-
-      - name: Install Commitizen
-        run: pip install commitizen
-
-      - name: Configure Git
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-
-      - name: Bump version
-        id: bump
-        run: |
-          set +e
-          cz bump --yes
-          CZ_EXIT=$?
-          set -e
-
-          if [ $CZ_EXIT -eq 0 ]; then
-            echo "bumped=true" >> $GITHUB_OUTPUT
-            # Always read version from the tag cz bump just created — more
-            # reliable than VERSION file which can lag behind in the checkout.
-            echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
-          elif [ $CZ_EXIT -eq 7 ]; then
-            # Exit code 7 = tag already exists, delete and retry
-            NEXT_VERSION=$(cz version --project 2>/dev/null || cat VERSION 2>/dev/null || echo "unknown")
-            STALE_TAG="v${NEXT_VERSION}"
-            echo "Stale tag ${STALE_TAG} found — deleting and retrying..."
-            git tag -d "$STALE_TAG" 2>/dev/null || true
-            git push origin --delete "$STALE_TAG" 2>/dev/null || true
-
-            set +e
-            cz bump --yes
-            CZ_EXIT2=$?
-            set -e
-
-            if [ $CZ_EXIT2 -eq 0 ]; then
-              echo "bumped=true" >> $GITHUB_OUTPUT
-              echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
-            else
-              echo "Retry failed (exit $CZ_EXIT2) — skipping release"
-              echo "bumped=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "No bumpable commits found (exit $CZ_EXIT) — skipping release"
-            echo "bumped=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Update CHANGELOG reference links
-        if: steps.bump.outputs.bumped == 'true'
-        env:
-          VERSION: ${{ steps.bump.outputs.version }}
-          REPO: ${{ github.repository }}
-        run: |
-          python3 << 'PYEOF'
-          import os, re, subprocess
-          from packaging.version import Version
-
-          version = os.environ['VERSION']
-          repo    = os.environ['REPO']
-
-          # Find the previous tag by sorting all tags — git describe ancestry
-          # traversal is unreliable after squash-merges detach tags from main.
-          raw = subprocess.check_output(['git', 'tag']).decode().strip().split('\n')
-          tags = sorted(
-              (t.lstrip('v') for t in raw if re.match(r'^v?\d+\.\d+\.\d+', t) and t.lstrip('v') != version),
-              key=lambda v: Version(v),
-              reverse=True,
-          )
-          prev_tag = f'v{tags[0]}' if tags else ''
-
-          with open('CHANGELOG.md') as f:
-              content = f.read()
-
-          # Update [Unreleased] pointer to the new tag
-          new_unreleased = f'[Unreleased]: https://github.com/{repo}/compare/v{version}...HEAD'
-          content = re.sub(r'^\[Unreleased\]:.*$', new_unreleased, content, flags=re.MULTILINE)
-
-          # Insert [VERSION] compare link after [Unreleased] if missing
-          if f'[{version}]:' not in content and prev_tag:
-              version_line = f'[{version}]: https://github.com/{repo}/compare/{prev_tag}...v{version}'
-              content = content.replace(
-                  new_unreleased + '\n',
-                  new_unreleased + '\n' + version_line + '\n',
-              )
-
-          with open('CHANGELOG.md', 'w') as f:
-              f.write(content)
-          PYEOF
-
-          git add CHANGELOG.md
-          git diff --staged --quiet || git commit -m "docs: update CHANGELOG.md reference links for v${VERSION}"
-
-      - name: Create bump PR
-        if: steps.bump.outputs.bumped == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          BUMP_BRANCH="auto/bump-v${{ steps.bump.outputs.version }}"
-          # Remove stale remote branch if it exists from a previous run
-          git push origin --delete "$BUMP_BRANCH" 2>/dev/null || true
-          git checkout -b "$BUMP_BRANCH"
-          git push origin "$BUMP_BRANCH" --tags
-
-          PR_URL=$(gh pr create \
-            --title "bump: version ${{ steps.bump.outputs.version }}" \
-            --body "Automated version bump by Commitizen." \
-            --base main \
-            --head "$BUMP_BRANCH")
-
-          gh pr merge "$PR_URL" --auto --squash
-
-      - name: Generate release notes
-        if: steps.bump.outputs.bumped == 'true'
-        run: |
-          VERSION="${{ steps.bump.outputs.version }}"
-          # Try to extract the section for this version from CHANGELOG.md first.
-          awk "/^## \[?v?${VERSION}\]?/{found=1; next} found && /^## /{exit} found{print}" \
-            CHANGELOG.md > /tmp/release_notes.md
-          # Fall back to git log when no manual entry exists (e.g. patch releases).
-          if [ ! -s /tmp/release_notes.md ]; then
-            PREV_TAG=$(git tag | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^v${VERSION}$" | sort -V | tail -1)
-            if [ -n "$PREV_TAG" ]; then
-              echo "### Changes since ${PREV_TAG}" > /tmp/release_notes.md
-              echo "" >> /tmp/release_notes.md
-              git log "${PREV_TAG}..v${VERSION}" \
-                --pretty=format:"- %s" \
-                --no-merges \
-                >> /tmp/release_notes.md
-            else
-              echo "No changelog entry found for v${VERSION}." > /tmp/release_notes.md
-            fi
-          fi
-
-      - name: Create GitHub Release
-        if: steps.bump.outputs.bumped == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.bump.outputs.version }}
-          body_path: /tmp/release_notes.md
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.RELEASE_TOKEN }}
+          git_committer_name: "GitHub Action"
+          git_committer_email: "action@github.com"
