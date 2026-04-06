@@ -66,10 +66,18 @@ class TTSEngine:
                 ENGINE_CONFIG.tts_precision,
             )
             try:
+                import torch
+
+                _PRECISION_MAP = {
+                    'fp32': torch.float32,
+                    'fp16': torch.float16,
+                    'bf16': torch.bfloat16,
+                }
+                dtype = _PRECISION_MAP.get(ENGINE_CONFIG.tts_precision, torch.float32)
                 self._model = Qwen3TTSModel.from_pretrained(
                     SELECTED_TTS_MODEL,
                     device_map=DEVICE,
-                    dtype=ENGINE_CONFIG.tts_precision,
+                    dtype=dtype,
                 )
                 # Pre-compute and cache the default voice clone prompt
                 from app.config import VOICE_SAMPLE_PATH
