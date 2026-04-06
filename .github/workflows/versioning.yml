@@ -44,13 +44,9 @@ jobs:
 
           if [ $CZ_EXIT -eq 0 ]; then
             echo "bumped=true" >> $GITHUB_OUTPUT
-            # Read version from VERSION file (cz bump creates/updates it)
-            if [ -f VERSION ]; then
-              echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
-            else
-              # Fallback: extract from the latest tag
-              echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
-            fi
+            # Always read version from the tag cz bump just created — more
+            # reliable than VERSION file which can lag behind in the checkout.
+            echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
           elif [ $CZ_EXIT -eq 7 ]; then
             # Exit code 7 = tag already exists, delete and retry
             NEXT_VERSION=$(cz version --project 2>/dev/null || cat VERSION 2>/dev/null || echo "unknown")
@@ -66,11 +62,7 @@ jobs:
 
             if [ $CZ_EXIT2 -eq 0 ]; then
               echo "bumped=true" >> $GITHUB_OUTPUT
-              if [ -f VERSION ]; then
-                echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
-              else
-                echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
-              fi
+              echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
             else
               echo "Retry failed (exit $CZ_EXIT2) — skipping release"
               echo "bumped=false" >> $GITHUB_OUTPUT
@@ -123,6 +115,8 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           BUMP_BRANCH="auto/bump-v${{ steps.bump.outputs.version }}"
+          # Remove stale remote branch if it exists from a previous run
+          git push origin --delete "$BUMP_BRANCH" 2>/dev/null || true
           git checkout -b "$BUMP_BRANCH"
           git push origin "$BUMP_BRANCH" --tags
 
