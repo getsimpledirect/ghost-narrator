@@ -67,11 +67,11 @@ curl http://localhost:8020/health
 {
   "status": "healthy",
   "device": "cpu",
-  "model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+  "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
   "voice_sample": true,
   "model_loaded": true,
   "reference_audio_present": true,
-  "reference_tokens_present": true,
+  "reference_text_present": true,
   "tts_engine_ready": true,
   "job_store": "redis",
   "jobs_count": 0,
@@ -79,7 +79,7 @@ curl http://localhost:8020/health
   "executor_active": true,
   "gcs_client_active": true,
   "hardware_tier": "cpu_only",
-  "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+  "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
   "llm_model": "qwen3:1.7b"
 }
 ```
@@ -140,10 +140,10 @@ The service auto-detects hardware and selects the appropriate Qwen3-TTS model:
 
 | Tier | VRAM | TTS Model | Output Quality |
 |---|---|---|---|
-| CPU only | None | Qwen3-TTS-12Hz-0.6B-CustomVoice | 192kbps, 44.1kHz |
-| Low (4–8 GB) | 4–8 GB | Qwen3-TTS-12Hz-0.6B-CustomVoice | 192kbps, 44.1kHz |
-| Mid (10–16 GB) | 10–16 GB | Qwen3-TTS-12Hz-1.7B-CustomVoice | 192kbps, 44.1kHz |
-| High (20+ GB) | 20+ GB | Qwen3-TTS-12Hz-1.7B-CustomVoice | 256kbps, 48kHz, −14 LUFS |
+| CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 44.1kHz |
+| Low (4–8 GB) | 4–8 GB | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 44.1kHz |
+| Mid (10–16 GB) | 10–16 GB | Qwen3-TTS-12Hz-1.7B-Base | 192kbps, 44.1kHz |
+| High (20+ GB) | 20+ GB | Qwen3-TTS-12Hz-1.7B-Base | 256kbps, 48kHz, −14 LUFS |
 
 Override with `HARDWARE_TIER=cpu_only|low_vram|mid_vram|high_vram` in `.env`.
 

@@ -329,7 +329,7 @@ curl http://localhost:8020/health
 
 Expected response:
 ```json
-{"status": "healthy", "device": "cpu", "model": "qwen3-tts-0.6b", "voice_sample": true, "model_loaded": true, "reference_audio_present": true, "reference_tokens_present": true, "tts_engine_ready": true, "job_store": "redis", "jobs_count": 0, "max_workers": 4, "executor_active": true, "storage_client_active": true}
+{"status": "healthy", "device": "cpu", "model": "qwen3-tts-0.6b", "voice_sample": true, "model_loaded": true, "reference_audio_present": true, "reference_text_present": true, "tts_engine_ready": true, "job_store": "redis", "jobs_count": 0, "max_workers": 4, "executor_active": true, "storage_client_active": true}
 ```
 
 ---
