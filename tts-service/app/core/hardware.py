@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
 try:
@@ -119,7 +119,13 @@ def _probe_tier() -> HardwareTier:
 
 
 def get_engine_config() -> EngineConfig:
-    """Return EngineConfig for this machine. Respects HARDWARE_TIER env override."""
+    """Return EngineConfig for this machine.
+
+    Tier is selected by HARDWARE_TIER env var (written by hardware-probe.sh) or
+    auto-probed. Model names are then resolved from SELECTED_TTS_MODEL /
+    SELECTED_LLM_MODEL env vars (also written by hardware-probe.sh), falling back
+    to _TIER_CONFIGS defaults so local dev without the init container still works.
+    """
     override = os.environ.get('HARDWARE_TIER', '').strip().lower()
     if override:
         try:
@@ -130,7 +136,14 @@ def get_engine_config() -> EngineConfig:
             tier = _probe_tier()
     else:
         tier = _probe_tier()
-    return _TIER_CONFIGS[tier]
+
+    config = _TIER_CONFIGS[tier]
+    tts_model = os.environ.get('SELECTED_TTS_MODEL', '').strip() or config.tts_model
+    llm_model = os.environ.get('SELECTED_LLM_MODEL', '').strip() or config.llm_model
+    if tts_model != config.tts_model or llm_model != config.llm_model:
+        logger.info('Model overrides from env — tts: %s, llm: %s', tts_model, llm_model)
+        config = replace(config, tts_model=tts_model, llm_model=llm_model)
+    return config
 
 
 # Module-level singleton — computed once at import time

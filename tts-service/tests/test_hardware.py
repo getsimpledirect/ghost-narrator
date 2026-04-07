@@ -93,6 +93,30 @@ def test_high_vram_when_24gb():
     assert config.target_lufs == -14.0
 
 
+def test_selected_tts_model_env_overrides_tier_config():
+    """SELECTED_TTS_MODEL from tier.env (hardware-probe.sh) takes priority over _TIER_CONFIGS."""
+    with patch.dict(os.environ, {'HARDWARE_TIER': 'cpu_only', 'SELECTED_TTS_MODEL': 'org/custom-tts-model', 'SELECTED_LLM_MODEL': ''}):
+        config = get_engine_config()
+    assert config.tts_model == 'org/custom-tts-model'
+    assert config.llm_model == 'qwen3:1.7b'  # unchanged — empty env var falls back
+
+
+def test_selected_llm_model_env_overrides_tier_config():
+    """SELECTED_LLM_MODEL from tier.env (hardware-probe.sh) takes priority over _TIER_CONFIGS."""
+    with patch.dict(os.environ, {'HARDWARE_TIER': 'cpu_only', 'SELECTED_LLM_MODEL': 'custom-llm:7b', 'SELECTED_TTS_MODEL': ''}):
+        config = get_engine_config()
+    assert config.llm_model == 'custom-llm:7b'
+    assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'  # unchanged
+
+
+def test_empty_selected_model_env_falls_back_to_tier_config():
+    """Empty SELECTED_* env vars must not override — falls back to _TIER_CONFIGS defaults."""
+    with patch.dict(os.environ, {'HARDWARE_TIER': 'cpu_only', 'SELECTED_TTS_MODEL': '', 'SELECTED_LLM_MODEL': ''}):
+        config = get_engine_config()
+    assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
+    assert config.llm_model == 'qwen3:1.7b'
+
+
 def test_env_override_skips_probe():
     with patch.dict(os.environ, {'HARDWARE_TIER': 'mid_vram'}):
         config = get_engine_config()
