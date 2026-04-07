@@ -1,9 +1,16 @@
 # docker-compose.gpu.yml — GPU device overrides
 # Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Automatically selected by install.sh when an NVIDIA GPU is detected.
+# Sets COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml in .env.
 services:
   hardware-probe:
-    volumes:
-      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
+    # Override alpine base: CUDA base image carries the NVIDIA driver userspace
+    # libraries (libnvidia-ml.so etc.) that nvidia-smi needs to query the GPU.
+    # Mounting just the nvidia-smi binary into alpine is not sufficient — alpine
+    # lacks those libraries, so nvidia-smi finds no GPU and tier.env is written
+    # as cpu_only even on machines with a GPU present.
+    image: nvidia/cuda:12.4.0-base-ubuntu22.04
     deploy:
       resources:
         reservations:
