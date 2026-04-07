@@ -125,14 +125,14 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | Tier | VRAM | TTS Model | LLM | Output Quality | Features |
 |---|---|---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
-| Low | 4–8 GB | Qwen3-TTS-0.6B | qwen3:4b-q4 | 192kbps, 44.1kHz | T4 / older GPUs |
-| Mid | 10–16 GB | Qwen3-TTS-1.7B | qwen3:8b-q4 | 192kbps, 44.1kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
-| **High** | **20+ GB** | **Qwen3-TTS-1.7B (fp32)** | **qwen3:14b-q4** | **256kbps, 48kHz, −14 LUFS** | **2 parallel workers, multi-voice quotes, quality re-synthesis, voice pre-caching** |
+| Low | <10 GB | Qwen3-TTS-0.6B | qwen3:4b | 192kbps, 44.1kHz | T4 / older GPUs |
+| Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3:8b | 192kbps, 44.1kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (fp32)** | **qwen3:14b** | **256kbps, 48kHz, −14 LUFS** | **2 parallel workers, multi-voice quotes, quality re-synthesis, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
 - **fp32 TTS precision** — cleaner audio with less quantization noise
 - **2 parallel TTS workers** — ~2x faster synthesis for multi-chunk articles
-- **qwen3:14b-q4 LLM** — significantly better narration quality (nuance, argument handling, natural phrasing)
+- **qwen3:14b LLM** — significantly better narration quality (nuance, argument handling, natural phrasing)
 - **Pipelined narration+synthesis** — LLM narrates chunk N+1 while TTS synthesizes chunk N
 - **Pre-computed voice reference** — voice embedding cached at startup, saves 2-5s per job
 - **Multi-voice for quotes** — quoted speech is pitch-shifted for speaker differentiation
