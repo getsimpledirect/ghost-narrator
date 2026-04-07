@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v2.2.2 (2026-04-07)
+
+### Bug Fixes
+
+- **tts**: Add flash-attn via multi-stage Docker build
+  ([#45](https://github.com/getsimpledirect/ghost-narrator/pull/45),
+  [`bf79418`](https://github.com/getsimpledirect/ghost-narrator/commit/bf79418e1bc27bc7c53bdbefbc321d91765321b8))
+
+flash-attn requires nvcc (CUDA compiler) which the runtime base image does not ship. Add a devel
+  builder stage that compiles the wheel against the matching torch version (ABI-compatible via
+  --no-build-isolation), then copy only the resulting .whl into the final runtime stage.
+
+This eliminates the startup warning: "flash-attn is not installed. Will only run the manual PyTorch
+  version."
+
+- **tts**: Revert voices volume to bind mount
+  ([#44](https://github.com/getsimpledirect/ghost-narrator/pull/44),
+  [`de8773b`](https://github.com/getsimpledirect/ghost-narrator/commit/de8773be45f485c4fe74df313969890a276efd24))
+
+Switching from named volume (voices_data) back to bind mount (./tts-service/voices:/app/voices) so
+  that the reference.wav placed by install.sh is visible to the container at startup.
+
+Named volume starts empty, which causes the engine to skip voice prompt pre-caching and log a
+  warning on every restart. Bind mount directly exposes the host directory where install.sh deposits
+  the voice sample.
+
+
 ## v2.2.1 (2026-04-07)
 
 ### Bug Fixes
