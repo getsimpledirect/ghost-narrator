@@ -212,7 +212,7 @@ services:
       - OTEL_SERVICE_NAME=ghost-narrator-tts
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
-      - voices_data:/app/voices
+      - ./tts-service/voices:/app/voices
       - tts_output:/app/output
       - tier_data:/shared:ro
       - ./secrets:/app/secrets:ro
@@ -253,8 +253,6 @@ volumes:
   tier_data:
     driver: local
   ollama_models:
-    driver: local
-  voices_data:
     driver: local
 
 # ─── Networks ──────────────────────────────────────────────────────────────────
