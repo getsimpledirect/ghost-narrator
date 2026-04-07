@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v2.2.3 (2026-04-07)
+
+### Bug Fixes
+
+- **ollama**: Replace curl with ollama list in healthcheck
+  ([#46](https://github.com/getsimpledirect/ghost-narrator/pull/46),
+  [`681a598`](https://github.com/getsimpledirect/ghost-narrator/commit/681a598868629e6e071a914f3e61858fe37704b3))
+
+curl is not present in the ollama/ollama image, so the Docker healthcheck was always failing
+  immediately, causing dependent services (n8n, tts-service) to never start.
+
+PR #40 fixed the same issue in ollama-init.sh but missed the compose healthcheck definition.
+
+
 ## v2.2.2 (2026-04-07)
 
 ### Bug Fixes
