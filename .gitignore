@@ -15,6 +15,10 @@ secrets/
 # ─── Voice samples (biometric data — keep off version control) ────────────────
 tts-service/voices/*
 !tts-service/voices/.gitkeep
+!tts-service/voices/profiles/
+!tts-service/voices/profiles/.gitkeep
+!tts-service/voices/default/
+!tts-service/voices/default/.gitkeep
 
 # Voice profiles (may contain sensitive voice data)
 tts-service/voices/profiles/*.wav
