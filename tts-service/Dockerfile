@@ -1,4 +1,17 @@
-# Using modern CUDA runtime for Qwen3-TTS
+# ─── Stage 1: Compile flash-attn wheel ───────────────────────────────────────
+# flash-attn requires nvcc (CUDA compiler) to build from source. The runtime
+# image below does not ship nvcc, so we compile the wheel here in the devel
+# image and copy only the resulting .whl into the final stage.
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-devel AS flash-builder
+
+# Install the same torch version used at runtime so the wheel is ABI-compatible.
+# --no-build-isolation tells the compiler to use the installed torch headers
+# rather than fetching a fresh copy in an isolated build env.
+RUN pip install --quiet --upgrade pip && \
+    pip install --quiet torch==2.11.0 && \
+    pip wheel flash-attn --no-build-isolation --no-deps -w /flash-wheels
+
+# ─── Stage 2: Runtime image ───────────────────────────────────────────────────
 FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 # Prevent interactive prompts during build
@@ -33,8 +46,15 @@ COPY pyproject.toml requirements.txt ./
 # Install dependencies using uv (faster than pip)
 RUN uv pip install --system --no-cache -r requirements.txt
 
+# Install the flash-attn wheel compiled in the builder stage.
+# Installed after the main requirements so uv doesn't try to resolve it from
+# PyPI (where it would fail without nvcc).
+COPY --from=flash-builder /flash-wheels/flash_attn*.whl /tmp/
+RUN uv pip install --system --no-cache /tmp/flash_attn*.whl && \
+    rm -f /tmp/flash_attn*.whl
+
 # Verify critical imports work
-RUN python -c "import torch, transformers, fastapi, google.cloud.storage, redis, librosa; from qwen_tts import Qwen3TTSModel" && \
+RUN python -c "import torch, transformers, fastapi, google.cloud.storage, redis, librosa; from qwen_tts import Qwen3TTSModel; import flash_attn" && \
     echo "✓ All critical packages validated"
 
 # Copy application code
