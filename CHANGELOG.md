@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v2.2.4 (2026-04-07)
+
+### Bug Fixes
+
+- **ollama**: Use valid Ollama model tags for all hardware tiers
+  ([#47](https://github.com/getsimpledirect/ghost-narrator/pull/47),
+  [`cf466ea`](https://github.com/getsimpledirect/ghost-narrator/commit/cf466ea21a9a8e666e6f662f05bed806f57995da))
+
+The qwen3:Xb-q4 tag format does not exist in the Ollama registry — "pull model manifest: file does
+  not exist" caused the init script to exit, the container to restart-loop, and all dependent
+  services to never start.
+
+Ollama's default pull for qwen3:Xb already uses Q4_K_M quantization internally, so the bare tag
+  (qwen3:4b, qwen3:8b, qwen3:14b) is both valid and appropriately quantized for each VRAM tier.
+
+Fixes hardware-probe.sh (tier.env written for ollama-init.sh) and hardware.py (LLM_MODEL_NAME
+  default for tts-service / n8n).
+
+### Documentation
+
+- Fix hardware tier tables — correct model tags and VRAM thresholds
+  ([#48](https://github.com/getsimpledirect/ghost-narrator/pull/48),
+  [`7caef06`](https://github.com/getsimpledirect/ghost-narrator/commit/7caef068a26c4af1d5e9ef70cf63f0927a5d5099))
+
+Model tags qwen3:Xb-q4 never existed in the Ollama registry. Updated to the valid bare tags
+  (qwen3:4b, qwen3:8b, qwen3:14b) which Ollama pulls with Q4_K_M quantization by default.
+
+Also align VRAM thresholds with hardware-probe.sh (< 10 GiB = low, 10–18 GiB = mid, ≥ 18 GiB =
+  high). README had <9/<9–18, ARCHITECTURE.md had 4–8/10–16/20+ — neither matched the actual code
+  thresholds.
+
+
 ## v2.2.3 (2026-04-07)
 
 ### Bug Fixes
