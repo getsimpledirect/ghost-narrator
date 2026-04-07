@@ -60,7 +60,7 @@ async def health() -> HealthResponse:
     voice_ok = Path(VOICE_SAMPLE_PATH).exists()
     voice_dir = Path(VOICE_SAMPLE_PATH).parent
     reference_audio_present = voice_ok
-    reference_tokens_present = (voice_dir / 'reference_vq_tokens.npy').exists()
+    reference_text_present = (voice_dir / 'reference.txt').exists()
     engine = get_tts_engine()
     model_ok = engine.is_ready
     tts_engine_ready = engine.is_ready
@@ -83,7 +83,7 @@ async def health() -> HealthResponse:
         voice_sample=voice_ok,
         model_loaded=model_ok,
         reference_audio_present=reference_audio_present,
-        reference_tokens_present=reference_tokens_present,
+        reference_text_present=reference_text_present,
         tts_engine_ready=tts_engine_ready,
         job_store=job_store.storage_type,
         jobs_count=jobs_count,

@@ -142,8 +142,8 @@ class HealthResponse(BaseModel):
     reference_audio_present: bool = Field(
         False, description='Voice reference audio exists in voices directory.'
     )
-    reference_tokens_present: bool = Field(
-        False, description='Reference token file (reference_vq_tokens.npy) exists.'
+    reference_text_present: bool = Field(
+        False, description='Reference text file (reference.txt) exists after voice calibration.'
     )
     tts_engine_ready: bool = Field(False, description='TTSEngine reported ready.')
     hardware_tier: Optional[str] = Field(default=None, description='Detected hardware tier.')
