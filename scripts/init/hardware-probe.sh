@@ -34,11 +34,11 @@ detect_tier() {
 
 TIER=$(detect_tier)
 case "$TIER" in
-    cpu_only) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"; LLM_MODEL="qwen3:1.7b" ;;
-    low_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"; LLM_MODEL="qwen3:4b" ;;
-    mid_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"; LLM_MODEL="qwen3:8b" ;;
-    high_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"; LLM_MODEL="qwen3:14b" ;;
-    *) echo "Unknown tier '$TIER' — defaulting to cpu_only" >&2; TIER="cpu_only"; TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"; LLM_MODEL="qwen3:1.7b" ;;
+    cpu_only) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"; LLM_MODEL="qwen3:1.7b" ;;
+    low_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"; LLM_MODEL="qwen3:4b" ;;
+    mid_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"; LLM_MODEL="qwen3:8b" ;;
+    high_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"; LLM_MODEL="qwen3:14b" ;;
+    *) echo "Unknown tier '$TIER' — defaulting to cpu_only" >&2; TIER="cpu_only"; TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"; LLM_MODEL="qwen3:1.7b" ;;
 esac
 
 cat > "$SHARED_DIR/tier.env" <<EOF

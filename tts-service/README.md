@@ -179,11 +179,11 @@ Response:
 {
   "status": "healthy",
   "device": "cpu",
-  "model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+  "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
   "voice_sample": true,
   "model_loaded": true,
   "reference_audio_present": true,
-  "reference_tokens_present": true,
+  "reference_text_present": true,
   "tts_engine_ready": true,
   "job_store": "redis",
   "jobs_count": 0,
@@ -191,7 +191,7 @@ Response:
   "executor_active": true,
   "gcs_client_active": true,
   "hardware_tier": "cpu_only",
-  "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+  "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
   "llm_model": "qwen3:1.7b"
 }
 ```
@@ -262,10 +262,10 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 
 | Tier | VRAM | TTS Model | Output Quality |
 |---|---|---|---|
-| CPU only | None | Qwen3-TTS-12Hz-0.6B-CustomVoice | 192kbps, 44.1kHz |
-| Low (4–8 GB) | 4–8 GB | Qwen3-TTS-12Hz-0.6B-CustomVoice | 192kbps, 44.1kHz |
-| Mid (10–16 GB) | 10–16 GB | Qwen3-TTS-12Hz-1.7B-CustomVoice | 192kbps, 44.1kHz |
-| High (20+ GB) | 20+ GB | Qwen3-TTS-12Hz-1.7B-CustomVoice | 256kbps, 48kHz, −14 LUFS |
+| CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 44.1kHz |
+| Low (4–8 GB) | 4–8 GB | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 44.1kHz |
+| Mid (10–16 GB) | 10–16 GB | Qwen3-TTS-12Hz-1.7B-Base | 192kbps, 44.1kHz |
+| High (20+ GB) | 20+ GB | Qwen3-TTS-12Hz-1.7B-Base | 256kbps, 48kHz, −14 LUFS |
 
 ### Performance Tuning
 
@@ -322,7 +322,7 @@ The `/health` endpoint shows storage status:
   "voice_sample": true,
   "model_loaded": true,
   "reference_audio_present": true,
-  "reference_tokens_present": true,
+  "reference_text_present": true,
   "tts_engine_ready": true,
   "job_store": "redis",
   "jobs_count": 5,
@@ -552,7 +552,7 @@ For issues specific to:
 ## Credits
 
 Built with:
-- [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) - Voice cloning model
+- [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) - Voice cloning model
 - [FastAPI](https://fastapi.tiangolo.com/) - API framework
 - [pydub](https://github.com/jiaaro/pydub) - Audio processing
 - [Ollama](https://ollama.com/) - Bundled LLM inference
