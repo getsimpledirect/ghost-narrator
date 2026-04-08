@@ -190,8 +190,8 @@ services:
       # Optional: transcription of your reference audio for higher-quality ICL cloning.
       # Leave blank to use x-vector-only mode (no transcription needed).
       - VOICE_SAMPLE_REF_TEXT=${VOICE_SAMPLE_REF_TEXT:-}
-      - TTS_LANGUAGE=en
-      - MAX_CHUNK_WORDS=200
+      - TTS_LANGUAGE=${TTS_LANGUAGE:-auto}
+      - MAX_CHUNK_WORDS=${MAX_CHUNK_WORDS:-200}
       - HARDWARE_TIER=${HARDWARE_TIER:-}
       # MAX_WORKERS is used for CPU mode parallel synthesis
       - MAX_WORKERS=${MAX_WORKERS:-4}

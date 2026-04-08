@@ -74,6 +74,10 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
     if [ -n "$GHOST_KEY" ]; then
         sed -i.bak "s/GHOST_KEY_SITE1=.*/GHOST_KEY_SITE1=${GHOST_KEY}/" .env
     fi
+    read -r -p "Ghost Admin API key (for embedding audio player): " GHOST_ADMIN_KEY
+    if [ -n "$GHOST_ADMIN_KEY" ]; then
+        sed -i.bak "s/GHOST_SITE1_ADMIN_API_KEY=.*/GHOST_SITE1_ADMIN_API_KEY=${GHOST_ADMIN_KEY}/" .env
+    fi
 
     # n8n auth
     read -r -p "n8n owner email [admin@localhost]: " N8N_USER
