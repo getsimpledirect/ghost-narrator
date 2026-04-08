@@ -61,7 +61,9 @@ DEVICE: Final[str] = _get_engine_config().tts_device
 
 # Narration LLM endpoint (bundled Ollama default; override for any OpenAI-compatible API)
 LLM_BASE_URL: Final[str] = os.environ.get('LLM_BASE_URL', 'http://ollama:11434/v1')
-LLM_MODEL_NAME: Final[str] = os.environ.get('LLM_MODEL_NAME', '').strip() or _get_engine_config().llm_model
+LLM_MODEL_NAME: Final[str] = (
+    os.environ.get('LLM_MODEL_NAME', '').strip() or _get_engine_config().llm_model
+)
 
 # Storage backend
 STORAGE_BACKEND: Final[str] = os.environ.get('STORAGE_BACKEND', 'local').lower()
