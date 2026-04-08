@@ -104,10 +104,11 @@ services:
     ports:
       - "5678:5678"
     environment:
-      # Authentication
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${N8N_USER}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      # Authentication (n8n v1.x — N8N_BASIC_AUTH_* was removed in v1.0)
+      # N8N_OWNER_EMAIL/PASSWORD auto-configure the owner account on first start,
+      # skipping the setup wizard. N8N_USER in .env should be a valid email address.
+      - N8N_OWNER_EMAIL=${N8N_USER}
+      - N8N_OWNER_PASSWORD=${N8N_PASSWORD}
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
       # Disable secure cookie for HTTP access (set to true if using HTTPS)
       - N8N_SECURE_COOKIE=false

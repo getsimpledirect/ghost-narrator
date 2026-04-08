@@ -12,11 +12,11 @@ setuptools==68.2.2
 wheel==0.46.3
 pip>=24.0
 
-# ── PyTorch Stack (Pinned to stable CUDA 12.1 compatible versions) ────────────
-torch==2.11.0
-torchaudio==2.11.0
-torchvision==0.26.0
-triton==3.6.0
+# ── PyTorch Stack ─────────────────────────────────────────────────────────────
+# torch, torchaudio, torchvision, and triton are pre-installed in the Docker base
+# image (pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime). Do NOT pin them here —
+# re-installing would overwrite the CUDA-matched versions from the base image and
+# break flash-attn ABI compatibility.
 numpy==1.26.4
 
 # ── Transformers ──────────────────────────────────────────────────────────────

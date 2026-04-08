@@ -35,7 +35,7 @@ until ollama list >/dev/null 2>&1; do
 done
 echo "Ollama API ready" >&2
 
-if ollama list 2>/dev/null | grep -q "^${SELECTED_LLM_MODEL}"; then
+if ollama show "${SELECTED_LLM_MODEL}" >/dev/null 2>&1; then
     echo "Model $SELECTED_LLM_MODEL already cached — skipping pull" >&2
 else
     echo "Pulling $SELECTED_LLM_MODEL..." >&2

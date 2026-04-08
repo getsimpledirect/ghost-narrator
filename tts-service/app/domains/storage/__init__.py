@@ -7,7 +7,7 @@ from app.config import STORAGE_BACKEND
 
 def get_storage_backend(config: dict = None) -> StorageBackend:
     """Factory function to get appropriate storage backend."""
-    storage_type = (config or {}).get('type', 'local')
+    storage_type = (config or {}).get('type', STORAGE_BACKEND)
 
     if storage_type == 'local':
         return LocalStorageBackend(config or {})
