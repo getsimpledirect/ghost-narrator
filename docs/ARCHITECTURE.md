@@ -477,8 +477,8 @@ The path is the same across all backends — only the prefix changes:
 | Backend | Path Format | Example |
 |---|---|---|
 | Local | `./output/audio/articles/site/slug.mp3` | Served by n8n or a reverse proxy |
-| GCS | `gs://YOUR_BUCKET/audio/articles/site/slug.mp3` | `https://storage.googleapis.com/YOUR_BUCKET/audio/articles/site/slug.mp3` |
-| S3 | `s3://YOUR_BUCKET/audio/articles/site/slug.mp3` | `https://YOUR_BUCKET.s3.amazonaws.com/audio/articles/site/slug.mp3` |
+| GCS | `gs://<GCS_BUCKET_NAME>/audio/articles/site/slug.mp3` | `https://storage.googleapis.com/<GCS_BUCKET_NAME>/audio/articles/site/slug.mp3` |
+| S3 | `s3://<AWS_S3_BUCKET>/audio/articles/site/slug.mp3` | `https://<AWS_S3_BUCKET>.s3.amazonaws.com/audio/articles/site/slug.mp3` |
 
 See the [Storage Backends](#storage-backends) section for setup details.
 
@@ -1123,16 +1123,16 @@ gcloud iam service-accounts keys create \
     --iam-account=$SA_EMAIL
 
 # Create bucket
-gsutil mb -p $PROJECT_ID -l northamerica-northeast2 gs://YOUR_BUCKET_NAME/
+gsutil mb -p $PROJECT_ID -l northamerica-northeast2 gs://<GCS_BUCKET_NAME>/
 
 # Make objects publicly readable
-gsutil iam ch allUsers:objectViewer gs://YOUR_BUCKET_NAME/
+gsutil iam ch allUsers:objectViewer gs://<GCS_BUCKET_NAME>/
 
 # Set CORS for browser audio streaming
 cat > /tmp/cors.json << 'EOF'
 [{"origin":["*"],"method":["GET","HEAD"],"responseHeader":["Content-Type","Accept-Ranges"],"maxAgeSeconds":3600}]
 EOF
-gsutil cors set /tmp/cors.json gs://YOUR_BUCKET_NAME/
+gsutil cors set /tmp/cors.json gs://<GCS_BUCKET_NAME>/
 ```
 
 Or run: `bash scripts/setup-storage.sh gcs`

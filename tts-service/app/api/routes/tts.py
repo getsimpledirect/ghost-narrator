@@ -135,7 +135,7 @@ async def generate(
                 'value': {
                     'text': 'Breaking news: Scientists have discovered a new species of deep-sea fish in the Pacific Ocean.',
                     'job_id': 'news-2024-06-15-pacific-discovery',
-                    'gcs_path': 'audio/news/2024/06/pacific-discovery.mp3',
+                    'storage_path': 'audio/news/2024/06/pacific-discovery.mp3',
                     'site_slug': 'news-daily',
                 },
             },
@@ -185,7 +185,9 @@ async def generate(
         return GenerateResponse(job_id=job_id, status=existing_status)
 
     # Build GCS object path
-    gcs_object_path = request.gcs_path or (f'{GCS_AUDIO_PREFIX}/{request.site_slug}/{job_id}.mp3')
+    gcs_object_path = request.storage_path or (
+        f'{GCS_AUDIO_PREFIX}/{request.site_slug}/{job_id}.mp3'
+    )
 
     # Add job to background tasks
     background_tasks.add_task(
