@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v2.3.0 (2026-04-08)
+
+### Features
+
+- **tts-service**: Per-tier TTS generation params + Redis config API
+  ([#56](https://github.com/getsimpledirect/ghost-narrator/pull/56),
+  [`1a4a4d4`](https://github.com/getsimpledirect/ghost-narrator/commit/1a4a4d415edf982e8ee63437efa1cf25d8bb93f4))
+
+Add runtime-configurable TTS generation parameters with hardware-tier defaults and a Redis-backed
+  API for overrides.
+
+Generation params (temperature, repetition_penalty, top_k, top_p, temperature_sub_talker,
+  top_k_sub_talker, do_sample_sub_talker, max_new_tokens) added to EngineConfig with conservative
+  defaults on CPU tiers and standard Qwen3-TTS defaults on GPU tiers.
+
+New tts_config/store.py persists user overrides in Redis with no TTL so config survives container
+  restarts. Falls back to tier defaults when Redis is unavailable.
+
+New GET/PUT/DELETE /tts/config/generation endpoints let users read and update generation params at
+  runtime without a restart. Overrides are merged on top of tier defaults per job.
+
+generation_kwargs threaded through the full pipeline: tts_job -> synthesize_chunks_auto ->
+  synthesize_chunk -> tts_engine.synthesize_to_file -> generate_voice_clone(**kwargs)
+
+quality_check re-synthesis uses functools.partial to bind generation_kwargs as a keyword arg since
+  run_in_executor only accepts positional arguments.
+
+Also fixes VoiceClonePromptItem passed to wrong parameter: ref_audio=prompt ->
+  voice_clone_prompt=prompt
+
+Fixes cancelled job_id reuse: cancellation check moved inside try/finally so
+  _cancelled_jobs.discard() always runs.
+
+Test mocks updated for new synthesize_chunk signature.
+
+
 ## v2.2.8 (2026-04-08)
 
 ### Bug Fixes
