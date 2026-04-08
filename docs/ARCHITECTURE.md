@@ -860,7 +860,7 @@ This will:
 ### Step 5: Import n8n Workflow
 
 1. Open `http://YOUR_IP:5678` in your browser
-2. Login with your N8N_USER/N8N_PASSWORD
+2. Login with your `N8N_USER` (email) and `N8N_PASSWORD` — n8n v1.x uses owner accounts; `N8N_USER` must be a valid email address (e.g. `admin@localhost`)
 3. Go to **Workflows** → **Import from File**
 4. Upload `n8n/workflows/ghost-audio-pipeline.json` and `n8n/workflows/ghost-audio-callback.json`
 5. The workflows will appear with all nodes connected
