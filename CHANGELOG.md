@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v2.2.6 (2026-04-08)
+
+### Refactoring
+
+- Replace gcs_path with storage_path and remove hardcoded buckets
+  ([#52](https://github.com/getsimpledirect/ghost-narrator/pull/52),
+  [`1125ed2`](https://github.com/getsimpledirect/ghost-narrator/commit/1125ed230f1e9e127a43c5105c7e565f5be4f227))
+
+
 ## v2.2.5 (2026-04-08)
 
 ### Bug Fixes
