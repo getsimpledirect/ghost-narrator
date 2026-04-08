@@ -148,12 +148,13 @@ class TTSEngine:
 
         if not voice_path.exists():
             raise VoiceSampleNotFoundError(f'Voice sample not found: {voice_path}')
-        if actual_job_id and actual_job_id in self._cancelled_jobs:
-            raise SynthesisError(f'Job {actual_job_id} was cancelled')
 
         try:
             import soundfile as sf
             from app.config import TTS_LANGUAGE
+
+            if actual_job_id and actual_job_id in self._cancelled_jobs:
+                raise SynthesisError(f'Job {actual_job_id} was cancelled')
 
             with self._synthesis_lock:
                 voice_path_str = str(voice_path)
