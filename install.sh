@@ -149,6 +149,8 @@ case "$STORAGE_CHOICE" in
             exit 1
         fi
         read -r -p "GCS bucket name: " GCS_BUCKET
+        read -r -p "GCS audio prefix [audio/articles]: " GCS_PREFIX
+        GCS_PREFIX="${GCS_PREFIX:-audio/articles}"
         read -r -p "GCP project ID: " GCS_PROJECT
         read -r -p "Service account name [ghost-narrator-tts]: " SA_NAME
         SA_NAME="${SA_NAME:-ghost-narrator-tts}"
@@ -169,8 +171,9 @@ case "$STORAGE_CHOICE" in
         gcloud iam service-accounts keys create "${KEY_FILE}" --iam-account="${SA_EMAIL}"
 
         sed -i.bak "s/STORAGE_BACKEND=.*/STORAGE_BACKEND=gcs/" .env
-        sed -i.bak "s/GCS_BUCKET_NAME=.*/GCS_BUCKET_NAME=${GCS_BUCKET}/" .env
-        sed -i.bak "s|GCS_SERVICE_ACCOUNT_KEY_PATH=.*|GCS_SERVICE_ACCOUNT_KEY_PATH=/app/secrets/${SA_NAME}-key.json|" .env
+        sed -i.bak -E "s|^#?[[:space:]]*GCS_BUCKET_NAME=.*|GCS_BUCKET_NAME=${GCS_BUCKET}|" .env
+        sed -i.bak -E "s|^#?[[:space:]]*GCS_AUDIO_PREFIX=.*|GCS_AUDIO_PREFIX=${GCS_PREFIX}|" .env
+        sed -i.bak -E "s|^#?[[:space:]]*GCS_SERVICE_ACCOUNT_KEY_PATH=.*|GCS_SERVICE_ACCOUNT_KEY_PATH=/app/secrets/${SA_NAME}-key.json|" .env
         rm -f .env.bak
         ok "GCS configured — key saved to secrets/"
         ;;
@@ -181,8 +184,13 @@ case "$STORAGE_CHOICE" in
             exit 1
         fi
         read -r -p "S3 bucket name: " S3_BUCKET
+        read -r -p "S3 audio prefix [audio/articles]: " S3_PREFIX
+        S3_PREFIX="${S3_PREFIX:-audio/articles}"
         read -r -p "AWS region [us-east-1]: " S3_REGION
         S3_REGION="${S3_REGION:-us-east-1}"
+        read -r -p "AWS Access Key ID: " AWS_KEY_ID
+        read -r -s -p "AWS Secret Access Key: " AWS_SECRET
+        echo ""
 
         info "Creating S3 bucket..."
         aws s3api create-bucket --bucket "${S3_BUCKET}" --region "${S3_REGION}" \
@@ -192,11 +200,16 @@ case "$STORAGE_CHOICE" in
             --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 
         sed -i.bak "s/STORAGE_BACKEND=.*/STORAGE_BACKEND=s3/" .env
-        sed -i.bak "s/S3_BUCKET_NAME=.*/S3_BUCKET_NAME=${S3_BUCKET}/" .env
-        sed -i.bak "s/AWS_REGION=.*/AWS_REGION=${S3_REGION}/" .env
+        sed -i.bak -E "s|^#?[[:space:]]*S3_BUCKET_NAME=.*|S3_BUCKET_NAME=${S3_BUCKET}|" .env
+        sed -i.bak -E "s|^#?[[:space:]]*S3_AUDIO_PREFIX=.*|S3_AUDIO_PREFIX=${S3_PREFIX}|" .env
+        sed -i.bak -E "s|^#?[[:space:]]*AWS_REGION=.*|AWS_REGION=${S3_REGION}|" .env
+        if [ -n "$AWS_KEY_ID" ]; then
+            sed -i.bak -E "s|^#?[[:space:]]*AWS_ACCESS_KEY_ID=.*|AWS_ACCESS_KEY_ID=${AWS_KEY_ID}|" .env
+        fi
+        if [ -n "$AWS_SECRET" ]; then
+            sed -i.bak -E "s|^#?[[:space:]]*AWS_SECRET_ACCESS_KEY=.*|AWS_SECRET_ACCESS_KEY=${AWS_SECRET}|" .env
+        fi
         rm -f .env.bak
-
-        warn "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env manually"
         ok "S3 configured"
         ;;
     *)
