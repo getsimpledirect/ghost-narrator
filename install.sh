@@ -46,14 +46,7 @@ else
 fi
 
 echo ""
-info "Edit .env to configure your setup. Required fields:"
-echo "  - SERVER_EXTERNAL_IP: Your server's public IP"
-echo "  - GHOST_SITE1_URL / GHOST_KEY_SITE1: Ghost CMS credentials"
-echo "  - N8N_USER (must be a valid email) / N8N_PASSWORD / N8N_ENCRYPTION_KEY: n8n auth"
-echo ""
-info "Optional fields:"
-echo "  - VOICE_SAMPLE_REF_TEXT: Transcription of your reference audio (enables higher-quality ICL cloning)"
-echo "    Leave blank to use x-vector-only mode (no transcription needed — recommended default)"
+info "The interactive setup will prompt for all required fields."
 echo ""
 
 # Interactive .env editing (optional)
@@ -65,7 +58,12 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
         sed -i.bak "s/SERVER_EXTERNAL_IP=.*/SERVER_EXTERNAL_IP=${SERVER_IP}/" .env
     fi
 
-    # Ghost credentials
+    # Timezone
+    read -r -p "Timezone [UTC]: " TIMEZONE_VAL
+    TIMEZONE_VAL="${TIMEZONE_VAL:-UTC}"
+    sed -i.bak "s|TIMEZONE=.*|TIMEZONE=${TIMEZONE_VAL}|" .env
+
+    # Ghost site 1
     read -r -p "Ghost site URL (e.g. https://mysite.com): " GHOST_URL
     if [ -n "$GHOST_URL" ]; then
         sed -i.bak "s|GHOST_SITE1_URL=.*|GHOST_SITE1_URL=${GHOST_URL}|" .env
@@ -77,6 +75,24 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
     read -r -p "Ghost Admin API key (for embedding audio player): " GHOST_ADMIN_KEY
     if [ -n "$GHOST_ADMIN_KEY" ]; then
         sed -i.bak "s/GHOST_SITE1_ADMIN_API_KEY=.*/GHOST_SITE1_ADMIN_API_KEY=${GHOST_ADMIN_KEY}/" .env
+    fi
+
+    # Ghost site 2 (optional)
+    read -r -p "Configure a second Ghost site? [y/N] " SECOND_SITE
+    if [[ "$SECOND_SITE" =~ ^[Yy]$ ]]; then
+        read -r -p "Ghost site 2 URL: " GHOST_URL2
+        if [ -n "$GHOST_URL2" ]; then
+            sed -i.bak "s|GHOST_SITE2_URL=.*|GHOST_SITE2_URL=${GHOST_URL2}|" .env
+        fi
+        read -r -p "Ghost site 2 Content API key: " GHOST_KEY2
+        if [ -n "$GHOST_KEY2" ]; then
+            sed -i.bak "s/GHOST_KEY_SITE2=.*/GHOST_KEY_SITE2=${GHOST_KEY2}/" .env
+        fi
+        read -r -p "Ghost site 2 Admin API key: " GHOST_ADMIN_KEY2
+        if [ -n "$GHOST_ADMIN_KEY2" ]; then
+            sed -i.bak "s/GHOST_SITE2_ADMIN_API_KEY=.*/GHOST_SITE2_ADMIN_API_KEY=${GHOST_ADMIN_KEY2}/" .env
+        fi
+        ok "Ghost site 2 configured"
     fi
 
     # n8n auth
@@ -95,6 +111,16 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
         ENC_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
         sed -i.bak "s/N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=${ENC_KEY}/" .env
         ok "Generated N8N_ENCRYPTION_KEY"
+    fi
+
+    # Hardware tier override (optional — auto-detected by default)
+    echo ""
+    info "Hardware tier: auto-detected from GPU VRAM at startup (recommended)"
+    echo "  Override only if auto-detection is wrong: cpu_only | low_vram | mid_vram | high_vram"
+    read -r -p "Hardware tier override (leave blank to auto-detect): " HW_TIER
+    if [ -n "$HW_TIER" ]; then
+        sed -i.bak "s/HARDWARE_TIER=.*/HARDWARE_TIER=${HW_TIER}/" .env
+        ok "Hardware tier set to ${HW_TIER}"
     fi
 
     rm -f .env.bak
@@ -202,6 +228,23 @@ else
     else
         warn "Skipping — add voice sample before starting"
     fi
+fi
+
+# ─── Voice Reference Text ──────────────────────────────────────────────────────
+echo ""
+info "Voice reference text (optional)"
+echo "  The exact transcript of your reference.wav enables ICL (in-context learning)"
+echo "  mode for higher-quality voice cloning."
+echo "  Leave blank to use x-vector-only mode — no transcript needed (recommended default)."
+echo ""
+read -r -p "Paste the transcript of your voice sample, or press Enter to skip: " REF_TEXT
+if [ -n "$REF_TEXT" ]; then
+    # Use awk to safely replace the value — avoids sed escaping issues with arbitrary text
+    awk -v val="VOICE_SAMPLE_REF_TEXT=${REF_TEXT}" \
+        '/^VOICE_SAMPLE_REF_TEXT=/{print val; next} {print}' .env > .env.tmp && mv .env.tmp .env
+    ok "Voice reference text saved"
+else
+    info "Using x-vector-only mode (no transcript)"
 fi
 
 # ─── GPU Detection ───────────────────────────────────────────────────────

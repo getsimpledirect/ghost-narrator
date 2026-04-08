@@ -74,9 +74,15 @@ if [ "$HELP" = true ]; then
     echo ""
     echo "Environment Variables:"
     echo "  TTS_DEVICE        cpu or cuda (default: cpu)"
-    echo "  TTS_LANGUAGE      Language code (default: en)"
+    echo "  TTS_LANGUAGE      Language for synthesis (default: auto)"
     echo "  MAX_CHUNK_WORDS   Max words per chunk (default: 200)"
     echo "  MAX_WORKERS       Thread pool size for parallel synthesis (default: 4)"
+    echo "  HARDWARE_TIER     Override hardware tier: cpu_only|low_vram|mid_vram|high_vram"
+    echo "  REDIS_URL         Redis connection URL (default: redis://localhost:6379)"
+    echo ""
+    echo "Note: This script runs the TTS container standalone."
+    echo "      Redis must be running separately for the job store to work."
+    echo "      For the full pipeline (n8n + Ollama + Redis), use: docker compose up -d"
     echo ""
     echo "Examples:"
     echo "  # Run in background"
@@ -240,7 +246,7 @@ fi
 success "✓ Image built successfully."
 echo ""
 
-TTS_LANG="${TTS_LANGUAGE:-en}"
+TTS_LANG="${TTS_LANGUAGE:-auto}"
 MAX_WORDS="${MAX_CHUNK_WORDS:-200}"
 DEVICE_TYPE="${TTS_DEVICE:-cpu}"
 WORKERS="${MAX_WORKERS:-4}"
@@ -252,8 +258,12 @@ ENV_VARS=(
     "-e" "DEVICE=$DEVICE_TYPE"
     "-e" "MAX_WORKERS=$WORKERS"
     "-e" "STORAGE_BACKEND=${STORAGE_BACKEND:-local}"
+    "-e" "REDIS_URL=${REDIS_URL:-redis://localhost:6379}"
 )
 
+if [ -n "${HARDWARE_TIER:-}" ]; then
+    ENV_VARS+=("-e" "HARDWARE_TIER=$HARDWARE_TIER")
+fi
 if [ -n "${VOICE_SAMPLE_REF_TEXT:-}" ]; then
     ENV_VARS+=("-e" "VOICE_SAMPLE_REF_TEXT=$VOICE_SAMPLE_REF_TEXT")
 fi
@@ -265,6 +275,16 @@ if [ -n "$GCS_AUDIO_PREFIX" ]; then
 fi
 if [ -n "$N8N_CALLBACK_URL" ]; then
     ENV_VARS+=("-e" "N8N_CALLBACK_URL=$N8N_CALLBACK_URL")
+fi
+
+# Warn if Redis doesn't appear to be reachable
+REDIS_HOST=$(echo "${REDIS_URL:-redis://localhost:6379}" | sed 's|redis://||' | cut -d: -f1)
+REDIS_PORT=$(echo "${REDIS_URL:-redis://localhost:6379}" | sed 's|redis://||' | cut -d: -f2)
+if ! (echo >/dev/tcp/"$REDIS_HOST"/"$REDIS_PORT") 2>/dev/null; then
+    warning "⚠ Redis not reachable at ${REDIS_HOST}:${REDIS_PORT} — job store will fail on startup."
+    warning "  Start Redis first:  docker run -d -p 6379:6379 redis:7-alpine"
+    warning "  Or use the full stack:  docker compose up -d  (from the project root)"
+    echo ""
 fi
 
 info "Setting up Docker volumes..."
