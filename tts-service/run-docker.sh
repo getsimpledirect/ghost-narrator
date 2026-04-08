@@ -246,7 +246,7 @@ DEVICE_TYPE="${TTS_DEVICE:-cpu}"
 WORKERS="${MAX_WORKERS:-4}"
 
 ENV_VARS=(
-    "-e" "VOICE_SAMPLE_PATH=/app/voices/reference.wav"
+    "-e" "VOICE_SAMPLE_PATH=/app/voices/default/reference.wav"
     "-e" "TTS_LANGUAGE=$TTS_LANG"
     "-e" "MAX_CHUNK_WORDS=$MAX_WORDS"
     "-e" "DEVICE=$DEVICE_TYPE"
