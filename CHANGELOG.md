@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v2.3.2 (2026-04-08)
+
+### Bug Fixes
+
+- **installer**: Prompt for all env vars + fix run-docker.sh gaps
+  ([#58](https://github.com/getsimpledirect/ghost-narrator/pull/58),
+  [`b71fae7`](https://github.com/getsimpledirect/ghost-narrator/commit/b71fae7c7350a9a125ad3ee2043b949ff2e86e7c))
+
+install.sh: added prompts for TIMEZONE, second Ghost site credentials, HARDWARE_TIER override, and
+  VOICE_SAMPLE_REF_TEXT (uses awk to safely handle arbitrary text). Added VOICE_SAMPLE_REF_TEXT to
+  .env.example.
+
+run-docker.sh: fix TTS_LANGUAGE default en→auto, add HARDWARE_TIER and REDIS_URL to container env,
+  warn when Redis is unreachable, update help text with missing vars and note about full-stack
+  docker compose.
+
+
 ## v2.3.1 (2026-04-08)
 
 ### Bug Fixes
