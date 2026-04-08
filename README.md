@@ -138,7 +138,7 @@ Publish an article. Ghost Narrator handles the rest.
 | `GHOST_SITE1_ADMIN_API_KEY` | Ghost Admin API key (Settings → Integrations) |
 | `GHOST_KEY_SITE1` | Ghost Content API key |
 | `SERVER_EXTERNAL_IP` | VM's external IP for webhooks |
-| `N8N_USER` / `N8N_PASSWORD` | n8n admin credentials |
+| `N8N_USER` / `N8N_PASSWORD` | n8n owner credentials — `N8N_USER` must be a valid email (e.g. `admin@localhost`) |
 | `N8N_ENCRYPTION_KEY` | Run `openssl rand -hex 32` |
 
 ### Optional

@@ -209,16 +209,12 @@ def get_tts_engine() -> TTSEngine:
 
 
 def initialize_tts_engine() -> None:
-    """Initialize the TTS engine. Called from main.py lifespan."""
+    """Initialize the TTS engine. Called via loop.run_in_executor from main.py lifespan.
+
+    NOTE: Do NOT call get_engine_ready_event().set() here. This function runs in a
+    ThreadPoolExecutor worker thread; asyncio.Event is not thread-safe. The ready event
+    is set by the async caller (_background_model_loader in main.py) after this function
+    returns, ensuring event.set() is called from the event loop thread.
+    """
     engine = get_tts_engine()
     engine.initialize()
-    # Signal any coroutines waiting on engine readiness
-    try:
-        event = get_engine_ready_event()
-        # The event must be set from the event loop thread, so we use call_soon_threadsafe
-        # However, since this is called from the main thread during lifespan, we can set directly
-        if not event.is_set():
-            event.set()
-    except RuntimeError:
-        # No running event loop yet — will be set on first job's check
-        pass

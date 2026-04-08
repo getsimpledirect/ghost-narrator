@@ -43,7 +43,7 @@ from app.api.routes import metrics as metrics_router
 from app.cache.redis_cache import get_cache
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
 from app.core.logging import setup_logging
-from app.core.tts_engine import initialize_tts_engine
+from app.core.tts_engine import get_engine_ready_event, initialize_tts_engine
 from app.domains.job.store import get_job_store, initialize_job_store
 from app.domains.job.notification import close_http_client, initialize_http_client
 from app.domains.storage import cleanup_gcs_client, initialize_gcs_client
@@ -98,6 +98,11 @@ async def _background_model_loader():
     try:
         # Run blocking initialization in a separate thread
         await loop.run_in_executor(None, initialize_tts_engine)
+        # Set the ready event here, from the event loop thread — asyncio.Event.set()
+        # is not thread-safe and must not be called from within run_in_executor workers.
+        ready_event = get_engine_ready_event()
+        if not ready_event.is_set():
+            ready_event.set()
         logger.info('TTS engine initialized successfully (background)')
     except Exception as exc:
         logger.error(f'Failed to initialize TTS engine (background): {exc}')
