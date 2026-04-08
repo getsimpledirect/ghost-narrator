@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v2.2.5 (2026-04-08)
+
+### Bug Fixes
+
+- Tts engine voice clone crash + script bugs across install/backfill/run-docker
+  ([#51](https://github.com/getsimpledirect/ghost-narrator/pull/51),
+  [`5bdbfbb`](https://github.com/getsimpledirect/ghost-narrator/commit/5bdbfbba97306907a00b77f8ef993b2db9d8ceab))
+
+TTS engine (critical): - tts_engine.py: create_voice_clone_prompt called with ref_text='' which
+  crashes Qwen3-TTS ICL mode: 'ref_text is required when x_vector_only_mode=False' Fix: add
+  VOICE_SAMPLE_REF_TEXT config — when set uses ICL mode (higher quality), when empty (default)
+  automatically switches to x_vector_only_mode=True - config.py: expose VOICE_SAMPLE_REF_TEXT env
+  var - docker-compose.yml: pass VOICE_SAMPLE_REF_TEXT to tts-service container
+
+install.sh: - n8n owner prompt defaulted to 'admin' (not a valid email for n8n v1.x
+  N8N_OWNER_EMAIL); changed to 'admin@localhost' and updated prompt label - document
+  VOICE_SAMPLE_REF_TEXT in post-install info block
+
+hardware-probe.sh: - guard against empty VRAM_MIB when nvidia-smi returns no output; arithmetic
+  comparison would fail in sh — now falls back to cpu_only
+
+backfill-audio.sh: - replace hardcoded /tmp/ghost-backfill-poll.tmp with mktemp per-run temp file;
+  concurrent runs would clobber each other
+
+run-docker.sh: - STORAGE_BACKEND never passed to container — GCS/S3 config was silently ignored even
+  when GCS_BUCKET_NAME was set - pass VOICE_SAMPLE_REF_TEXT to container when set in environment
+
+Docs: update tts-service/README.md, README.md, and ARCHITECTURE.md to document VOICE_SAMPLE_REF_TEXT
+  and the two voice cloning modes.
+
+
 ## v2.2.4 (2026-04-07)
 
 ### Bug Fixes
