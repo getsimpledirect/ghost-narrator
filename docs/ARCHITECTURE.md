@@ -1061,6 +1061,20 @@ ffprobe -v quiet -show_entries \
 # Expected: codec_name=pcm_s16le, sample_rate=22050, channels=1
 ```
 
+### Voice Cloning Modes
+
+Qwen3-TTS supports two voice cloning modes, selected automatically based on `VOICE_SAMPLE_REF_TEXT` in `.env`:
+
+| Mode | When | Quality | Setup |
+|------|------|---------|-------|
+| **x-vector-only** | `VOICE_SAMPLE_REF_TEXT` is empty (default) | Good | No transcription needed |
+| **ICL** (In-Context Learning) | `VOICE_SAMPLE_REF_TEXT` is set | Better | Requires transcription of reference audio |
+
+To enable ICL mode, add the transcription of your reference WAV to `.env`:
+```bash
+VOICE_SAMPLE_REF_TEXT=This is the exact text spoken in my reference audio file.
+```
+
 ### Test Voice Cloning
 Before running the full pipeline, test your voice clone:
 ```bash

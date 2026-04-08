@@ -251,8 +251,12 @@ ENV_VARS=(
     "-e" "MAX_CHUNK_WORDS=$MAX_WORDS"
     "-e" "DEVICE=$DEVICE_TYPE"
     "-e" "MAX_WORKERS=$WORKERS"
+    "-e" "STORAGE_BACKEND=${STORAGE_BACKEND:-local}"
 )
 
+if [ -n "${VOICE_SAMPLE_REF_TEXT:-}" ]; then
+    ENV_VARS+=("-e" "VOICE_SAMPLE_REF_TEXT=$VOICE_SAMPLE_REF_TEXT")
+fi
 if [ -n "$GCS_BUCKET_NAME" ]; then
     ENV_VARS+=("-e" "GCS_BUCKET_NAME=$GCS_BUCKET_NAME")
 fi

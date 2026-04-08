@@ -30,7 +30,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from app.config import DEVICE, SELECTED_TTS_MODEL
+from app.config import DEVICE, SELECTED_TTS_MODEL, VOICE_SAMPLE_REF_TEXT
 from app.core.exceptions import SynthesisError, TTSEngineError, VoiceSampleNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -85,11 +85,20 @@ class TTSEngine:
                 voice_path = Path(VOICE_SAMPLE_PATH)
                 if voice_path.exists():
                     logger.info('Pre-computing voice clone prompt: %s', voice_path)
+                    # Use ICL mode when a reference transcription is provided (better quality).
+                    # Fall back to x-vector-only mode when ref_text is empty — ICL mode
+                    # raises an error if ref_text is empty or missing.
+                    use_x_vector_only = not bool(VOICE_SAMPLE_REF_TEXT)
                     self._cached_voice_prompt = self._model.create_voice_clone_prompt(
-                        str(voice_path), ref_text=''
+                        str(voice_path),
+                        ref_text=VOICE_SAMPLE_REF_TEXT,
+                        x_vector_only_mode=use_x_vector_only,
                     )
                     self._cached_voice_path = str(voice_path)
-                    logger.info('Voice clone prompt cached')
+                    logger.info(
+                        'Voice clone prompt cached (mode: %s)',
+                        'x-vector-only' if use_x_vector_only else 'ICL',
+                    )
                 else:
                     logger.warning(
                         'Voice sample not found at %s — will load per-job',
@@ -155,7 +164,12 @@ class TTSEngine:
                 ):
                     prompt = self._cached_voice_prompt
                 else:
-                    prompt = self._model.create_voice_clone_prompt(voice_path_str, ref_text='')
+                    use_x_vector_only = not bool(VOICE_SAMPLE_REF_TEXT)
+                    prompt = self._model.create_voice_clone_prompt(
+                        voice_path_str,
+                        ref_text=VOICE_SAMPLE_REF_TEXT,
+                        x_vector_only_mode=use_x_vector_only,
+                    )
                     self._cached_voice_prompt = prompt
                     self._cached_voice_path = voice_path_str
                 wavs, sr = self._model.generate_voice_clone(

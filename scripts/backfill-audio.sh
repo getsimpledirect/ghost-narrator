@@ -55,6 +55,10 @@ _CLEANUP_FILES=()
 _cleanup() { rm -f "${_CLEANUP_FILES[@]}" 2>/dev/null || true; }
 trap _cleanup EXIT
 
+# Per-run temp file for TTS poll responses — avoids conflicts between concurrent runs
+POLL_TMP=$(mktemp /tmp/ghost-backfill-poll-XXXXXX.tmp)
+_CLEANUP_FILES+=("$POLL_TMP")
+
 # ─── Colours & helpers ───────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -339,7 +343,7 @@ poll_tts_job() {
 
     while [ $elapsed -lt $MAX_WAIT ]; do
         local http_code status_json status_val
-        http_code=$(curl -s -o /tmp/ghost-backfill-poll.tmp \
+        http_code=$(curl -s -o $POLL_TMP \
             -w "%{http_code}" \
             --max-time 10 \
             "${TTS_SERVICE_URL}/tts/status/${job_id}" 2>/dev/null) || http_code="000"
@@ -355,7 +359,7 @@ poll_tts_job() {
                 "$elapsed" "$N8N_TIMEOUT"
 
         elif [ "$http_code" = "200" ]; then
-            status_json=$(cat /tmp/ghost-backfill-poll.tmp 2>/dev/null)
+            status_json=$(cat $POLL_TMP 2>/dev/null)
             status_val=$(echo "$status_json" | jq -r '.status // "unknown"' 2>/dev/null)
             phase="tts_active"
 
@@ -369,7 +373,7 @@ poll_tts_job() {
                 "completed")
                     printf "\r%-70s\r" ""
                     success "TTS job completed in ${elapsed}s"
-                    rm -f /tmp/ghost-backfill-poll.tmp
+                    rm -f $POLL_TMP
                     return 0
                     ;;
                 "failed")
@@ -377,7 +381,7 @@ poll_tts_job() {
                     local fail_reason
                     fail_reason=$(echo "$status_json" | jq -r '.error // "unknown error"' 2>/dev/null)
                     err "TTS job failed: ${fail_reason}"
-                    rm -f /tmp/ghost-backfill-poll.tmp
+                    rm -f $POLL_TMP
                     return 1
                     ;;
                 "paused")
@@ -397,7 +401,7 @@ poll_tts_job() {
 
     echo ""
     err "Timed out waiting for TTS job after ${MAX_WAIT}s"
-    rm -f /tmp/ghost-backfill-poll.tmp
+    rm -f $POLL_TMP
     return 1
 }
 
