@@ -38,7 +38,7 @@ from fastapi import FastAPI
 from app import __version__
 from app.api.middleware import APIVersionMiddleware
 from app.api.rate_limit_middleware.rate_limit import RateLimitMiddleware
-from app.api.routes import health, tts
+from app.api.routes import health, tts, config as config_router
 from app.api.routes import metrics as metrics_router
 from app.cache.redis_cache import get_cache
 from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
@@ -73,6 +73,10 @@ TAGS_METADATA = [
     {
         'name': 'Health',
         'description': 'Health checks and readiness probes.',
+    },
+    {
+        'name': 'Config',
+        'description': 'TTS generation parameter configuration (Redis-backed, persists restarts).',
     },
 ]
 
@@ -143,6 +147,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.error(f'Failed to initialize job store: {exc}')
         raise
+
+    try:
+        from app.domains.tts_config.store import initialize as initialize_tts_config_store
+
+        await initialize_tts_config_store(REDIS_URL)
+    except Exception as exc:
+        logger.warning(f'TTS config store initialization failed (non-fatal): {exc}')
 
     if GCS_BUCKET_NAME:
         try:
@@ -233,6 +244,7 @@ app.add_middleware(RateLimitMiddleware, requests_per_minute=60)
 
 app.include_router(health.router)
 app.include_router(tts.router)
+app.include_router(config_router.router)
 
 # Lazy import voices router - check for python-multipart first
 try:

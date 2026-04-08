@@ -120,11 +120,18 @@ class TTSEngine:
         output_path: str | Path,
         voice_path_or_job_id: str | Path = '',
         job_id: str = '',
+        generation_kwargs: Optional[dict] = None,
     ) -> str:
         """Synthesize text to WAV using voice_path as reference.
 
         Supports both old signature (text, output_path, job_id) and
         new signature (text, output_path, voice_path).
+
+        Args:
+            generation_kwargs: Extra kwargs forwarded to generate_voice_clone
+                (temperature, repetition_penalty, top_k, top_p,
+                temperature_sub_talker, top_k_sub_talker, do_sample_sub_talker,
+                max_new_tokens). Merged on top of tier defaults at call time.
         """
         if not self._ready or self._model is None:
             raise TTSEngineError('Engine not initialized — call initialize() first')
@@ -173,10 +180,13 @@ class TTSEngine:
                     )
                     self._cached_voice_prompt = prompt
                     self._cached_voice_path = voice_path_str
+                # Strip None values so absent optional params use model defaults
+                gen_kw = {k: v for k, v in (generation_kwargs or {}).items() if v is not None}
                 wavs, sr = self._model.generate_voice_clone(
                     text=text,
                     language=TTS_LANGUAGE,
-                    ref_audio=prompt,
+                    voice_clone_prompt=prompt,
+                    **gen_kw,
                 )
                 sf.write(str(output_path), wavs[0], sr)
             return str(output_path)

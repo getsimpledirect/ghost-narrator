@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 
 from pydub import AudioSegment as _AudioSegment
@@ -18,6 +19,7 @@ async def _quality_check_and_resynthesize(
     engine,
     loop,
     executor,
+    generation_kwargs: dict | None = None,
 ) -> list[str]:
     """Check audio quality of each chunk and re-synthesize bad ones.
 
@@ -40,7 +42,7 @@ async def _quality_check_and_resynthesize(
                 # Extremely short — likely failed
                 logger.warning(f'[{job_id}] Chunk {i} is only {duration_ms}ms — re-synthesizing')
                 checked_paths[i] = await _resynthesize_chunk(
-                    i, chunk_texts, job_id, engine, loop, executor
+                    i, chunk_texts, job_id, engine, loop, executor, generation_kwargs
                 )
                 resynth_count += 1
                 continue
@@ -60,7 +62,7 @@ async def _quality_check_and_resynthesize(
                     f'[{job_id}] Chunk {i} is {silence_ratio:.0%} silence — re-synthesizing'
                 )
                 checked_paths[i] = await _resynthesize_chunk(
-                    i, chunk_texts, job_id, engine, loop, executor
+                    i, chunk_texts, job_id, engine, loop, executor, generation_kwargs
                 )
                 resynth_count += 1
 
@@ -80,6 +82,7 @@ async def _resynthesize_chunk(
     engine,
     loop,
     executor,
+    generation_kwargs: dict | None = None,
 ) -> str:
     """Re-synthesize a single chunk. Returns the path (may be original if re-synth fails)."""
     if chunk_idx >= len(chunk_texts):
@@ -89,13 +92,10 @@ async def _resynthesize_chunk(
     wav_path = str(job_dir / f'chunk_{chunk_idx:04d}.wav')
 
     try:
-        await loop.run_in_executor(
-            executor,
-            engine.synthesize_to_file,
-            chunk_texts[chunk_idx],
-            wav_path,
-            job_id,
-        )
+        # run_in_executor only accepts positional args; use partial to bind
+        # generation_kwargs as a keyword so it doesn't collide with job_id.
+        synth_fn = functools.partial(engine.synthesize_to_file, generation_kwargs=generation_kwargs)
+        await loop.run_in_executor(executor, synth_fn, chunk_texts[chunk_idx], wav_path, job_id)
         return wav_path
     except Exception as exc:
         logger.warning(f'[{job_id}] Re-synthesis of chunk {chunk_idx} failed: {exc}')
