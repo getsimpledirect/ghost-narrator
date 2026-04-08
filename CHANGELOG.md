@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.2.8 (2026-04-08)
+
+### Bug Fixes
+
+- **tts-engine**: Move cancellation check inside try so finally always clears cancelled_jobs
+  ([#55](https://github.com/getsimpledirect/ghost-narrator/pull/55),
+  [`46e8efd`](https://github.com/getsimpledirect/ghost-narrator/commit/46e8efd43e1c848877c4ea00592070d4f39ad8d5))
+
+Cancellation check was before the try block, so when it raised SynthesisError the finally clause
+  never ran and the job_id stayed in _cancelled_jobs forever. Resubmitting the same job_id after a
+  DELETE would always fail on the next run.
+
+
 ## v2.2.7 (2026-04-08)
 
 ### Bug Fixes
