@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.3.4 (2026-04-08)
+
+### Bug Fixes
+
+- **install**: Chmod 644 GCS service account key after creation
+  ([#60](https://github.com/getsimpledirect/ghost-narrator/pull/60),
+  [`3c5105e`](https://github.com/getsimpledirect/ghost-narrator/commit/3c5105eabd0f2c4ea42d6c2ad92c3e4a727bf0dc))
+
+gcloud creates the key with 600 (owner-only), which the container process cannot read through the
+  :ro bind mount. Set 644 immediately after key creation so Docker can read it without manual
+  intervention.
+
+
 ## v2.3.3 (2026-04-08)
 
 ### Bug Fixes
