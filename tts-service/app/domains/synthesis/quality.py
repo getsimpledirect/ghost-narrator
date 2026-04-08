@@ -92,27 +92,35 @@ def validate_audio_quality(mp3_path: str) -> dict:
 
         output = r.stderr
 
-        # Parse integrated loudness from the final summary
+        # Parse integrated loudness and true peak from the final ebur128 summary.
+        # ffmpeg emits a measurement line per-frame during analysis (all showing
+        # transient/silence values like -70 LUFS) followed by a single summary block.
+        # Collect the last matching value for each metric so only the summary is used.
+        last_lufs: float | None = None
+        last_peak: float | None = None
         for line in output.split('\n'):
             if 'I:' in line and 'LUFS' in line:
                 try:
-                    lufs = float(line.split('I:')[1].split('LUFS')[0].strip())
-                    results['integrated_lufs'] = lufs
-                    if not (TARGET_LUFS - 2 <= lufs <= TARGET_LUFS + 2):
-                        logger.warning(
-                            f'Integrated loudness {lufs:.1f} LUFS '
-                            f'outside target range {TARGET_LUFS - 2:.0f} to {TARGET_LUFS + 2:.0f} LUFS'
-                        )
+                    last_lufs = float(line.split('I:')[1].split('LUFS')[0].strip())
                 except (ValueError, IndexError):
                     pass
             if 'Peak:' in line and 'dBFS' in line:
                 try:
-                    peak = float(line.split('Peak:')[1].split('dBFS')[0].strip())
-                    results['true_peak_dbfs'] = peak
-                    if peak > -1.0:
-                        logger.warning(f'True peak {peak:.1f} dBFS exceeds -1.0 dBFS limit')
+                    last_peak = float(line.split('Peak:')[1].split('dBFS')[0].strip())
                 except (ValueError, IndexError):
                     pass
+
+        if last_lufs is not None:
+            results['integrated_lufs'] = last_lufs
+            if not (TARGET_LUFS - 2 <= last_lufs <= TARGET_LUFS + 2):
+                logger.warning(
+                    f'Integrated loudness {last_lufs:.1f} LUFS '
+                    f'outside target range {TARGET_LUFS - 2:.0f} to {TARGET_LUFS + 2:.0f} LUFS'
+                )
+        if last_peak is not None:
+            results['true_peak_dbfs'] = last_peak
+            if last_peak > -1.0:
+                logger.warning(f'True peak {last_peak:.1f} dBFS exceeds -1.0 dBFS limit')
 
         # Check for excessive silence gaps (> 1.2s)
         r2 = subprocess.run(

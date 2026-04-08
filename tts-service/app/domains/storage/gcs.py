@@ -37,6 +37,8 @@ class GCSStorageBackend(StorageBackend):
         return self._client
 
     async def upload(self, local_path: Path, job_id: str, site_slug: str) -> str:
+        if not GCS_BUCKET_NAME:
+            raise StorageUploadError('GCS_BUCKET_NAME is not configured — set it in your .env file')
         blob_path = f'{GCS_AUDIO_PREFIX}/{site_slug}/{job_id}.mp3'
         uri = f'gs://{GCS_BUCKET_NAME}/{blob_path}'
         for attempt in range(1, MAX_RETRIES + 1):
