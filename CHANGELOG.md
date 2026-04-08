@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v2.3.3 (2026-04-08)
+
+### Bug Fixes
+
+- **install**: Uncomment GCS/S3 vars correctly + add missing prefix prompts
+  ([#59](https://github.com/getsimpledirect/ghost-narrator/pull/59),
+  [`cf770fc`](https://github.com/getsimpledirect/ghost-narrator/commit/cf770fcf29b31296dbce44e176883ebf2cd2d8d2))
+
+sed patterns without ^#? prefix silently fail on commented-out lines in .env.example, leaving
+  GCS_BUCKET_NAME/S3_BUCKET_NAME still commented even after setup. Fixed all GCS and S3 sed calls to
+  handle both commented and uncommented forms.
+
+Added prompts for GCS_AUDIO_PREFIX and S3_AUDIO_PREFIX (default: audio/articles). Added prompts for
+  AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY so S3 setup is fully self-contained without requiring
+  manual .env edits.
+
+
 ## v2.3.2 (2026-04-08)
 
 ### Bug Fixes
