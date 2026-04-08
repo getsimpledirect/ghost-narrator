@@ -49,7 +49,11 @@ echo ""
 info "Edit .env to configure your setup. Required fields:"
 echo "  - SERVER_EXTERNAL_IP: Your server's public IP"
 echo "  - GHOST_SITE1_URL / GHOST_KEY_SITE1: Ghost CMS credentials"
-echo "  - N8N_USER / N8N_PASSWORD / N8N_ENCRYPTION_KEY: n8n auth"
+echo "  - N8N_USER (must be a valid email) / N8N_PASSWORD / N8N_ENCRYPTION_KEY: n8n auth"
+echo ""
+info "Optional fields:"
+echo "  - VOICE_SAMPLE_REF_TEXT: Transcription of your reference audio (enables higher-quality ICL cloning)"
+echo "    Leave blank to use x-vector-only mode (no transcription needed — recommended default)"
 echo ""
 
 # Interactive .env editing (optional)
@@ -72,8 +76,8 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
     fi
 
     # n8n auth
-    read -r -p "n8n admin username [admin]: " N8N_USER
-    N8N_USER="${N8N_USER:-admin}"
+    read -r -p "n8n owner email [admin@localhost]: " N8N_USER
+    N8N_USER="${N8N_USER:-admin@localhost}"
     sed -i.bak "s/N8N_USER=.*/N8N_USER=${N8N_USER}/" .env
 
     read -r -s -p "n8n admin password: " N8N_PASS

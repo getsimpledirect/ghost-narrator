@@ -45,6 +45,10 @@ def _get_engine_config():
 VOICE_SAMPLE_PATH: Final[str] = os.environ.get(
     'VOICE_SAMPLE_PATH', '/app/voices/default/reference.wav'
 )
+# Optional transcription of the reference audio.
+# When set, Qwen3-TTS uses ICL mode (reference audio + text) for higher-fidelity cloning.
+# When empty (default), x-vector-only mode is used — no transcription required.
+VOICE_SAMPLE_REF_TEXT: Final[str] = os.environ.get('VOICE_SAMPLE_REF_TEXT', '')
 TTS_LANGUAGE: Final[str] = os.environ.get('TTS_LANGUAGE', 'en')
 
 # Hardware tier (read from ENGINE_CONFIG — set at startup)

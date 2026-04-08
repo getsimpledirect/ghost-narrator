@@ -146,6 +146,7 @@ Publish an article. Ghost Narrator handles the rest.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HARDWARE_TIER` | Override auto-detection | *(auto)* |
+| `VOICE_SAMPLE_REF_TEXT` | Transcription of your reference audio for higher-quality ICL cloning; leave blank for x-vector-only mode | *(empty)* |
 | `STORAGE_BACKEND` | `local`, `gcs`, or `s3` | `local` |
 | `GCS_BUCKET_NAME` | GCS bucket for audio | *(local if unset)* |
 | `S3_BUCKET_NAME` | S3 bucket for audio | *(local if unset)* |

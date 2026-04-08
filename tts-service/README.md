@@ -245,6 +245,7 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VOICE_SAMPLE_PATH` | `/app/voices/default/reference.wav` | Path to reference voice WAV |
+| `VOICE_SAMPLE_REF_TEXT` | *(empty)* | Transcription of the reference audio. When set, uses ICL mode (higher-quality cloning). When empty, uses x-vector-only mode (no transcription needed — default). |
 | `TTS_LANGUAGE` | `en` | BCP-47 language code |
 | `MAX_CHUNK_WORDS` | `200` | Max words per synthesis chunk |
 | `DEVICE` | `cpu` | PyTorch device: `cpu` or `cuda` |

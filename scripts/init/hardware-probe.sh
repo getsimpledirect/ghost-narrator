@@ -22,6 +22,11 @@ detect_tier() {
         return
     fi
     VRAM_MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
+    if [ -z "$VRAM_MIB" ] || ! [ "$VRAM_MIB" -eq "$VRAM_MIB" ] 2>/dev/null; then
+        echo "nvidia-smi returned no VRAM value — defaulting to cpu_only" >&2
+        echo "cpu_only"
+        return
+    fi
     echo "GPU VRAM: ${VRAM_MIB} MiB" >&2
     if [ "$VRAM_MIB" -lt 10240 ]; then
         echo "low_vram"
