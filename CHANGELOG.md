@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v2.3.1 (2026-04-08)
+
+### Bug Fixes
+
+- **tts-service**: Fix spurious LUFS warnings and GCS bucket name guard
+  ([#57](https://github.com/getsimpledirect/ghost-narrator/pull/57),
+  [`050a99a`](https://github.com/getsimpledirect/ghost-narrator/commit/050a99a020f6a2bed53d67562d1fe127e18cca5c))
+
+quality.py: ebur128 emits per-frame measurement lines during analysis, each showing transient
+  loudness values like -70 LUFS. Only the final summary line is meaningful — collect last matched
+  value and log once.
+
+gcs.py: GCS_BUCKET_NAME='' caused cryptic IndexError inside the google-cloud-storage library. Added
+  early guard with clear error message.
+
+
 ## v2.3.0 (2026-04-08)
 
 ### Features
