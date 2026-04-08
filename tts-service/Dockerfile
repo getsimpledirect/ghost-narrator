@@ -8,7 +8,6 @@ FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-devel AS flash-builder
 # --no-build-isolation tells the compiler to use the installed torch headers
 # rather than fetching a fresh copy in an isolated build env.
 RUN pip install --quiet --upgrade pip && \
-    pip install --quiet torch==2.11.0 && \
     pip wheel flash-attn --no-build-isolation --no-deps -w /flash-wheels
 
 # ─── Stage 2: Runtime image ───────────────────────────────────────────────────
