@@ -48,9 +48,9 @@ class GenerateRequest(BaseModel):
         pattern=r'^[a-zA-Z0-9_-]+$',
         description='Custom job ID. Must be alphanumeric with hyphens/underscores, max 200 chars. Auto-generated if omitted.',
     )
-    gcs_path: Optional[str] = Field(
+    storage_path: Optional[str] = Field(
         default=None,
-        description="Custom GCS output path. Must not contain '..' or start with '/'. Auto-generated if omitted.",
+        description="Custom storage output path. Must not contain '..' or start with '/'. Auto-generated if omitted.",
     )
     site_slug: Optional[str] = Field(
         default='site',
@@ -71,15 +71,15 @@ class GenerateRequest(BaseModel):
             raise ValueError('Text must not be empty or whitespace-only')
         return value
 
-    @field_validator('gcs_path')
+    @field_validator('storage_path')
     @classmethod
-    def validate_gcs_path(cls, value: Optional[str]) -> Optional[str]:
+    def validate_storage_path(cls, value: Optional[str]) -> Optional[str]:
         """Validate GCS path has no path traversal. Empty string treated as None."""
         if value is not None:
             if not value.strip():
                 return None
             if '..' in value or value.startswith('/'):
-                raise ValueError("gcs_path must not contain '..' or start with '/'")
+                raise ValueError("storage_path must not contain '..' or start with '/'")
         return value
 
 

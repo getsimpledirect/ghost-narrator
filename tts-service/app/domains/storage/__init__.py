@@ -39,8 +39,8 @@ def is_gcs_enabled() -> bool:
     return STORAGE_BACKEND.lower() == 'gcs'
 
 
-def build_gcs_path(prefix: str, site_slug: str, job_id: str, extension: str = 'mp3') -> str:
-    """Backward compatibility - build GCS object path."""
+def build_storage_path(prefix: str, site_slug: str, job_id: str, extension: str = 'mp3') -> str:
+    """Backward compatibility - build storage object path."""
     prefix = prefix.strip('/')
     site_slug = site_slug.strip('/')
     job_id = job_id.strip('/')
@@ -84,7 +84,7 @@ __all__ = [
     'get_gcs_client',
     'upload_to_gcs',
     'is_gcs_enabled',
-    'build_gcs_path',
+    'build_storage_path',
     'get_public_url',
     'initialize_gcs_client',
     'cleanup_gcs_client',

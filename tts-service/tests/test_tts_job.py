@@ -50,7 +50,7 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
 
     job_id = 'test-job-123'
     text = 'Hello world. This is a test.'
-    gcs_path = 'audio/test.mp3'
+    storage_path = 'audio/test.mp3'
 
     with (
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
@@ -84,7 +84,7 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
         mock_synth.return_value = ['/tmp/chunk_0000.wav']
         mock_concat.return_value = None
 
-        await run_tts_job(job_id, text, gcs_path)
+        await run_tts_job(job_id, text, storage_path)
 
         # Assert job store was updated to completed
         statuses = [
@@ -105,13 +105,13 @@ async def test_run_tts_job_deleted_mid_process(mock_job_store, mock_tts_engine):
 
     job_id = 'test-job-deleted'
     text = 'A very long text. ' * 50
-    gcs_path = 'audio/deleted.mp3'
+    storage_path = 'audio/deleted.mp3'
 
     with (
         patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch.object(Path, 'mkdir'),
     ):
-        await run_tts_job(job_id, text, gcs_path)
+        await run_tts_job(job_id, text, storage_path)
 
         # Job was deleted — should never be marked completed
         statuses = [
@@ -129,7 +129,7 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
 
     job_id = 'test-job-synth-fail'
     text = 'Some text to synthesize.'
-    gcs_path = 'audio/fail.mp3'
+    storage_path = 'audio/fail.mp3'
 
     with (
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
@@ -141,7 +141,7 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
         mock_prepare.return_value = (['Some text to synthesize.'], 4)
         mock_synth.side_effect = SynthesisError('GPU out of memory')
 
-        await run_tts_job(job_id, text, gcs_path)
+        await run_tts_job(job_id, text, storage_path)
 
         statuses = [
             call.args[1].get('status')
@@ -159,7 +159,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
 
     job_id = 'test-job-storage-fail'
     text = 'Hello world.'
-    gcs_path = 'audio/storage-fail.mp3'
+    storage_path = 'audio/storage-fail.mp3'
 
     # Mock storage backend that fails on upload
     failing_backend = AsyncMock()
@@ -193,7 +193,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
         mock_prepare.return_value = (['Hello world.'], 2)
         mock_synth.return_value = ['/tmp/chunk_0000.wav']
 
-        await run_tts_job(job_id, text, gcs_path)
+        await run_tts_job(job_id, text, storage_path)
 
         # Job completes even when storage fails
         statuses = [
@@ -219,13 +219,13 @@ async def test_run_tts_job_executor_not_initialized(mock_job_store, mock_tts_eng
 
     job_id = 'test-job-no-exec'
     text = 'Hello world.'
-    gcs_path = 'audio/no-exec.mp3'
+    storage_path = 'audio/no-exec.mp3'
 
     with (
         patch('app.domains.job.tts_job.get_executor', return_value=None),
         patch.object(Path, 'mkdir'),
     ):
-        await run_tts_job(job_id, text, gcs_path)
+        await run_tts_job(job_id, text, storage_path)
 
         statuses = [
             call.args[1].get('status')

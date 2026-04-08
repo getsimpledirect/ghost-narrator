@@ -25,7 +25,7 @@
       "typeVersion": 2,
       "position": [250, 300],
       "parameters": {
-        "jsCode": "const data = $input.first().json.body || $input.first().json;\n\nif (!data.plain_text || !data.plain_text.trim()) {\n  throw new Error('Missing required field: plain_text');\n}\nif (!data.job_id) {\n  throw new Error('Missing required field: job_id');\n}\nif (!data.gcs_path) {\n  throw new Error('Missing required field: gcs_path');\n}\n\nconst text = data.plain_text.replace(/\\n{3,}/g, '\\n\\n').trim();\nconst wordCount = text.split(/\\s+/).length;\n\nif (wordCount < 50) {\n  return [{ json: { skip: true, reason: `Content too short (${wordCount} words)` } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    jobId: data.job_id,\n    gcsPath: data.gcs_path,\n    chapterTitle: data.chapter_title || '',\n    articleText: text,\n    wordCount\n  }\n}];"
+        "jsCode": "const data = $input.first().json.body || $input.first().json;\n\nif (!data.plain_text || !data.plain_text.trim()) {\n  throw new Error('Missing required field: plain_text');\n}\nif (!data.job_id) {\n  throw new Error('Missing required field: job_id');\n}\nif (!data.storage_path) {\n  throw new Error('Missing required field: storage_path');\n}\n\nconst text = data.plain_text.replace(/\\n{3,}/g, '\\n\\n').trim();\nconst wordCount = text.split(/\\s+/).length;\n\nif (wordCount < 50) {\n  return [{ json: { skip: true, reason: `Content too short (${wordCount} words)` } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    jobId: data.job_id,\n    storagePath: data.storage_path,\n    chapterTitle: data.chapter_title || '',\n    articleText: text,\n    wordCount\n  }\n}];"
       }
     },
     {
@@ -76,7 +76,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ text: $json.articleText, job_id: $json.jobId, gcs_path: $json.gcsPath }) }}",
+        "jsonBody": "={{ JSON.stringify({ text: $json.articleText, job_id: $json.jobId, storage_path: $json.storagePath }) }}",
         "options": { "timeout": 600000 }
       },
       "retryOnFail": true,
@@ -90,7 +90,7 @@
       "typeVersion": 2,
       "position": [1000, 200],
       "parameters": {
-        "jsCode": "const result = $input.first().json;\nconst meta = $('Validate & Extract Input').first().json;\nconsole.log(`TTS job submitted: ${meta.jobId} → gs://YOUR_BUCKET/${meta.gcsPath}`);\nif (result.error || result.detail) {\n  throw new Error('TTS service rejected job: ' + (result.error || result.detail));\n}\nreturn [{ json: { success: true, jobId: meta.jobId, gcsPath: meta.gcsPath, ...result } }];"
+        "jsCode": "const result = $input.first().json;\nconst meta = $('Validate & Extract Input').first().json;\nconsole.log(`TTS job submitted: ${meta.jobId} with storage path: ${meta.storagePath}`);\nif (result.error || result.detail) {\n  throw new Error('TTS service rejected job: ' + (result.error || result.detail));\n}\nreturn [{ json: { success: true, jobId: meta.jobId, storagePath: meta.storagePath, ...result } }];"
       }
     }
   ],
