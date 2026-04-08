@@ -41,6 +41,15 @@ class EngineConfig:
     mp3_bitrate: str
     sample_rate: int
     target_lufs: float
+    # TTS generation parameters (passed to generate_voice_clone as **kwargs)
+    tts_temperature: float
+    tts_repetition_penalty: float
+    tts_top_k: int
+    tts_top_p: float
+    tts_temperature_sub_talker: float
+    tts_top_k_sub_talker: int
+    tts_do_sample_sub_talker: bool
+    tts_max_new_tokens: int
 
 
 _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
@@ -57,6 +66,14 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         mp3_bitrate='192k',
         sample_rate=44100,
         target_lufs=-16.0,
+        tts_temperature=0.8,
+        tts_repetition_penalty=1.05,
+        tts_top_k=50,
+        tts_top_p=1.0,
+        tts_temperature_sub_talker=0.8,
+        tts_top_k_sub_talker=50,
+        tts_do_sample_sub_talker=True,
+        tts_max_new_tokens=3000,
     ),
     HardwareTier.LOW_VRAM: EngineConfig(
         tier=HardwareTier.LOW_VRAM,
@@ -71,6 +88,14 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         mp3_bitrate='192k',
         sample_rate=44100,
         target_lufs=-16.0,
+        tts_temperature=0.85,
+        tts_repetition_penalty=1.05,
+        tts_top_k=50,
+        tts_top_p=1.0,
+        tts_temperature_sub_talker=0.85,
+        tts_top_k_sub_talker=50,
+        tts_do_sample_sub_talker=True,
+        tts_max_new_tokens=4000,
     ),
     HardwareTier.MID_VRAM: EngineConfig(
         tier=HardwareTier.MID_VRAM,
@@ -85,6 +110,14 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         mp3_bitrate='192k',
         sample_rate=44100,
         target_lufs=-16.0,
+        tts_temperature=0.9,
+        tts_repetition_penalty=1.05,
+        tts_top_k=50,
+        tts_top_p=1.0,
+        tts_temperature_sub_talker=0.9,
+        tts_top_k_sub_talker=50,
+        tts_do_sample_sub_talker=True,
+        tts_max_new_tokens=6000,
     ),
     HardwareTier.HIGH_VRAM: EngineConfig(
         tier=HardwareTier.HIGH_VRAM,
@@ -99,6 +132,14 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         mp3_bitrate='256k',
         sample_rate=48000,
         target_lufs=-14.0,
+        tts_temperature=0.9,
+        tts_repetition_penalty=1.05,
+        tts_top_k=50,
+        tts_top_p=1.0,
+        tts_temperature_sub_talker=0.9,
+        tts_top_k_sub_talker=50,
+        tts_do_sample_sub_talker=True,
+        tts_max_new_tokens=8000,
     ),
 }
 

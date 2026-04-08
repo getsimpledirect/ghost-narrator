@@ -23,7 +23,7 @@ class TestSynthesisService:
     async def test_synthesize_chunks_sequential(self):
         job_dir = Path('/tmp/test-job')
         with patch('app.domains.synthesis.service.synthesize_chunk') as mock_synth:
-            mock_synth.side_effect = lambda text, path, job_id: path
+            mock_synth.side_effect = lambda text, path, job_id, generation_kwargs=None: path
             result = await synthesize_chunks_sequential(
                 chunks=['Hello world.', 'Second sentence.'],
                 job_dir=job_dir,
@@ -36,7 +36,7 @@ class TestSynthesisService:
     async def test_synthesize_chunks_parallel(self):
         job_dir = Path('/tmp/test-job-parallel')
         with patch('app.domains.synthesis.service.synthesize_chunk') as mock_synth:
-            mock_synth.side_effect = lambda text, path, job_id: path
+            mock_synth.side_effect = lambda text, path, job_id, generation_kwargs=None: path
             result = await synthesize_chunks_parallel(
                 chunks=['Chunk one.', 'Chunk two.', 'Chunk three.'],
                 job_dir=job_dir,

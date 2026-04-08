@@ -67,6 +67,7 @@ from app.domains.synthesis.quality_check import (
 from app.domains.job.store import get_job_store
 from app.domains.job.notification import notify_job_completed, notify_job_failed
 from app.domains.storage import get_storage_backend
+from app.domains.tts_config.store import get_effective_config
 from app.domains.synthesis.service import (
     cleanup_chunk_files,
     get_executor,
@@ -194,6 +195,9 @@ async def run_tts_job(
         if not engine.is_ready:
             raise RuntimeError('TTS engine failed to initialize within timeout')
 
+        # Fetch generation config once (async Redis read) before entering thread pool
+        generation_kwargs, _overrides = await get_effective_config()
+
         # Step 1+2+3: Narrate, chunk, and synthesize (pipelined when possible)
         await _check_status()
         logger.info(f'[{job_id}] Starting narration + synthesis pipeline...')
@@ -228,6 +232,7 @@ async def run_tts_job(
                         job_id=f'{job_id}',
                         status_check_callback=_check_status,
                         chunk_offset=chunk_index,
+                        generation_kwargs=generation_kwargs,
                     )
                     chunk_wav_paths.extend(segment_paths)
                     chunk_index += len(tts_chunks)
@@ -255,6 +260,7 @@ async def run_tts_job(
                     job_dir=job_dir,
                     job_id=job_id,
                     status_check_callback=_check_status,
+                    generation_kwargs=generation_kwargs,
                 )
         else:
             # No narration available — synthesize raw text directly
@@ -264,6 +270,7 @@ async def run_tts_job(
                 job_dir=job_dir,
                 job_id=job_id,
                 status_check_callback=_check_status,
+                generation_kwargs=generation_kwargs,
             )
 
         if not chunk_wav_paths:
@@ -276,7 +283,7 @@ async def run_tts_job(
             await _check_status()
             logger.info(f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...')
             chunk_wav_paths = await _quality_check_and_resynthesize(
-                chunk_wav_paths, all_chunks, job_id, engine, loop, executor
+                chunk_wav_paths, all_chunks, job_id, engine, loop, executor, generation_kwargs
             )
 
         # Step 4: Normalize chunks to -23 LUFS (skip very short chunks —

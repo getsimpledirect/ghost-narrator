@@ -156,3 +156,41 @@ class ErrorResponse(BaseModel):
 
     detail: str = Field(..., description='Error message.')
     error_code: Optional[str] = Field(default=None, description='Machine-readable error code.')
+
+
+class TTSGenerationConfigUpdate(BaseModel):
+    """Partial update for TTS generation parameters. Omitted fields are unchanged."""
+
+    temperature: Optional[float] = Field(
+        default=None, ge=0.1, le=2.0, description='Sampling temperature (0.1–2.0).'
+    )
+    repetition_penalty: Optional[float] = Field(
+        default=None, ge=1.0, le=1.5, description='Repetition penalty (1.0–1.5).'
+    )
+    top_k: Optional[int] = Field(default=None, ge=1, le=200, description='Top-k sampling (1–200).')
+    top_p: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, description='Nucleus sampling cutoff (0.0–1.0).'
+    )
+    temperature_sub_talker: Optional[float] = Field(
+        default=None, ge=0.1, le=2.0, description='Acoustic decoder temperature (0.1–2.0).'
+    )
+    top_k_sub_talker: Optional[int] = Field(
+        default=None, ge=1, le=200, description='Acoustic decoder top-k (1–200).'
+    )
+    do_sample_sub_talker: Optional[bool] = Field(
+        default=None, description='Enable sampling in acoustic decoder.'
+    )
+    max_new_tokens: Optional[int] = Field(
+        default=None, ge=500, le=16000, description='Max tokens per synthesis chunk (500–16000).'
+    )
+
+
+class TTSGenerationConfigResponse(BaseModel):
+    """Current TTS generation config: tier defaults merged with user overrides."""
+
+    tier: str = Field(..., description='Active hardware tier.')
+    effective: dict[str, Any] = Field(
+        ..., description='Effective values used for synthesis (defaults + overrides).'
+    )
+    overrides: dict[str, Any] = Field(..., description='User-saved overrides stored in Redis.')
+    defaults: dict[str, Any] = Field(..., description='Hardware-tier default values.')

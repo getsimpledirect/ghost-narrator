@@ -97,7 +97,12 @@ def shutdown_executor(wait: bool = True, cancel_futures: bool = True) -> None:
             _executor = None
 
 
-def synthesize_chunk(text: str, output_path: str, job_id: str = 'default') -> str:
+def synthesize_chunk(
+    text: str,
+    output_path: str,
+    job_id: str = 'default',
+    generation_kwargs: Optional[dict] = None,
+) -> str:
     """
     Synthesize a single text chunk using Qwen3-TTS voice cloning.
 
@@ -107,6 +112,7 @@ def synthesize_chunk(text: str, output_path: str, job_id: str = 'default') -> st
         text: The text to synthesize.
         output_path: Path where the WAV file will be saved.
         job_id: Job identifier for process tracking.
+        generation_kwargs: Generation parameters forwarded to the TTS engine.
 
     Returns:
         The output path of the generated WAV file.
@@ -121,7 +127,7 @@ def synthesize_chunk(text: str, output_path: str, job_id: str = 'default') -> st
         )
 
     engine = get_tts_engine()
-    return engine.synthesize_to_file(text, output_path, job_id)
+    return engine.synthesize_to_file(text, output_path, job_id, generation_kwargs=generation_kwargs)
 
 
 async def synthesize_chunks_sequential(
@@ -130,6 +136,7 @@ async def synthesize_chunks_sequential(
     job_id: str,
     status_check_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None,
     chunk_offset: int = 0,
+    generation_kwargs: Optional[dict] = None,
 ) -> list[str]:
     """
     Synthesize multiple chunks sequentially.
@@ -177,6 +184,7 @@ async def synthesize_chunks_sequential(
                 chunk,
                 chunk_wav,
                 job_id,
+                generation_kwargs,
             )
             chunk_wav_paths.append(wav_path)
         except Exception as exc:
@@ -195,6 +203,7 @@ async def synthesize_chunks_parallel(
     job_id: str,
     status_check_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None,
     chunk_offset: int = 0,
+    generation_kwargs: Optional[dict] = None,
 ) -> list[str]:
     """
     Synthesize multiple chunks in parallel using thread pool.
@@ -239,7 +248,9 @@ async def synthesize_chunks_parallel(
         for offset, chunk in enumerate(batch):
             idx = batch_start + offset
             chunk_wav = str(job_dir / f'chunk_{chunk_offset + idx:04d}.wav')
-            task = loop.run_in_executor(_executor, synthesize_chunk, chunk, chunk_wav, job_id)
+            task = loop.run_in_executor(
+                _executor, synthesize_chunk, chunk, chunk_wav, job_id, generation_kwargs
+            )
             tasks.append(task)
 
         logger.info(
@@ -272,6 +283,7 @@ async def synthesize_chunks_auto(
     device: Optional[str] = None,
     status_check_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None,
     chunk_offset: int = 0,
+    generation_kwargs: Optional[dict] = None,
 ) -> list[str]:
     """
     Automatically choose the best synthesis strategy based on EngineConfig.
@@ -299,14 +311,14 @@ async def synthesize_chunks_auto(
             f'[{job_id}] Using sequential synthesis for {len(chunks)} chunks (workers={workers})'
         )
         return await synthesize_chunks_sequential(
-            chunks, job_dir, job_id, status_check_callback, chunk_offset
+            chunks, job_dir, job_id, status_check_callback, chunk_offset, generation_kwargs
         )
     else:
         logger.debug(
             f'[{job_id}] Using parallel synthesis for {len(chunks)} chunks with {workers} workers'
         )
         return await synthesize_chunks_parallel(
-            chunks, job_dir, job_id, status_check_callback, chunk_offset
+            chunks, job_dir, job_id, status_check_callback, chunk_offset, generation_kwargs
         )
 
 
