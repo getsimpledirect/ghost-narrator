@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v2.2.7 (2026-04-08)
+
+### Bug Fixes
+
+- **tts-service**: Correct TTS_LANGUAGE default and LLM_MODEL_NAME empty-string guard
+  ([#53](https://github.com/getsimpledirect/ghost-narrator/pull/53),
+  [`bb5019a`](https://github.com/getsimpledirect/ghost-narrator/commit/bb5019a74675bb4a865007f6a9874373c3c9f59e))
+
+- TTS_LANGUAGE default was 'en' but Qwen3-TTS requires full names (english, chinese, etc.) or
+  'auto'; changed default to 'auto' so language is detected from text, making the pipeline
+  language-agnostic - LLM_MODEL_NAME read from env with os.environ.get() which returns '' when the
+  key exists but is blank (as shipped in .env.example); added .strip() or guard so blank env var
+  falls back to hardware-tier model, consistent with the same pattern in hardware.py
+
+
 ## v2.2.6 (2026-04-08)
 
 ### Refactoring

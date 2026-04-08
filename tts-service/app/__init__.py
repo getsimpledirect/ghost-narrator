@@ -24,4 +24,4 @@
 Ghost Narrator TTS Service — Qwen3-TTS voice cloning with hardware-tiered model selection.
 """
 
-__version__ = '2.2.6'
+__version__ = '2.2.7'
