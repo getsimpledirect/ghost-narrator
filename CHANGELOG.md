@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.3.6 (2026-04-09)
+
+### Bug Fixes
+
+- **release**: Trigger version bump for PRs #62 and #63
+  ([`eb26d00`](https://github.com/getsimpledirect/ghost-narrator/commit/eb26d003e3cf9de1d046ecf1b552d41772650685))
+
+PRs #62 (gap-remediation) and #63 (code-review-gaps) were squash-merged with non-conventional PR
+  titles, so python-semantic-release found no releasable commits and skipped the version bump both
+  times.
+
+
 ## v2.3.5 (2026-04-08)
 
 ### Bug Fixes
