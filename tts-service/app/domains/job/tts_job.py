@@ -267,7 +267,9 @@ async def run_tts_job(
                         )
                         narrated_text = text
                         narration_skipped = True
-                    all_chunks, total_words = prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
+                    all_chunks, total_words = prepare_text_for_synthesis(
+                        narrated_text, MAX_CHUNK_WORDS
+                    )
                     chunk_wav_paths = await synthesize_chunks_auto(
                         chunks=all_chunks,
                         job_dir=job_dir,
