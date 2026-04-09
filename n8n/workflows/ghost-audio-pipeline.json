@@ -167,6 +167,10 @@
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.TTS_API_KEY }}"
             }
           ]
         },

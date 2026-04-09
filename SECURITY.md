@@ -49,42 +49,29 @@ When deploying Ghost Narrator:
 Ghost Narrator uses a **defense-in-depth** approach with multiple security layers:
 
 ### Layer 1: Docker Network Isolation
-The TTS service is designed to run on an internal Docker network, not exposed to the public internet. The `docker-compose.yml` configuration keeps services isolated:
+The `docker-compose.yml` keeps internal services isolated on `pipeline_net`:
 
-- **TTS Service** (`tts-service`) - Internal only, not exposed to host
-- **n8n** (`n8n`) - Exposed on port 5678 for webhook receiving
-- **Redis** (`redis`) - Internal only
-
-This means the TTS service can only be accessed by other services in the same Docker network (primarily n8n), not directly from the internet.
+- **TTS Service** (`tts-service`) - Port 8020 published to host for direct API access; protected by API key auth (see Layer 3)
+- **n8n** (`n8n`) - Port 5678 published for webhook receiving and UI access
+- **Redis** (`redis`) - Port NOT published; accessible only within `pipeline_net`
+- **Ollama** (`ollama`) - Port 11434 published for local LLM access
 
 ### Layer 2: VM Firewall
 For production deployments, restrict access at the firewall level:
 - Allow inbound to n8n (port 5678) only from Ghost CMS IPs
-- Allow inbound to TTS service only from n8n (if needed)
+- Allow inbound to TTS service (port 8020) only from trusted IPs or keep internal
 - Block all other inbound access
 
-### Layer 3: n8n Authentication
-Users access the pipeline through n8n's built-in authentication, not directly to the TTS service.
+### Layer 3: TTS Service API Key Authentication
+The TTS service requires an `Authorization: Bearer <TTS_API_KEY>` header on all synthesis requests. The `install.sh` script auto-generates this key and writes it to `.env`. The n8n workflow is pre-configured to read it from `$env.TTS_API_KEY` and send it with every request.
 
-### Why TTS Service Has No API Authentication
+To rotate the key: generate a new value (`openssl rand -hex 32`), update `TTS_API_KEY` in `.env`, and restart all services (`docker compose restart`).
 
-The TTS service operates as an **internal microservice** within the Ghost Narrator pipeline:
-- It is called exclusively by n8n (not end users)
-- It is protected by Docker network isolation
-- It is further protected by VM-level firewall rules
+### Layer 4: Ghost Webhook Signature Verification
+Incoming Ghost webhooks are verified using HMAC-SHA256 with `N8N_GHOST_WEBHOOK_SECRET`. The `install.sh` script auto-generates this secret. Set the same value in Ghost Admin → Settings → Integrations → Webhooks.
 
-This is a common pattern for backend services in a microservices architecture.
-
-### For Open Source Users
-
-If you plan to expose the TTS service directly (e.g., to build custom integrations), consider:
-
-1. **Keep it internal** - Only expose through n8n or a reverse proxy with auth
-2. **Add authentication** - Implement API key or OAuth2 at the reverse proxy level
-3. **Use firewall rules** - Restrict which IPs can reach the service
-4. **Consider HTTPS** - Enable TLS if the service is exposed over the network
-
-For most use cases, the default Docker network isolation provides sufficient security without additional authentication.
+### Layer 5: n8n Authentication
+Users access the pipeline through n8n's built-in owner account authentication, not directly to the TTS service.
 
 ## Scope
 
