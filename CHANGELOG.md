@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v2.3.8 (2026-04-09)
+
+### Bug Fixes
+
+- **n8n**: Resolve Authorization header not sent to TTS service
+  ([`245f62d`](https://github.com/getsimpledirect/ghost-narrator/commit/245f62d6e9f0b103782284ce00d6eaf902f73aee))
+
+n8n HTTP Request v4.2 does not reliably evaluate $env references inside headerParameters values. The
+  Authorization header was being sent empty, causing the TTS service to return 401.
+
+Moved the API key read into the Prepare Article Text Code node, where $env access is guaranteed. The
+  Submit TTS Job header now reads the pre-assembled Bearer token from $json.ttsAuthHeader instead.
+
+### Chores
+
+- **n8n**: Bump n8n from 1.93.0 to 1.123.30
+  ([`c18f888`](https://github.com/getsimpledirect/ghost-narrator/commit/c18f88804766bfe84e0d413e24ee5c0bfe45f22a))
+
+Critical security update flagged in the n8n UI. No breaking changes in this range affect the
+  webhook, HTTP Request, or Code nodes used by the Ghost audio pipeline workflows.
+
+
 ## v2.3.7 (2026-04-09)
 
 ### Bug Fixes
