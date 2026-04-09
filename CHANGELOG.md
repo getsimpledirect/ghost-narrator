@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.3.9 (2026-04-09)
+
+### Bug Fixes
+
+- **n8n**: Add TTS auth header to static content workflow
+  ([`0274a42`](https://github.com/getsimpledirect/ghost-narrator/commit/0274a42ccdab3d3df2d4d2fd7f890a1a694b74e8))
+
+The static-content-audio-pipeline was missing the Authorization header on its Submit TTS Job node
+  entirely. Applied the same fix as the main pipeline: read TTS_API_KEY in the Validate & Extract
+  Input Code node and pass the assembled Bearer token via $json.ttsAuthHeader.
+
+
 ## v2.3.8 (2026-04-09)
 
 ### Bug Fixes
