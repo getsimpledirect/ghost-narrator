@@ -9,7 +9,10 @@
       "name": "Static Content: Audio Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1.1,
-      "position": [0, 300],
+      "position": [
+        0,
+        300
+      ],
       "webhookId": "static-content-audio",
       "parameters": {
         "httpMethod": "POST",
@@ -23,9 +26,12 @@
       "name": "Validate & Extract Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [250, 300],
+      "position": [
+        250,
+        300
+      ],
       "parameters": {
-        "jsCode": "const data = $input.first().json.body || $input.first().json;\n\nif (!data.plain_text || !data.plain_text.trim()) {\n  throw new Error('Missing required field: plain_text');\n}\nif (!data.job_id) {\n  throw new Error('Missing required field: job_id');\n}\nif (!data.storage_path) {\n  throw new Error('Missing required field: storage_path');\n}\n\nconst text = data.plain_text.replace(/\\n{3,}/g, '\\n\\n').trim();\nconst wordCount = text.split(/\\s+/).length;\n\nif (wordCount < 50) {\n  return [{ json: { skip: true, reason: `Content too short (${wordCount} words)` } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    jobId: data.job_id,\n    storagePath: data.storage_path,\n    chapterTitle: data.chapter_title || '',\n    articleText: text,\n    wordCount\n  }\n}];"
+        "jsCode": "const data = $input.first().json.body || $input.first().json;\n\nif (!data.plain_text || !data.plain_text.trim()) {\n  throw new Error('Missing required field: plain_text');\n}\nif (!data.job_id) {\n  throw new Error('Missing required field: job_id');\n}\nif (!data.storage_path) {\n  throw new Error('Missing required field: storage_path');\n}\n\nconst text = data.plain_text.replace(/\\n{3,}/g, '\\n\\n').trim();\nconst wordCount = text.split(/\\s+/).length;\n\nif (wordCount < 50) {\n  return [{ json: { skip: true, reason: `Content too short (${wordCount} words)` } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    jobId: data.job_id,\n    storagePath: data.storage_path,\n    chapterTitle: data.chapter_title || '',\n    articleText: text,\n    wordCount,\n    ttsAuthHeader: 'Bearer ' + $env.TTS_API_KEY\n  }\n}];"
       }
     },
     {
@@ -33,16 +39,26 @@
       "name": "Should Process?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.1,
-      "position": [500, 300],
+      "position": [
+        500,
+        300
+      ],
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
               "id": "condition-skip",
               "leftValue": "={{ $json.skip }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -54,7 +70,10 @@
       "name": "Log Skipped",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [750, 450],
+      "position": [
+        750,
+        450
+      ],
       "parameters": {
         "jsCode": "console.log('Skipped:', $input.first().json.reason);\nreturn $input.all();"
       }
@@ -64,20 +83,32 @@
       "name": "Submit TTS Job",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [750, 200],
+      "position": [
+        750,
+        200
+      ],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.TTS_SERVICE_URL }}/tts/generate",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $json.ttsAuthHeader }}"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ text: $json.articleText, job_id: $json.jobId, storage_path: $json.storagePath }) }}",
-        "options": { "timeout": 600000 }
+        "options": {
+          "timeout": 600000
+        }
       },
       "retryOnFail": true,
       "maxTries": 3,
@@ -88,7 +119,10 @@
       "name": "Log Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 200],
+      "position": [
+        1000,
+        200
+      ],
       "parameters": {
         "jsCode": "const result = $input.first().json;\nconst meta = $('Validate & Extract Input').first().json;\nconsole.log(`TTS job submitted: ${meta.jobId} with storage path: ${meta.storagePath}`);\nif (result.error || result.detail) {\n  throw new Error('TTS service rejected job: ' + (result.error || result.detail));\n}\nreturn [{ json: { success: true, jobId: meta.jobId, storagePath: meta.storagePath, ...result } }];"
       }
@@ -96,19 +130,55 @@
   ],
   "connections": {
     "Static Content: Audio Request": {
-      "main": [[{ "node": "Validate & Extract Input", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Validate & Extract Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Validate & Extract Input": {
-      "main": [[{ "node": "Should Process?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Should Process?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Should Process?": {
       "main": [
-        [{ "node": "Submit TTS Job", "type": "main", "index": 0 }],
-        [{ "node": "Log Skipped", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Submit TTS Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Submit TTS Job": {
-      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Log Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
