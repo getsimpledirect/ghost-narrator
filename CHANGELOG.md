@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v2.3.10 (2026-04-09)
+
+### Bug Fixes
+
+- **gcs,logs**: Fix GCS key permissions and suppress health check noise
+  ([`fd7bdca`](https://github.com/getsimpledirect/ghost-narrator/commit/fd7bdcafa27226129fdd78dcbc97e3a4f6218cec))
+
+- GCS upload failed with Permission denied because chmod 600 on the service account key blocks the
+  container's appuser (UID 1000) from reading a file owned by the host user. Changed to chmod 640. -
+  Docker healthcheck polls /health every 30s, flooding the uvicorn access log and burying real
+  traffic. uvicorn.access is a separate child logger that needs its own filter — added one to drop
+  /health.
+
+
 ## v2.3.9 (2026-04-09)
 
 ### Bug Fixes
