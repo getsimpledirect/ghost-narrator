@@ -67,7 +67,7 @@ services:
 
   # ─── Ollama: Bundled Narration LLM ────────────────────────────────────────
   ollama:
-    image: ollama/ollama:0.6.5
+    image: ollama/ollama:0.20.4
     container_name: ollama
     restart: unless-stopped
     ports:
@@ -100,7 +100,7 @@ services:
 
   # ─── n8n: Workflow Orchestration ─────────────────────────────────────────────
   n8n:
-    image: n8nio/n8n:1.88.0
+    image: n8nio/n8n:1.93.0
     container_name: n8n
     restart: unless-stopped
     ports:
