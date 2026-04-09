@@ -157,6 +157,10 @@ MAX_CONNECTIONS: Final[int] = 10
 # Retry settings
 MAX_RETRIES: Final[int] = 3
 
+# API authentication
+TTS_API_KEY: Final[str] = os.environ.get('TTS_API_KEY', '')
+LLM_API_KEY: Final[str] = os.environ.get('LLM_API_KEY', 'ollama')
+
 # GCS upload settings
 GCS_UPLOAD_TIMEOUT: Final[int] = 300
 
@@ -166,6 +170,6 @@ SERVER_EXTERNAL_IP: Final[str] = os.environ.get('SERVER_EXTERNAL_IP', 'localhost
 
 def get_llm_client():
     """Return async OpenAI-compatible client pointed at Ollama (or override URL)."""
-    from openai import AsyncOpenAI  # Ollama is OpenAI-compatible
+    from openai import AsyncOpenAI
 
-    return AsyncOpenAI(base_url=LLM_BASE_URL, api_key='ollama')
+    return AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
