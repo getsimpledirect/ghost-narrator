@@ -146,7 +146,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst post = item.posts?.[0];\n\nif (!post) {\n  throw new Error('Could not fetch article from Ghost API');\n}\n\n// Clean up the plaintext\nlet text = post.plaintext || '';\ntext = text.replace(/\\n{3,}/g, '\\n\\n').trim();\n\nif (!text) {\n  throw new Error('Post has no plaintext content - cannot generate audio');\n}\n\n// Get metadata from previous node\nconst meta = $('Extract Post Metadata').first().json;\n\nreturn [{\n  json: {\n    jobId: meta.jobId,\n    siteSlug: meta.siteSlug,\n    postTitle: post.title,\n    postSlug: post.slug,\n    articleText: text,\n    wordCount: text.split(/\\s+/).length\n  }\n}];"
+        "jsCode": "const item = $input.first().json;\nconst post = item.posts?.[0];\n\nif (!post) {\n  throw new Error('Could not fetch article from Ghost API');\n}\n\n// Clean up the plaintext\nlet text = post.plaintext || '';\ntext = text.replace(/\\n{3,}/g, '\\n\\n').trim();\n\nif (!text) {\n  throw new Error('Post has no plaintext content - cannot generate audio');\n}\n\n// Get metadata from previous node\nconst meta = $('Extract Post Metadata').first().json;\n\nreturn [{\n  json: {\n    jobId: meta.jobId,\n    siteSlug: meta.siteSlug,\n    postTitle: post.title,\n    postSlug: post.slug,\n    articleText: text,\n    wordCount: text.split(/\\s+/).length,\n    ttsAuthHeader: 'Bearer ' + $env.TTS_API_KEY\n  }\n}];"
       }
     },
     {
@@ -170,7 +170,7 @@
             },
             {
               "name": "Authorization",
-              "value": "={{ 'Bearer ' + $env.TTS_API_KEY }}"
+              "value": "={{ $json.ttsAuthHeader }}"
             }
           ]
         },
