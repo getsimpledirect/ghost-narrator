@@ -15,9 +15,16 @@ async def require_api_key(
 ) -> None:
     """Validate Bearer token against TTS_API_KEY.
 
-    Raises 401 if no Authorization header, 403 if key is wrong.
+    Raises 503 if TTS_API_KEY is not configured (empty).
+    Raises 401 if no Authorization header.
+    Raises 403 if key is wrong.
     Open endpoints (health, metrics) should NOT include this dependency.
     """
+    if not TTS_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail='Service not configured: TTS_API_KEY is not set',
+        )
     if credentials is None:
         raise HTTPException(status_code=401, detail='Authorization header required')
     if credentials.credentials != TTS_API_KEY:

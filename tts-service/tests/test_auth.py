@@ -39,3 +39,10 @@ def test_correct_key_passes():
             client = TestClient(_make_app())
             r = client.get('/protected', headers={'Authorization': 'Bearer secret-key'})
     assert r.status_code == 200
+
+
+def test_empty_api_key_returns_503():
+    with patch('app.api.dependencies.TTS_API_KEY', ''):
+        client = TestClient(_make_app())
+        r = client.get('/protected', headers={'Authorization': 'Bearer anything'})
+    assert r.status_code == 503
