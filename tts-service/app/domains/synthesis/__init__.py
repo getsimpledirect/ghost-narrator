@@ -1,8 +1,7 @@
 """Synthesis domain module — re-exports for convenience."""
 
-from app.domains.synthesis.chunker import (
-    TextChunker as TextChunker,
-    chunk_text as chunk_text,
+from app.utils.text import (
+    split_into_chunks as chunk_text,
     get_pause_ms_after_chunk as get_pause_ms_after_chunk,
 )
 from app.domains.synthesis.concatenate import (
@@ -24,7 +23,6 @@ from app.domains.synthesis.quality import (
 )
 
 __all__ = [
-    'TextChunker',
     'chunk_text',
     'get_pause_ms_after_chunk',
     'concatenate_audio',

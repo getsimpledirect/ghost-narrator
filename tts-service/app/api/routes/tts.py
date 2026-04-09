@@ -185,6 +185,11 @@ async def generate(
         existing_status = existing_job.get('status', 'unknown') if existing_job else 'unknown'
         return GenerateResponse(job_id=job_id, status=existing_status)
 
+    # Record metrics for new job creation
+    from app.api.routes.metrics import record_job_created
+
+    record_job_created()
+
     # Build GCS object path
     gcs_object_path = request.storage_path or (
         f'{GCS_AUDIO_PREFIX}/{request.site_slug}/{job_id}.mp3'

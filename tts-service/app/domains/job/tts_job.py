@@ -425,6 +425,11 @@ async def run_tts_job(
             completed_data['upload_warning'] = 'Storage upload failed; audio available locally only'
         await job_store.update(job_id, completed_data)
 
+        # Record metrics for job completion
+        from app.api.routes.metrics import record_job_completed
+
+        record_job_completed(total_duration)
+
         logger.info(
             f'[{job_id}] ✓ Job completed in {total_duration:.1f}s '
             f'({total_words} words, {len(all_chunks)} chunks)'
@@ -460,6 +465,12 @@ async def run_tts_job(
                 'duration_seconds': duration,
             },
         )
+
+        # Record metrics for job failure
+        from app.api.routes.metrics import record_job_failed
+
+        record_job_failed()
+
         await notify_job_failed(job_id, f'{error_name}: {error_msg}')
 
     except Exception as exc:
@@ -493,6 +504,11 @@ async def run_tts_job(
                 'duration_seconds': duration,
             },
         )
+
+        # Record metrics for job failure
+        from app.api.routes.metrics import record_job_failed
+
+        record_job_failed()
 
         # Notify webhook of failure
         await notify_job_failed(job_id, error_message)
