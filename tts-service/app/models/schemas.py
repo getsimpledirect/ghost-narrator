@@ -55,7 +55,8 @@ class GenerateRequest(BaseModel):
     site_slug: Optional[str] = Field(
         default='site',
         max_length=100,
-        description="Site identifier for GCS path generation. Defaults to 'site'.",
+        pattern=r'^[a-zA-Z0-9_-]+$',
+        description="Site identifier for GCS path generation. Alphanumeric, hyphens, underscores only. Defaults to 'site'.",
     )
     voice_profile: str = Field(
         default='default',
@@ -102,9 +103,6 @@ class StatusResponse(BaseModel):
     )
     gcs_uri: Optional[str] = Field(
         default=None, description='GCS URI when completed and GCS is enabled.'
-    )
-    local_path: Optional[str] = Field(
-        default=None, description='Server file path for download endpoint.'
     )
     error: Optional[str] = Field(default=None, description="Error message when status is 'failed'.")
     created_at: Optional[float] = Field(default=None, description='Unix timestamp of job creation.')
