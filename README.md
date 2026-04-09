@@ -156,6 +156,51 @@ Publish an article. Ghost Narrator handles the rest.
 
 See [`.env.example`](.env.example) for the full list.
 
+### Using an External LLM Provider
+
+By default Ghost Narrator uses the bundled Ollama service for narration. To use an external OpenAI-compatible API:
+
+```env
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=sk-your-api-key
+LLM_MODEL_NAME=gpt-4o-mini
+```
+
+Set these in `.env` before running `docker compose up`.
+
+### Redis Authentication (v2+)
+
+Redis is password-protected by default and the port is no longer exposed to the host. The `install.sh` script automatically generates `REDIS_PASSWORD` in `.env`.
+
+**Upgrading from a previous version:**
+```bash
+docker compose down
+# Add REDIS_PASSWORD to .env (or re-run install.sh)
+docker compose up -d
+```
+
+### Multi-Voice Profiles
+
+The `/voices/upload` endpoint accepts a WAV file to register a named voice profile. Profiles are stored under `voices/<profile-name>/reference.wav`.
+
+To use a non-default profile, set `voice_profile` in your TTS request:
+```json
+{ "text": "Hello", "voice_profile": "my-custom-voice" }
+```
+
+The default profile (`voices/default/`) is set up during `install.sh`.
+
+### Disk Management (Local Storage)
+
+When `STORAGE_BACKEND=local`, generated MP3 files are written to the `tts_output` Docker volume and are **not automatically deleted** when job metadata expires (24h Redis TTL).
+
+To clean up files older than 7 days:
+```bash
+docker compose exec tts-service find /app/output -name "*.mp3" -mtime +7 -delete
+```
+
+GCS and S3 backends are not affected — audio lives in your bucket with its own lifecycle policy.
+
 ### LLM Override
 
 Ghost Narrator bundles Ollama for narration rewriting. No external LLM needed. To override with a different OpenAI-compatible endpoint, set `LLM_BASE_URL` in `.env`:
@@ -173,6 +218,34 @@ Ghost Narrator bundles Ollama for narration rewriting. No external LLM needed. T
 Ghost Narrator supports multiple Ghost sites. The workflow automatically detects which site a post belongs to by matching the webhook URL hostname against your configured `GHOST_SITE1_URL` and `GHOST_SITE2_URL`.
 
 See the [n8n Setup Guide](n8n/SETUP_GUIDE.md) for adding more sites.
+
+### Adding a Third Ghost Site
+
+To add a third Ghost site beyond the default two:
+
+1. Add env vars to `.env`:
+   ```env
+   GHOST_SITE3_URL=https://your-third-site.com
+   GHOST_SITE3_ADMIN_API_KEY=your-admin-key
+   ```
+
+2. In `n8n/workflows/ghost-audio-pipeline.json`, find the site detection Code node and add a third branch.
+
+3. In `n8n/workflows/ghost-audio-callback.json`, add the third case in `Extract API Keys`.
+
+4. Re-import both updated workflow JSON files in the n8n UI.
+
+The `siteSlug` convention: use `'site1'`, `'site2'`, `'site3'` to match the env var suffix.
+
+### Production Deployment
+
+For production deployment beyond local development:
+
+1. **Firewall**: Restrict access to Docker network only — don't expose Redis (port 6379) or Ollama (port 11434) to host
+2. **Reverse Proxy**: Use Traefik or nginx to expose only the TTS service (port 8020) and n8n (port 5678)
+3. **SSL**: Terminate TLS at the reverse proxy, not in containers
+4. **Monitoring**: The service exposes Prometheus metrics at `/metrics` — integrate with Grafana
+5. **Backup**: Regularly backup the `n8n_data` and `tts_output` volumes
 
 ---
 
