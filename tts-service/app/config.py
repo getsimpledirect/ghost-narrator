@@ -181,6 +181,10 @@ except ValueError:
 # GCS upload settings
 GCS_UPLOAD_TIMEOUT: Final[int] = 300
 
+# Logging configuration
+LOG_FORMAT: Final[str] = os.environ.get('LOG_FORMAT', '').lower()  # '', 'json', or 'console'
+LOG_LEVEL: Final[str] = os.environ.get('LOG_LEVEL', 'INFO').upper()
+
 # Server external IP (for local storage URLs)
 SERVER_EXTERNAL_IP: Final[str] = os.environ.get('SERVER_EXTERNAL_IP', 'localhost')
 

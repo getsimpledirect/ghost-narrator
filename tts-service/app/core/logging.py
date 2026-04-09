@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sys
 import uuid
 from contextvars import ContextVar
@@ -38,7 +39,53 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
-def setup_logging(level: str = 'INFO') -> logging.Logger:
+class ConsoleFormatter(logging.Formatter):
+    """Human-readable formatter for development/debugging."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        # Simple colored output for TTY
+        level = record.levelname
+        msg = record.getMessage()
+
+        # Add correlation/job context if present
+        corr_id = correlation_id.get()
+        j_id = job_id.get()
+
+        parts = [
+            datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+            f'[{level:8}]',
+        ]
+
+        if j_id:
+            parts.append(f'[{j_id[:8]}...]')
+        if corr_id:
+            parts.append(f'[{corr_id[:8]}...]')
+
+        parts.append(msg)
+
+        return ' '.join(parts)
+
+
+def setup_logging(level: str = None, log_format: str = None) -> logging.Logger:
+    """Setup logging with configurable format.
+
+    Args:
+        level: Log level (DEBUG, INFO, WARNING, ERROR). Defaults to LOG_LEVEL env or INFO.
+        log_format: Log format (json, console). Defaults to LOG_FORMAT env or auto-detect.
+                    Use 'json' for production/JSON logs, 'console' for human-readable output.
+                    When not set, automatically uses console if running in TTY, JSON otherwise.
+    """
+    # Get config from env if not provided
+    if level is None:
+        level = os.environ.get('LOG_LEVEL', 'INFO')
+
+    if log_format is None:
+        log_format = os.environ.get('LOG_FORMAT', '')
+
+    # Auto-detect format: console for TTY, JSON for non-TTY (production)
+    if not log_format:
+        log_format = 'console' if sys.stdout.isatty() else 'json'
+
     logger = logging.getLogger()
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
 
@@ -46,7 +93,14 @@ def setup_logging(level: str = 'INFO') -> logging.Logger:
         logger.removeHandler(handler)
 
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JSONFormatter())
+
+    # Select formatter based on log_format
+    if log_format.lower() == 'console':
+        handler.setFormatter(ConsoleFormatter())
+    else:
+        # Default to JSON (including 'json' or any other value)
+        handler.setFormatter(JSONFormatter())
+
     logger.addHandler(handler)
 
     logging.getLogger('uvicorn').setLevel(logging.WARNING)
