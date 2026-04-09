@@ -146,6 +146,7 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
       - TTS_SERVICE_URL=http://tts-service:8020
+      - TTS_API_KEY=${TTS_API_KEY}
       # Ghost API Keys (for fetching article content and updating posts)
       - GHOST_SITE1_URL=${GHOST_SITE1_URL:-}
       - GHOST_SITE2_URL=${GHOST_SITE2_URL:-}
@@ -214,6 +215,13 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
       - SERVER_EXTERNAL_IP=${SERVER_EXTERNAL_IP:-localhost}
+      - TTS_API_KEY=${TTS_API_KEY}
+      - LLM_API_KEY=${LLM_API_KEY:-ollama}
+      - TRUSTED_PROXY_COUNT=${TRUSTED_PROXY_COUNT:-0}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-120}
+      - LLM_COMPLETENESS_TIMEOUT=${LLM_COMPLETENESS_TIMEOUT:-180}
+      - LOG_FORMAT=${LOG_FORMAT:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - OTEL_SERVICE_NAME=ghost-narrator-tts
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:

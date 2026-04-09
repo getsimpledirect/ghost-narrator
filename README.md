@@ -168,6 +168,19 @@ LLM_MODEL_NAME=gpt-4o-mini
 
 Set these in `.env` before running `docker compose up`.
 
+### Auto-Generated Secrets
+
+`install.sh` automatically generates the following credentials on first run — you do not need to set them manually:
+
+| Variable | Purpose |
+|----------|---------|
+| `REDIS_PASSWORD` | Redis auth (port not exposed to host) |
+| `N8N_ENCRYPTION_KEY` | n8n credential encryption |
+| `N8N_GHOST_WEBHOOK_SECRET` | HMAC-SHA256 signature verification for Ghost webhooks |
+| `TTS_API_KEY` | Bearer token required by the TTS service API |
+
+Set the same `N8N_GHOST_WEBHOOK_SECRET` value in Ghost Admin → Settings → Integrations → Webhooks. All other secrets are internal and never need to leave your server.
+
 ### Redis Authentication (v2+)
 
 Redis is password-protected by default and the port is no longer exposed to the host. The `install.sh` script automatically generates `REDIS_PASSWORD` in `.env`.
