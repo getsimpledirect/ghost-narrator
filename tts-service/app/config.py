@@ -160,6 +160,10 @@ MAX_RETRIES: Final[int] = 3
 # API authentication
 TTS_API_KEY: Final[str] = os.environ.get('TTS_API_KEY', '')
 LLM_API_KEY: Final[str] = os.environ.get('LLM_API_KEY', 'ollama')
+try:
+    TRUSTED_PROXY_COUNT: Final[int] = max(0, int(os.environ.get('TRUSTED_PROXY_COUNT', '0')))
+except ValueError:
+    TRUSTED_PROXY_COUNT: Final[int] = 0
 
 # GCS upload settings
 GCS_UPLOAD_TIMEOUT: Final[int] = 300
