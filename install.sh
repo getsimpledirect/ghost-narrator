@@ -134,6 +134,16 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
         info "Generated REDIS_PASSWORD"
     fi
 
+    # Generate Ghost webhook HMAC secret
+    if [ -z "$(grep '^N8N_GHOST_WEBHOOK_SECRET=' .env | cut -d= -f2)" ]; then
+        WEBHOOK_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
+        tmpfile=$(mktemp)
+        grep -v '^N8N_GHOST_WEBHOOK_SECRET=' .env > "$tmpfile"
+        echo "N8N_GHOST_WEBHOOK_SECRET=${WEBHOOK_SECRET}" >> "$tmpfile"
+        mv "$tmpfile" .env
+        info "Generated N8N_GHOST_WEBHOOK_SECRET — set this same value in Ghost's webhook settings"
+    fi
+
     # Hardware tier override (optional — auto-detected by default)
     echo ""
     info "Hardware tier: auto-detected from GPU VRAM at startup (recommended)"
