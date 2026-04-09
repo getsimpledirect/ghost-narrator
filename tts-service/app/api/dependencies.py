@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import TTS_API_KEY
 
-_bearer = HTTPBearer(auto_error=False)
+_bearer = HTTPBearer(auto_error=False, scheme_name='API Key')
 
 
 async def require_api_key(

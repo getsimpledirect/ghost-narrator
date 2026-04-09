@@ -9,7 +9,7 @@ from app.api.dependencies import require_api_key
 from app.domains.voices.registry import VoiceRegistry
 from app.config import VOICE_SAMPLE_PATH
 
-router = APIRouter(prefix='/voices', tags=['voices'], dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix='/voices', tags=['Voices'], dependencies=[Depends(require_api_key)])
 
 
 def _get_registry() -> VoiceRegistry:
@@ -24,7 +24,16 @@ def _validate_and_save(source_path: Path, dest_path: Path) -> None:
     return validate_and_save(source_path, dest_path)
 
 
-@router.get('')
+@router.get(
+    '',
+    summary='List voice profiles',
+    description='Returns all registered voice profiles. The `default` profile is always present.',
+    responses={
+        200: {'description': 'Available voice profiles'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+    },
+)
 def list_voices():
     """List all available voice profiles."""
     registry = _get_registry()
@@ -32,7 +41,24 @@ def list_voices():
     return {'profiles': profiles, 'count': len(profiles)}
 
 
-@router.post('/upload')
+@router.post(
+    '/upload',
+    summary='Upload a voice profile',
+    description=(
+        'Upload a WAV file to register a new named voice profile. '
+        'The file must be a valid WAV (5–120 seconds recommended). '
+        'Once uploaded, reference it in synthesis requests via `voice_profile`. '
+        'The `default` profile name is reserved.'
+    ),
+    status_code=201,
+    responses={
+        201: {'description': 'Voice profile created'},
+        400: {'description': 'Invalid profile name, reserved name, or non-WAV file'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        422: {'description': 'Audio file failed validation'},
+    },
+)
 async def upload_voice(name: str, file: UploadFile = File(...)):
     """Upload a new voice reference WAV and register it as a named profile."""
     if not name.replace('-', '').replace('_', '').isalnum():
@@ -65,7 +91,21 @@ async def upload_voice(name: str, file: UploadFile = File(...)):
     return JSONResponse({'profile': name, 'status': 'created'}, status_code=201)
 
 
-@router.delete('/{name}')
+@router.delete(
+    '/{name}',
+    summary='Delete a voice profile',
+    description=(
+        'Permanently delete a named voice profile and its reference WAV. '
+        'The `default` profile cannot be deleted.'
+    ),
+    responses={
+        200: {'description': 'Voice profile deleted'},
+        400: {'description': 'Cannot delete the default profile'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        404: {'description': 'No voice profile found with the given name'},
+    },
+)
 def delete_voice(name: str):
     """Delete a named voice profile."""
     registry = _get_registry()

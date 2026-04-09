@@ -98,15 +98,21 @@ def _sanitize_job_id(job_id: str | None) -> str:
     '/generate',
     response_model=GenerateResponse,
     status_code=202,
-    summary='Submit TTS job',
+    summary='Submit a TTS job',
     description=(
-        'Submit text for asynchronous speech synthesis. '
-        'Returns immediately with a job ID to poll for status.'
+        'Submit text for asynchronous speech synthesis. The request returns immediately '
+        'with a `job_id`. Poll `GET /tts/status/{job_id}` until `status` is `completed`, '
+        'then retrieve the audio URL from the `gcs_uri` field or download via '
+        '`GET /tts/download/{job_id}` (local storage only).\n\n'
+        'If you submit a request with a `job_id` that already exists, the existing '
+        "job's current status is returned — no duplicate synthesis is triggered."
     ),
     responses={
-        202: {'description': 'Job accepted and queued for processing'},
-        422: {'description': 'Validation error (empty text, text too long, or invalid job_id)'},
-        503: {'description': 'Service unavailable (voice sample not configured)'},
+        202: {'description': 'Job accepted and queued for synthesis'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        422: {'description': 'Validation error — text is empty, too long, or job_id is malformed'},
+        503: {'description': 'Voice sample not configured on the server'},
     },
 )
 async def generate(
@@ -213,10 +219,16 @@ async def generate(
     '/status/{job_id}',
     response_model=StatusResponse,
     summary='Get job status',
-    description='Retrieve the current status and metadata of a TTS job.',
+    description=(
+        'Returns the current status and metadata for a job. '
+        'Poll this endpoint after submitting a job. '
+        'Typical lifecycle: `queued` → `processing` → `completed` (or `failed`).'
+    ),
     responses={
-        200: {'description': 'Job status retrieved'},
-        404: {'description': 'Job not found'},
+        200: {'description': 'Job status and metadata'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        404: {'description': 'No job found with the given ID'},
     },
 )
 async def get_status(
@@ -237,13 +249,19 @@ async def get_status(
 
 @router.get(
     '/download/{job_id}',
-    summary='Download audio',
-    description="Download the generated MP3 file. Only available when job status is 'completed'.",
+    summary='Download generated audio',
+    description=(
+        'Download the synthesised MP3 directly from the server. '
+        'Only available when `status` is `completed` and `STORAGE_BACKEND=local`. '
+        'For GCS or S3 backends, use the URL in the `gcs_uri` field instead.'
+    ),
     responses={
-        200: {'description': 'Audio file (audio/mpeg)', 'content': {'audio/mpeg': {}}},
-        404: {'description': 'Job not found'},
-        409: {'description': 'Job not completed'},
-        410: {'description': 'Audio file no longer available'},
+        200: {'description': 'MP3 audio file', 'content': {'audio/mpeg': {}}},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        404: {'description': 'No job found with the given ID'},
+        409: {'description': 'Job is not yet completed'},
+        410: {'description': 'Audio file has been deleted or is no longer available'},
     },
 )
 async def download(
@@ -310,12 +328,17 @@ async def download(
 @router.post(
     '/pause/{job_id}',
     response_model=StatusResponse,
-    summary='Pause TTS job',
-    description='Pause an active TTS job. Synthesis will stop after the current chunk.',
+    summary='Pause a job',
+    description=(
+        'Pause an active TTS job. Synthesis stops after the current chunk finishes. '
+        'Resume later with `POST /tts/resume/{job_id}`.'
+    ),
     responses={
-        200: {'description': 'Job paused'},
-        404: {'description': 'Job not found'},
-        409: {'description': 'Job already completed or failed'},
+        200: {'description': 'Job paused successfully'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        404: {'description': 'No job found with the given ID'},
+        409: {'description': 'Job is already completed or failed and cannot be paused'},
     },
 )
 async def pause_job(
@@ -344,12 +367,14 @@ async def pause_job(
 @router.post(
     '/resume/{job_id}',
     response_model=StatusResponse,
-    summary='Resume TTS job',
-    description='Resume a paused TTS job.',
+    summary='Resume a paused job',
+    description='Resume a previously paused TTS job. The job must be in `paused` state.',
     responses={
-        200: {'description': 'Job resumed'},
-        404: {'description': 'Job not found'},
-        409: {'description': 'Job not paused'},
+        200: {'description': 'Job resumed successfully'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        404: {'description': 'No job found with the given ID'},
+        409: {'description': 'Job is not in paused state'},
     },
 )
 async def resume_job(
@@ -374,11 +399,17 @@ async def resume_job(
 
 @router.delete(
     '/{job_id}',
-    summary='Delete TTS job',
-    description='Abort an active job and remove all associated files and records.',
+    summary='Delete a job',
+    description=(
+        'Abort a running job and permanently delete all associated files and records. '
+        'If the job is actively synthesising, it is cancelled immediately. '
+        'This operation cannot be undone.'
+    ),
     responses={
-        200: {'description': 'Job deleted and resources cleaned up'},
-        404: {'description': 'Job not found'},
+        200: {'description': 'Job and all associated files deleted'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        404: {'description': 'No job found with the given ID'},
     },
 )
 async def delete_job(
@@ -428,9 +459,14 @@ async def delete_job(
     '/jobs',
     response_model=JobListResponse,
     summary='List all jobs',
-    description='Retrieve all TTS jobs with their current status.',
+    description=(
+        'Returns all jobs currently tracked in Redis, with their status and metadata. '
+        'Jobs expire after the configured TTL (default 24 hours).'
+    ),
     responses={
-        200: {'description': 'Job list retrieved'},
+        200: {'description': 'All tracked jobs and their current state'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
     },
 )
 async def list_jobs() -> JobListResponse:
