@@ -225,51 +225,61 @@ async def run_tts_job(
         total_words = 0
         chunk_index = 0
         narration_skipped = False
-        _ns_span = _span('tts.narration_synthesis')
-        _ns_span.__enter__()
+        with _span('tts.narration_synthesis'):
+            if narration is not None:
+                # Pipelined: narrate chunk N, synthesize chunk N while narrating chunk N+1
+                try:
+                    async for narrated_segment in narration.narrate_iter(text):
+                        await _check_status()
+                        # Split this narrated segment into TTS-sized chunks
+                        tts_chunks, seg_words = prepare_text_for_synthesis(
+                            narrated_segment, MAX_CHUNK_WORDS
+                        )
+                        all_chunks.extend(tts_chunks)
+                        total_words += seg_words
 
-        if narration is not None:
-            # Pipelined: narrate chunk N, synthesize chunk N while narrating chunk N+1
-            try:
-                async for narrated_segment in narration.narrate_iter(text):
-                    await _check_status()
-                    # Split this narrated segment into TTS-sized chunks
-                    tts_chunks, seg_words = prepare_text_for_synthesis(
-                        narrated_segment, MAX_CHUNK_WORDS
+                        # Synthesize these TTS chunks immediately (don't wait for next narration)
+                        segment_paths = await synthesize_chunks_auto(
+                            chunks=tts_chunks,
+                            job_dir=job_dir,
+                            job_id=f'{job_id}',
+                            status_check_callback=_check_status,
+                            chunk_offset=chunk_index,
+                            generation_kwargs=generation_kwargs,
+                        )
+                        chunk_wav_paths.extend(segment_paths)
+                        chunk_index += len(tts_chunks)
+
+                    logger.info(
+                        f'[{job_id}] Pipelined narration+synthesis complete — '
+                        f'{len(chunk_wav_paths)} audio chunks, {total_words} words'
                     )
-                    all_chunks.extend(tts_chunks)
-                    total_words += seg_words
-
-                    # Synthesize these TTS chunks immediately (don't wait for next narration)
-                    segment_paths = await synthesize_chunks_auto(
-                        chunks=tts_chunks,
+                except Exception as exc:
+                    logger.warning(
+                        f'[{job_id}] Pipelined narration failed, falling back to sequential: {exc}'
+                    )
+                    # Fallback: narrate all, then synthesize all
+                    try:
+                        narrated_text = await narration.narrate(text)
+                    except Exception as narration_exc:
+                        logger.warning(
+                            f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
+                        )
+                        narrated_text = text
+                        narration_skipped = True
+                    all_chunks, total_words = prepare_text_for_synthesis(
+                        narrated_text, MAX_CHUNK_WORDS
+                    )
+                    chunk_wav_paths = await synthesize_chunks_auto(
+                        chunks=all_chunks,
                         job_dir=job_dir,
-                        job_id=f'{job_id}',
+                        job_id=job_id,
                         status_check_callback=_check_status,
-                        chunk_offset=chunk_index,
                         generation_kwargs=generation_kwargs,
                     )
-                    chunk_wav_paths.extend(segment_paths)
-                    chunk_index += len(tts_chunks)
-
-                logger.info(
-                    f'[{job_id}] Pipelined narration+synthesis complete — '
-                    f'{len(chunk_wav_paths)} audio chunks, {total_words} words'
-                )
-            except Exception as exc:
-                logger.warning(
-                    f'[{job_id}] Pipelined narration failed, falling back to sequential: {exc}'
-                )
-                # Fallback: narrate all, then synthesize all
-                try:
-                    narrated_text = await narration.narrate(text)
-                except Exception as narration_exc:
-                    logger.warning(
-                        f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
-                    )
-                    narrated_text = text
-                    narration_skipped = True
-                all_chunks, total_words = prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
+            else:
+                # No narration available — synthesize raw text directly
+                all_chunks, total_words = prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
                 chunk_wav_paths = await synthesize_chunks_auto(
                     chunks=all_chunks,
                     job_dir=job_dir,
@@ -277,18 +287,6 @@ async def run_tts_job(
                     status_check_callback=_check_status,
                     generation_kwargs=generation_kwargs,
                 )
-        else:
-            # No narration available — synthesize raw text directly
-            all_chunks, total_words = prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
-            chunk_wav_paths = await synthesize_chunks_auto(
-                chunks=all_chunks,
-                job_dir=job_dir,
-                job_id=job_id,
-                status_check_callback=_check_status,
-                generation_kwargs=generation_kwargs,
-            )
-
-        _ns_span.__exit__(None, None, None)
 
         if not chunk_wav_paths:
             raise RuntimeError('No audio chunks were synthesized')

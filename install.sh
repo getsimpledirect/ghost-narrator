@@ -110,7 +110,7 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
     if [ -n "$N8N_PASS" ]; then
         tmpfile=$(mktemp)
         grep -v '^N8N_PASSWORD=' .env > "$tmpfile"
-        echo "N8N_PASSWORD=${N8N_PASS}" >> "$tmpfile"
+        printf '%s=%s\n' N8N_PASSWORD "$N8N_PASS" >> "$tmpfile"
         mv "$tmpfile" .env
     fi
 
