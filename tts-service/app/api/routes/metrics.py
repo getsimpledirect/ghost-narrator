@@ -166,7 +166,19 @@ def record_cache_miss():
         cache_misses_total.inc()
 
 
-@router.get('/metrics')
+@router.get(
+    '/metrics',
+    summary='Prometheus metrics',
+    description=(
+        'Exposes job, synthesis, storage, LLM, and cache metrics in Prometheus text format. '
+        'Scrape this endpoint with your Prometheus collector. '
+        'Returns a plain-text `# Prometheus client not installed` message if '
+        '`prometheus-client` is not available.'
+    ),
+    responses={
+        200: {'description': 'Prometheus metrics in text exposition format'},
+    },
+)
 async def metrics():
     """Prometheus metrics endpoint."""
     if not PROMETHEUS_AVAILABLE or registry is None:

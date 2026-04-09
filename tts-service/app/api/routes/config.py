@@ -30,14 +30,20 @@ router = APIRouter(prefix='/tts/config', tags=['Config'], dependencies=[Depends(
 @router.get(
     '/generation',
     response_model=TTSGenerationConfigResponse,
-    summary='Get TTS generation config',
+    summary='Get generation config',
+    description=(
+        'Returns the current TTS generation parameters in three layers: '
+        'hardware-tier defaults, any user overrides saved in Redis, and '
+        'the merged effective values that will be used for the next synthesis job.'
+    ),
+    responses={
+        200: {'description': 'Current generation config'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+    },
 )
 async def get_generation_config() -> TTSGenerationConfigResponse:
-    """Return the effective TTS generation parameters.
-
-    Shows tier defaults, any user overrides saved in Redis, and the
-    merged effective values that will be used for the next synthesis job.
-    """
+    """Return the effective TTS generation parameters."""
     effective, overrides = await get_effective_config()
     return TTSGenerationConfigResponse(
         tier=ENGINE_CONFIG.tier.value,
@@ -50,17 +56,23 @@ async def get_generation_config() -> TTSGenerationConfigResponse:
 @router.put(
     '/generation',
     response_model=TTSGenerationConfigResponse,
-    summary='Update TTS generation config',
+    summary='Update generation config',
+    description=(
+        'Partially update TTS generation parameters. Only fields you include are changed — '
+        'omitted fields keep their current value. Changes are persisted to Redis and '
+        'survive container restarts. Takes effect on the next synthesis job.'
+    ),
+    responses={
+        200: {'description': 'Updated generation config'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+        422: {'description': 'Validation error — a parameter value is out of range'},
+    },
 )
 async def update_generation_config(
     body: TTSGenerationConfigUpdate,
 ) -> TTSGenerationConfigResponse:
-    """Partially update TTS generation parameters.
-
-    Only supplied fields are updated; omitted fields keep their current
-    override value (or fall through to tier defaults if not previously set).
-    Changes are persisted to Redis and survive container restarts.
-    """
+    """Partially update TTS generation parameters."""
     existing = await get_overrides()
     # Merge: only include explicitly-set fields from the request
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -80,7 +92,17 @@ async def update_generation_config(
 @router.delete(
     '/generation',
     response_model=TTSGenerationConfigResponse,
-    summary='Reset TTS generation config to tier defaults',
+    summary='Reset generation config to defaults',
+    description=(
+        'Clear all saved overrides and revert to the hardware-tier defaults. '
+        'This deletes the Redis-stored config — the next synthesis job will use '
+        'the defaults for your detected hardware tier.'
+    ),
+    responses={
+        200: {'description': 'Config reset to tier defaults'},
+        401: {'description': 'Missing Authorization header'},
+        403: {'description': 'Invalid API key'},
+    },
 )
 async def reset_generation_config() -> TTSGenerationConfigResponse:
     """Clear all user overrides and revert to hardware-tier defaults."""

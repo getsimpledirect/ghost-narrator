@@ -80,26 +80,44 @@ TAGS_METADATA = [
     },
     {
         'name': 'Voices',
-        'description': 'Voice profile management — upload, list, and delete named voice profiles.',
+        'description': (
+            'Voice profile management. Upload a WAV file to register a named voice profile, '
+            'then reference it by name in synthesis requests via `voice_profile`.'
+        ),
     },
     {
         'name': 'Monitoring',
-        'description': 'Prometheus metrics endpoint.',
+        'description': 'Prometheus metrics. Scrape `/metrics` with your collector.',
     },
 ]
 
 API_DESCRIPTION = """
-Studio-quality Text-to-Speech API powered by **Qwen3-TTS** for Ghost CMS.
+Studio-quality Text-to-Speech API powered by **Qwen3-TTS**.
 
-## Features
+Submit text, get back a narrated MP3 — asynchronously, at any length,
+in your cloned voice.
 
-- Hardware-tiered model selection (CPU/GPU auto-detection)
-- High-fidelity voice cloning (Zero-shot)
-- Information-preserving narration pipeline
-- Flexible storage: local, GCS, AWS S3
-- Natural prosody and breathing
-- Long-form text support (up to 100,000 characters)
-- Async job processing with status tracking
+## How it works
+
+1. **POST** `/tts/generate` with your text → receive a `job_id` immediately
+2. **GET** `/tts/status/{job_id}` to poll until `status` is `completed`
+3. Audio is uploaded to your configured storage backend (local, GCS, or S3)
+
+## Authentication
+
+All `/tts/*`, `/tts/config/*`, and `/voices/*` endpoints require a
+Bearer token. Click **Authorize** and enter your `TTS_API_KEY` value.
+
+```
+Authorization: Bearer <your-TTS_API_KEY>
+```
+
+Health and metrics endpoints are open — no token required.
+
+## Hardware tiers
+
+The service auto-selects TTS and LLM models based on available GPU VRAM
+at startup. Check `/health` to see which tier and models are active.
 """
 
 

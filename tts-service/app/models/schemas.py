@@ -102,7 +102,12 @@ class StatusResponse(BaseModel):
         description='Current status: queued, processing, paused, completed, or failed.',
     )
     gcs_uri: Optional[str] = Field(
-        default=None, description='GCS URI when completed and GCS is enabled.'
+        default=None,
+        description=(
+            'Public URL or storage URI of the generated audio file. '
+            'Populated when the job completes. Format depends on storage backend: '
+            'a `gs://` URI for GCS, an `https://` URL for S3, or a local file path.'
+        ),
     )
     error: Optional[str] = Field(default=None, description="Error message when status is 'failed'.")
     created_at: Optional[float] = Field(default=None, description='Unix timestamp of job creation.')
@@ -160,26 +165,76 @@ class TTSGenerationConfigUpdate(BaseModel):
     """Partial update for TTS generation parameters. Omitted fields are unchanged."""
 
     temperature: Optional[float] = Field(
-        default=None, ge=0.1, le=2.0, description='Sampling temperature (0.1–2.0).'
+        default=None,
+        ge=0.1,
+        le=2.0,
+        description=(
+            'Controls expressiveness and variability of the generated speech (0.1–2.0). '
+            'Lower values produce more consistent, neutral delivery. '
+            'Higher values add more variation and emotion but may reduce stability.'
+        ),
     )
     repetition_penalty: Optional[float] = Field(
-        default=None, ge=1.0, le=1.5, description='Repetition penalty (1.0–1.5).'
+        default=None,
+        ge=1.0,
+        le=1.5,
+        description=(
+            'Penalises the model for repeating the same sounds or patterns (1.0–1.5). '
+            '1.0 means no penalty. Increase slightly if you hear audio artefacts or stuttering.'
+        ),
     )
-    top_k: Optional[int] = Field(default=None, ge=1, le=200, description='Top-k sampling (1–200).')
+    top_k: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description=(
+            'Limits token selection to the top-k most likely candidates at each step (1–200). '
+            'Lower values make speech more predictable; higher values allow more variety.'
+        ),
+    )
     top_p: Optional[float] = Field(
-        default=None, ge=0.0, le=1.0, description='Nucleus sampling cutoff (0.0–1.0).'
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            'Nucleus sampling threshold (0.0–1.0). The model samples from the smallest set '
+            'of tokens whose cumulative probability exceeds this value. '
+            '0.9 is a safe default; lower values tighten the distribution.'
+        ),
     )
     temperature_sub_talker: Optional[float] = Field(
-        default=None, ge=0.1, le=2.0, description='Acoustic decoder temperature (0.1–2.0).'
+        default=None,
+        ge=0.1,
+        le=2.0,
+        description=(
+            'Temperature for the acoustic decoder (0.1–2.0). '
+            'Controls prosody fine-detail: pitch micro-variation, breath placement, and rhythm. '
+            'Analogous to `temperature` but applied at the waveform generation stage.'
+        ),
     )
     top_k_sub_talker: Optional[int] = Field(
-        default=None, ge=1, le=200, description='Acoustic decoder top-k (1–200).'
+        default=None,
+        ge=1,
+        le=200,
+        description='Top-k for the acoustic decoder (1–200). See `top_k` for interpretation.',
     )
     do_sample_sub_talker: Optional[bool] = Field(
-        default=None, description='Enable sampling in acoustic decoder.'
+        default=None,
+        description=(
+            'Whether the acoustic decoder uses sampling (`true`) or greedy decoding (`false`). '
+            'Sampling produces more natural, varied prosody. '
+            'Greedy decoding is more deterministic but can sound flat.'
+        ),
     )
     max_new_tokens: Optional[int] = Field(
-        default=None, ge=500, le=16000, description='Max tokens per synthesis chunk (500–16000).'
+        default=None,
+        ge=500,
+        le=16000,
+        description=(
+            'Maximum tokens the model may generate per text chunk (500–16000). '
+            'Increase if long sentences are being cut off mid-word. '
+            'Decrease to limit memory use on low-VRAM hardware.'
+        ),
     )
 
 
