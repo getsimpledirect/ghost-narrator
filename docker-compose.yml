@@ -67,7 +67,7 @@ services:
 
   # ─── Ollama: Bundled Narration LLM ────────────────────────────────────────
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.6.5
     container_name: ollama
     restart: unless-stopped
     ports:
@@ -93,13 +93,14 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '6'
           memory: 12G
         reservations:
           memory: 2G
 
   # ─── n8n: Workflow Orchestration ─────────────────────────────────────────────
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:1.88.0
     container_name: n8n
     restart: unless-stopped
     ports:
@@ -243,6 +244,7 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '4'
           memory: 6G
         reservations:
           memory: 4G
