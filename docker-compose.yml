@@ -99,7 +99,7 @@ services:
 
   # ─── n8n: Workflow Orchestration ─────────────────────────────────────────────
   n8n:
-    image: n8nio/n8n:1.93.0
+    image: n8nio/n8n:1.123.30
     container_name: n8n
     restart: unless-stopped
     ports:
