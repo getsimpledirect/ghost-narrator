@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
 from app.core.hardware import HardwareTier
+from app.core.retry import retry_with_backoff
+from app.config import LLM_TIMEOUT, LLM_COMPLETENESS_TIMEOUT
 from app.domains.narration.prompt import (
     get_system_prompt,
     get_continuity_instruction,
@@ -76,7 +78,11 @@ def _tail_sentences(text: str, n: int = 3) -> str:
     return ' '.join(sentences[-n:])
 
 
-async def _call_llm(client, messages: list[dict], model: str, timeout: float = 120.0) -> str:
+async def _call_llm(client, messages: list[dict], model: str, timeout: float = None) -> str:
+    """Call LLM with configurable timeout, using config defaults if not specified."""
+    if timeout is None:
+        timeout = LLM_TIMEOUT
+
     response = await client.chat.completions.create(
         model=model,
         messages=messages,
@@ -84,6 +90,15 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = 1
         timeout=timeout,
     )
     return response.choices[0].message.content.strip()
+
+
+# Retry wrapper for LLM calls - handles transient failures
+@retry_with_backoff(max_attempts=3, base_delay=2.0, max_delay=30.0, exceptions=(Exception,))
+async def _call_llm_with_retry(
+    client, messages: list[dict], model: str, timeout: float = None
+) -> str:
+    """Call LLM with retry on failure."""
+    return await _call_llm(client, messages, model, timeout)
 
 
 class NarrationStrategy(ABC):
@@ -115,7 +130,8 @@ class ChunkedStrategy(NarrationStrategy):
             {'role': 'system', 'content': self._system_prompt},
             {'role': 'user', 'content': chunk + continuity},
         ]
-        result = await _call_llm(self._client, messages, self._model)
+        # Use retry wrapper for network resilience
+        result = await _call_llm_with_retry(self._client, messages, self._model)
         validation = _validator.validate(chunk, result)
         if not validation.passed:
             logger.warning(
@@ -135,7 +151,10 @@ class ChunkedStrategy(NarrationStrategy):
         """
         messages = get_completeness_check_prompt(source, narration)
         try:
-            raw = await _call_llm(self._client, messages, self._model, timeout=60.0)
+            # Use longer timeout for completeness check (more complex LLM task)
+            raw = await _call_llm(
+                self._client, messages, self._model, timeout=LLM_COMPLETENESS_TIMEOUT
+            )
             # Parse JSON array from response
             raw = raw.strip()
             if raw.startswith('```'):

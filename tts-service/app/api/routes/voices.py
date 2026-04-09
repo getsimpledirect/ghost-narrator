@@ -3,12 +3,13 @@
 from __future__ import annotations
 import tempfile
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
+from app.api.dependencies import require_api_key
 from app.domains.voices.registry import VoiceRegistry
 from app.config import VOICE_SAMPLE_PATH
 
-router = APIRouter(prefix='/voices', tags=['voices'])
+router = APIRouter(prefix='/voices', tags=['voices'], dependencies=[Depends(require_api_key)])
 
 
 def _get_registry() -> VoiceRegistry:

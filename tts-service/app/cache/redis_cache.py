@@ -4,20 +4,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    import redis
+    import redis.asyncio as redis
+    from redis.asyncio import Redis as AsyncRedis
 
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    logger.warning('redis not installed, caching disabled')
+    logger.warning('redis.asyncio not installed, caching disabled')
 
 
 class RedisCache:
-    """Redis-backed caching with TTL support."""
+    """Redis-backed caching with TTL support (async)."""
 
     def __init__(self, redis_url: str = 'redis://localhost:6379', default_ttl: int = 3600):
         self.default_ttl = default_ttl
-        self._client = None
+        self._client: Optional[AsyncRedis] = None
         self._redis_url = redis_url
 
         if REDIS_AVAILABLE:
@@ -54,6 +55,15 @@ class RedisCache:
             await self._client.delete(key)
         except Exception as e:
             logger.warning(f'Cache delete error: {e}')
+
+    async def clear(self):
+        """Clear all keys (for testing)."""
+        if not self._client:
+            return
+        try:
+            await self._client.flushdb()
+        except Exception as e:
+            logger.warning(f'Cache clear error: {e}')
 
     @property
     def is_available(self) -> bool:

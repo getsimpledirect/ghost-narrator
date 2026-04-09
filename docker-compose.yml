@@ -40,20 +40,21 @@ services:
     image: redis:7-alpine
     container_name: redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # Port 6379 intentionally NOT published to host — Redis has no other auth layer.
+    # Access it from within the Docker network only (pipeline_net).
     command: >
       redis-server
       --appendonly yes
       --appendfsync everysec
       --maxmemory 512mb
       --maxmemory-policy volatile-lru
+      --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
       - pipeline_net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -66,7 +67,7 @@ services:
 
   # ─── Ollama: Bundled Narration LLM ────────────────────────────────────────
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.20.4
     container_name: ollama
     restart: unless-stopped
     ports:
@@ -92,13 +93,14 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '6'
           memory: 12G
         reservations:
           memory: 2G
 
   # ─── n8n: Workflow Orchestration ─────────────────────────────────────────────
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:1.93.0
     container_name: n8n
     restart: unless-stopped
     ports:
@@ -201,7 +203,7 @@ services:
       # n8n callback webhook
       - N8N_CALLBACK_URL=http://n8n:5678/webhook/tts-callback
       # Redis job store
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - REDIS_JOB_TTL=${REDIS_JOB_TTL:-86400}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
@@ -242,6 +244,7 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '4'
           memory: 6G
         reservations:
           memory: 4G

@@ -34,9 +34,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path as FastApiPath
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path as FastApiPath
 from fastapi.responses import FileResponse
 
+from app.api.dependencies import require_api_key
 from app.config import (
     GCS_AUDIO_PREFIX,
     MAX_JOB_ID_LENGTH,
@@ -56,7 +57,7 @@ from app.domains.job.runner import run_tts_job
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix='/tts', tags=['TTS'])
+router = APIRouter(prefix='/tts', tags=['TTS'], dependencies=[Depends(require_api_key)])
 
 
 def _sanitize_job_id(job_id: str | None) -> str:
@@ -183,6 +184,11 @@ async def generate(
         existing_job = await job_store.get(job_id)
         existing_status = existing_job.get('status', 'unknown') if existing_job else 'unknown'
         return GenerateResponse(job_id=job_id, status=existing_status)
+
+    # Record metrics for new job creation
+    from app.api.routes.metrics import record_job_created
+
+    record_job_created()
 
     # Build GCS object path
     gcs_object_path = request.storage_path or (

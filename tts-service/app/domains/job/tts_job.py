@@ -36,6 +36,7 @@ import logging
 import os
 import shutil
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -76,6 +77,18 @@ from app.domains.synthesis.service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _span(name: str):
+    """Return an OTel span context manager, or a no-op if tracing is unavailable."""
+    try:
+        from app.core.tracing import tracer
+
+        if tracer is not None:
+            return tracer.start_as_current_span(name)
+    except Exception:
+        pass
+    return nullcontext()
 
 
 async def run_tts_job(
@@ -212,6 +225,8 @@ async def run_tts_job(
         total_words = 0
         chunk_index = 0
         narration_skipped = False
+        _ns_span = _span('tts.narration_synthesis')
+        _ns_span.__enter__()
 
         if narration is not None:
             # Pipelined: narrate chunk N, synthesize chunk N while narrating chunk N+1
@@ -272,6 +287,8 @@ async def run_tts_job(
                 status_check_callback=_check_status,
                 generation_kwargs=generation_kwargs,
             )
+
+        _ns_span.__exit__(None, None, None)
 
         if not chunk_wav_paths:
             raise RuntimeError('No audio chunks were synthesized')
@@ -387,12 +404,13 @@ async def run_tts_job(
         audio_uri: Optional[str] = None
         upload_failed = False
         try:
-            backend = get_storage_backend()
-            audio_uri = await backend.upload(
-                Path(final_mp3),
-                job_id,
-                site_slug,
-            )
+            with _span('tts.storage_upload'):
+                backend = get_storage_backend()
+                audio_uri = await backend.upload(
+                    Path(final_mp3),
+                    job_id,
+                    site_slug,
+                )
         except Exception as exc:
             logger.error(f'[{job_id}] Storage upload failed (non-fatal): {exc}')
             audio_uri = None
@@ -424,6 +442,11 @@ async def run_tts_job(
         if upload_failed:
             completed_data['upload_warning'] = 'Storage upload failed; audio available locally only'
         await job_store.update(job_id, completed_data)
+
+        # Record metrics for job completion
+        from app.api.routes.metrics import record_job_completed
+
+        record_job_completed(total_duration)
 
         logger.info(
             f'[{job_id}] ✓ Job completed in {total_duration:.1f}s '
@@ -460,6 +483,12 @@ async def run_tts_job(
                 'duration_seconds': duration,
             },
         )
+
+        # Record metrics for job failure
+        from app.api.routes.metrics import record_job_failed
+
+        record_job_failed()
+
         await notify_job_failed(job_id, f'{error_name}: {error_msg}')
 
     except Exception as exc:
@@ -493,6 +522,11 @@ async def run_tts_job(
                 'duration_seconds': duration,
             },
         )
+
+        # Record metrics for job failure
+        from app.api.routes.metrics import record_job_failed
+
+        record_job_failed()
 
         # Notify webhook of failure
         await notify_job_failed(job_id, error_message)

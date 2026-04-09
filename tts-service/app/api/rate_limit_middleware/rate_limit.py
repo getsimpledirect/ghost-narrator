@@ -41,11 +41,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         with self._lock:
             self._requests[key].append(datetime.now())
 
+    def _get_client_ip(self, request: Request) -> str:
+        from app.config import TRUSTED_PROXY_COUNT
+
+        if TRUSTED_PROXY_COUNT == 0:
+            return request.client.host if request.client else '0.0.0.0'
+        forwarded_for = request.headers.get('X-Forwarded-For', '')
+        if not forwarded_for:
+            return request.client.host if request.client else '0.0.0.0'
+        ips = [ip.strip() for ip in forwarded_for.split(',')]
+        idx = max(0, len(ips) - TRUSTED_PROXY_COUNT - 1)
+        return ips[idx]
+
     async def dispatch(self, request: Request, call_next):
         if request.url.path in ['/health', '/health/ready', '/metrics']:
             return await call_next(request)
 
-        client_ip = request.headers.get('X-Forwarded-For', request.client.host)
+        client_ip = self._get_client_ip(request)
         key = f'{client_ip}:{request.url.path}'
 
         if self._is_rate_limited(key):

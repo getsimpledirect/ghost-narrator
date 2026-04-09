@@ -3,6 +3,11 @@
 # Handles: .env setup, storage backend config, voice directory, Docker images.
 set -euo pipefail
 
+if [ ! -f .env.example ]; then
+    echo "ERROR: .env.example not found. Run this script from the ghost-narrator directory." >&2
+    exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -103,14 +108,40 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
     read -r -s -p "n8n admin password: " N8N_PASS
     echo ""
     if [ -n "$N8N_PASS" ]; then
-        sed -i.bak "s/N8N_PASSWORD=.*/N8N_PASSWORD=${N8N_PASS}/" .env
+        tmpfile=$(mktemp)
+        grep -v '^N8N_PASSWORD=' .env > "$tmpfile"
+        echo "N8N_PASSWORD=${N8N_PASS}" >> "$tmpfile"
+        mv "$tmpfile" .env
     fi
 
     # Generate encryption key if placeholder or empty
     if grep -qE "N8N_ENCRYPTION_KEY=(changeme|your-encryption-key-here|)$" .env 2>/dev/null; then
         ENC_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
-        sed -i.bak "s/N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=${ENC_KEY}/" .env
+        tmpfile=$(mktemp)
+        grep -v '^N8N_ENCRYPTION_KEY=' .env > "$tmpfile"
+        echo "N8N_ENCRYPTION_KEY=${ENC_KEY}" >> "$tmpfile"
+        mv "$tmpfile" .env
         ok "Generated N8N_ENCRYPTION_KEY"
+    fi
+
+    # Generate Redis password
+    if [ -z "$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2)" ]; then
+        REDIS_PASS=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
+        tmpfile=$(mktemp)
+        grep -v '^REDIS_PASSWORD=' .env > "$tmpfile"
+        echo "REDIS_PASSWORD=${REDIS_PASS}" >> "$tmpfile"
+        mv "$tmpfile" .env
+        info "Generated REDIS_PASSWORD"
+    fi
+
+    # Generate Ghost webhook HMAC secret
+    if [ -z "$(grep '^N8N_GHOST_WEBHOOK_SECRET=' .env | cut -d= -f2)" ]; then
+        WEBHOOK_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
+        tmpfile=$(mktemp)
+        grep -v '^N8N_GHOST_WEBHOOK_SECRET=' .env > "$tmpfile"
+        echo "N8N_GHOST_WEBHOOK_SECRET=${WEBHOOK_SECRET}" >> "$tmpfile"
+        mv "$tmpfile" .env
+        info "Generated N8N_GHOST_WEBHOOK_SECRET — set this same value in Ghost's webhook settings"
     fi
 
     # Hardware tier override (optional — auto-detected by default)
@@ -169,7 +200,7 @@ case "$STORAGE_CHOICE" in
         KEY_FILE="${SCRIPT_DIR}/secrets/${SA_NAME}-key.json"
         mkdir -p "${SCRIPT_DIR}/secrets"
         gcloud iam service-accounts keys create "${KEY_FILE}" --iam-account="${SA_EMAIL}"
-        chmod 644 "${KEY_FILE}"
+        chmod 600 "${KEY_FILE}"
 
         sed -i.bak "s/STORAGE_BACKEND=.*/STORAGE_BACKEND=gcs/" .env
         sed -i.bak -E "s|^#?[[:space:]]*GCS_BUCKET_NAME=.*|GCS_BUCKET_NAME=${GCS_BUCKET}|" .env
@@ -238,7 +269,13 @@ else
     read -r -p "Path to voice sample (or skip): " VOICE_PATH
     if [ -n "$VOICE_PATH" ] && [ -f "$VOICE_PATH" ]; then
         cp "$VOICE_PATH" tts-service/voices/default/reference.wav
-        ok "Voice sample copied"
+        
+        # Validate it's a real audio file (check for RIFF header)
+        if file tts-service/voices/default/reference.wav 2>/dev/null | grep -q -i "wave\|audio"; then
+            ok "Voice sample copied and validated"
+        else
+            warn "File may not be a valid WAV audio — proceeding anyway"
+        fi
     else
         warn "Skipping — add voice sample before starting"
     fi

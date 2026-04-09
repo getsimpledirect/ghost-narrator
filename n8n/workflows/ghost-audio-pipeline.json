@@ -1,5 +1,5 @@
 {
-  "name": "Ghost Article → Audio Pipeline",
+  "name": "Ghost Article \u00e2\u2020\u2019 Audio Pipeline",
   "license": "MIT",
   "licenseUrl": "https://opensource.org/licenses/MIT",
   "author": "Ayush Naik",
@@ -9,7 +9,10 @@
       "name": "Ghost: Post Published",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1.1,
-      "position": [0, 300],
+      "position": [
+        0,
+        300
+      ],
       "webhookId": "ghost-published",
       "parameters": {
         "httpMethod": "POST",
@@ -19,11 +22,27 @@
       }
     },
     {
+      "id": "hmac-validate",
+      "name": "Validate HMAC Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Validate Ghost webhook HMAC-SHA256 signature\nconst crypto = require('crypto');\nconst secret = $env.N8N_GHOST_WEBHOOK_SECRET;\n\nif (!secret) {\n  console.warn('N8N_GHOST_WEBHOOK_SECRET not set \u2014 webhook is unauthenticated');\n  return [{$json: $json}];\n}\n\nconst signature = $request.headers['x-ghost-signature'];\nif (!signature) {\n  throw new Error('Missing X-Ghost-Signature header \u2014 request rejected');\n}\n\n// Ghost signature format: \"sha256=<hex>, t=<timestamp>\"\nconst sigMatch = signature.match(/sha256=([a-f0-9]+)/);\nif (!sigMatch) {\n  throw new Error('Invalid X-Ghost-Signature format');\n}\n\nconst body = JSON.stringify($json);\nconst expected = crypto.createHmac('sha256', secret).update(body).digest('hex');\n\nif (!crypto.timingSafeEqual(Buffer.from(sigMatch[1], 'hex'), Buffer.from(expected, 'hex'))) {\n  throw new Error('X-Ghost-Signature validation failed \u2014 request rejected');\n}\n\nreturn [{$json: $json}];"
+      }
+    },
+    {
       "id": "extract-metadata",
       "name": "Extract Post Metadata",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [250, 300],
+      "position": [
+        500,
+        300
+      ],
       "parameters": {
         "jsCode": "// Extract Ghost webhook payload\nconst data = $input.first().json;\n\n// Handle manual trigger or empty payload\nif (!data || Object.keys(data).length === 0) {\n  throw new Error('Webhook triggered with no data. If testing manually, ensure you have provided a sample Ghost payload.');\n}\n\n// Ghost 5.x Structure: { \"post\": { \"current\": { ... }, \"previous\": { ... } } }\nlet post = data.post?.current || data.current || data.post || data.body?.post?.current || data.body?.post || data;\nlet previous = data.post?.previous || data.previous || data.body?.post?.previous;\n\nif (!post || !post.id || !post.url) {\n  console.error('Payload Structure Error. Keys found:', Object.keys(data).join(', '));\n  if (data.post) console.error('Post keys:', Object.keys(data.post).join(', '));\n  throw new Error(`Ghost webhook payload missing post.current.id or url. Found keys: ${Object.keys(data).join(', ')}`);\n}\n\n// Post-processing and status check\npost.slug = post.slug || `post-${post.id}`;\npost.title = post.title || 'Untitled Post';\n\n// Process if published or updated\nconst status = post.status?.toLowerCase();\nif (status && status !== 'published' && status !== 'updated') {\n  return [{ json: { skip: true, reason: `Post status is '${status}' (expected published or updated)` } }];      \n}\n\n// Helper to remove audio player from html/lexical for comparison\nconst stripAudioPlayer = (str) => {\n    if (!str) return '';\n    if (typeof str !== 'string') str = JSON.stringify(str);\n    return str.replace(/<!--kg-card-begin: html-->[\\s\\S]*?id=[\"']gn-audio-embed[\"'][\\s\\S]*?<!--kg-card-end: html-->/gi, '')\n              .replace(/<figure[^>]*>[\\s\\S]*?id=[\"']gn-audio-embed[\"'][\\s\\S]*?<\\/figure>/gi, '')\n              .replace(/<div[^>]*id=[\"']gn-audio-embed[\"'][^>]*>[\\s\\S]*?<\\/div>/gi, '')\n              .replace(/Listen to article/gi, '')\n              .replace(/Skip to content/gi, '');\n};\n\n// Check if audio already exists\nconst currentHtml = post.html || '';\nconst currentLexical = post.lexical || '';\nconst hasAudio = stripAudioPlayer(currentHtml).length < currentHtml.length - 50 ||\n                 stripAudioPlayer(currentLexical).length < currentLexical.length - 50;\n\nif (hasAudio) {\n  return [{ json: { skip: true, reason: 'Post already has audio embed' } }];\n}\n\n// Extract hostname from post URL for multi-site routing\nlet hostname = '';\ntry {\n  hostname = new URL(post.url).hostname;\n} catch (e) {\n  hostname = 'unknown';\n}\n\n// Generate job ID: {siteSlug}-pid-{postId}-{slug}-{timestamp}\nconst siteSlug = hostname.replace(/\\./g, '-');\nconst timestamp = Date.now();\nconst jobId = `${siteSlug}-pid-${post.id}-${post.slug}-${timestamp}`.substring(0, 200);\n\nreturn [{\n  json: {\n    skip: false,\n    postId: post.id,\n    postSlug: post.slug,\n    postTitle: post.title,\n    postUrl: post.url,\n    hostname: hostname,\n    siteSlug: siteSlug,\n    jobId: jobId,\n    publishedAt: post.published_at || post.created_at\n  }\n}];"
       }
@@ -33,7 +52,10 @@
       "name": "Should Process?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.1,
-      "position": [500, 300],
+      "position": [
+        750,
+        300
+      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -61,7 +83,10 @@
       "name": "Log Skipped",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [750, 450],
+      "position": [
+        1000,
+        450
+      ],
       "parameters": {
         "jsCode": "console.log('Skipped:', $input.first().json.reason);\nreturn $input.all();"
       }
@@ -71,7 +96,10 @@
       "name": "Fetch Full Article",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [750, 200],
+      "position": [
+        1000,
+        200
+      ],
       "parameters": {
         "method": "GET",
         "url": "={{ (() => { const h = $json.hostname; const s1 = $env.GHOST_SITE1_URL || ''; const s2 = $env.GHOST_SITE2_URL || ''; const s1h = s1 ? new URL(s1).hostname : ''; const s2h = s2 ? new URL(s2).hostname : ''; return h.includes(s1h) ? s1 : h.includes(s2h) ? s2 : s1; })() }}/ghost/api/content/posts/slug/{{ $json.postSlug }}/",
@@ -110,7 +138,10 @@
       "name": "Prepare Article Text",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 200],
+      "position": [
+        1250,
+        200
+      ],
       "parameters": {
         "jsCode": "const item = $input.first().json;\nconst post = item.posts?.[0];\n\nif (!post) {\n  throw new Error('Could not fetch article from Ghost API');\n}\n\n// Clean up the plaintext\nlet text = post.plaintext || '';\ntext = text.replace(/\\n{3,}/g, '\\n\\n').trim();\n\nif (!text) {\n  throw new Error('Post has no plaintext content - cannot generate audio');\n}\n\n// Get metadata from previous node\nconst meta = $('Extract Post Metadata').first().json;\n\nreturn [{\n  json: {\n    jobId: meta.jobId,\n    siteSlug: meta.siteSlug,\n    postTitle: post.title,\n    postSlug: post.slug,\n    articleText: text,\n    wordCount: text.split(/\\s+/).length\n  }\n}];"
       }
@@ -120,7 +151,10 @@
       "name": "Submit TTS Job",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1250, 200],
+      "position": [
+        1500,
+        200
+      ],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.TTS_SERVICE_URL }}/tts/generate",
@@ -149,7 +183,10 @@
       "name": "Log Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1500, 200],
+      "position": [
+        1750,
+        200
+      ],
       "parameters": {
         "jsCode": "const result = $input.first().json;\nconsole.log('TTS Job submitted:', result);\nif (result.error || result.detail) {\n  throw new Error('TTS service rejected job: ' + (result.error || result.detail));\n}\nreturn [{ json: { success: true, ...result } }];"
       }
@@ -160,7 +197,7 @@
       "main": [
         [
           {
-            "node": "Extract Post Metadata",
+            "node": "Validate HMAC Signature",
             "type": "main",
             "index": 0
           }
@@ -228,9 +265,20 @@
           }
         ]
       ]
+    },
+    "Validate HMAC Signature": {
+      "main": [
+        [
+          {
+            "node": "Extract Post Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,

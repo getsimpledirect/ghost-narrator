@@ -41,7 +41,7 @@ from app.api.rate_limit_middleware.rate_limit import RateLimitMiddleware
 from app.api.routes import health, tts, config as config_router
 from app.api.routes import metrics as metrics_router
 from app.cache.redis_cache import get_cache
-from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR
+from app.config import GCS_BUCKET_NAME, MAX_WORKERS, REDIS_URL, OUTPUT_DIR, validate_config
 from app.core.logging import setup_logging
 from app.core.tts_engine import get_engine_ready_event, initialize_tts_engine
 from app.domains.job.store import get_job_store, initialize_job_store
@@ -116,6 +116,9 @@ async def _background_model_loader():
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager for startup and shutdown."""
     global _model_loader_task
+
+    # Fail fast on configuration errors before any other startup
+    validate_config()
 
     setup_logging()
     logger.info('Starting TTS service...')
