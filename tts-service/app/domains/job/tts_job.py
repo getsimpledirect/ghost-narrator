@@ -83,6 +83,7 @@ def _span(name: str):
     """Return an OTel span context manager, or a no-op if tracing is unavailable."""
     try:
         from app.core.tracing import tracer
+
         if tracer is not None:
             return tracer.start_as_current_span(name)
     except Exception:

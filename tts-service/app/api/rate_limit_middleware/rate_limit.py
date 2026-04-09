@@ -43,6 +43,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def _get_client_ip(self, request: Request) -> str:
         from app.config import TRUSTED_PROXY_COUNT
+
         if TRUSTED_PROXY_COUNT == 0:
             return request.client.host if request.client else '0.0.0.0'
         forwarded_for = request.headers.get('X-Forwarded-For', '')
