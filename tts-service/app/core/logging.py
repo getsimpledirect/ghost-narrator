@@ -106,6 +106,14 @@ def setup_logging(level: str = None, log_format: str = None) -> logging.Logger:
     logging.getLogger('uvicorn').setLevel(logging.WARNING)
     logging.getLogger('fastapi').setLevel(logging.WARNING)
 
+    # Suppress health check polling from uvicorn access logs — these fire
+    # every 30s from the Docker healthcheck and drown out real traffic.
+    class _HealthCheckFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return '/health' not in record.getMessage()
+
+    logging.getLogger('uvicorn.access').addFilter(_HealthCheckFilter())
+
     return logger
 
 

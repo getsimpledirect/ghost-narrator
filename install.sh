@@ -210,7 +210,7 @@ case "$STORAGE_CHOICE" in
         KEY_FILE="${SCRIPT_DIR}/secrets/${SA_NAME}-key.json"
         mkdir -p "${SCRIPT_DIR}/secrets"
         gcloud iam service-accounts keys create "${KEY_FILE}" --iam-account="${SA_EMAIL}"
-        chmod 600 "${KEY_FILE}"
+        chmod 640 "${KEY_FILE}"
 
         sed -i.bak "s/STORAGE_BACKEND=.*/STORAGE_BACKEND=gcs/" .env
         sed -i.bak -E "s|^#?[[:space:]]*GCS_BUCKET_NAME=.*|GCS_BUCKET_NAME=${GCS_BUCKET}|" .env
