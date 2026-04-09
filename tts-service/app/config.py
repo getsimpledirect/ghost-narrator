@@ -194,3 +194,48 @@ def get_llm_client():
     from openai import AsyncOpenAI
 
     return AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
+
+
+def validate_config() -> None:
+    """Validate required configuration at startup. Raises RuntimeError on any failure.
+
+    Call this from the lifespan before model loading — fail fast rather than
+    discovering misconfiguration when a code path is first exercised.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    errors: list[str] = []
+
+    valid_backends = {'local', 'gcs', 's3'}
+    if STORAGE_BACKEND not in valid_backends:
+        errors.append(
+            f"STORAGE_BACKEND='{STORAGE_BACKEND}' is not valid. Must be one of: {valid_backends}"
+        )
+
+    if STORAGE_BACKEND == 'gcs' and not GCS_BUCKET_NAME:
+        errors.append('GCS_BUCKET_NAME must be set when STORAGE_BACKEND=gcs')
+
+    if STORAGE_BACKEND == 's3' and not S3_BUCKET_NAME:
+        errors.append('S3_BUCKET_NAME must be set when STORAGE_BACKEND=s3')
+
+    if N8N_CALLBACK_URL and not N8N_CALLBACK_URL.startswith(('http://', 'https://')):
+        errors.append(f"N8N_CALLBACK_URL='{N8N_CALLBACK_URL}' must start with http:// or https://")
+
+    # TTS_API_KEY is required - service should not start without it
+    if not TTS_API_KEY:
+        errors.append('TTS_API_KEY must be set. Generate one with: openssl rand -hex 32')
+
+    if errors:
+        raise RuntimeError(
+            'Configuration errors — fix these before starting the service:\n'
+            + '\n'.join(f'  - {e}' for e in errors)
+        )
+
+    # Create OUTPUT_DIR now that config is validated
+    try:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, OSError) as exc:
+        logger.warning(
+            'Could not create OUTPUT_DIR %s: %s. Will attempt at runtime.', OUTPUT_DIR, exc
+        )

@@ -269,7 +269,13 @@ else
     read -r -p "Path to voice sample (or skip): " VOICE_PATH
     if [ -n "$VOICE_PATH" ] && [ -f "$VOICE_PATH" ]; then
         cp "$VOICE_PATH" tts-service/voices/default/reference.wav
-        ok "Voice sample copied"
+        
+        # Validate it's a real audio file (check for RIFF header)
+        if file tts-service/voices/default/reference.wav 2>/dev/null | grep -q -i "wave\|audio"; then
+            ok "Voice sample copied and validated"
+        else
+            warn "File may not be a valid WAV audio — proceeding anyway"
+        fi
     else
         warn "Skipping — add voice sample before starting"
     fi
