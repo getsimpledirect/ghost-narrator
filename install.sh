@@ -3,6 +3,11 @@
 # Handles: .env setup, storage backend config, voice directory, Docker images.
 set -euo pipefail
 
+if [ ! -f .env.example ]; then
+    echo "ERROR: .env.example not found. Run this script from the ghost-narrator directory." >&2
+    exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -103,7 +108,10 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
     read -r -s -p "n8n admin password: " N8N_PASS
     echo ""
     if [ -n "$N8N_PASS" ]; then
-        sed -i.bak "s/N8N_PASSWORD=.*/N8N_PASSWORD=${N8N_PASS}/" .env
+        tmpfile=$(mktemp)
+        grep -v '^N8N_PASSWORD=' .env > "$tmpfile"
+        echo "N8N_PASSWORD=${N8N_PASS}" >> "$tmpfile"
+        mv "$tmpfile" .env
     fi
 
     # Generate encryption key if placeholder or empty
@@ -169,7 +177,7 @@ case "$STORAGE_CHOICE" in
         KEY_FILE="${SCRIPT_DIR}/secrets/${SA_NAME}-key.json"
         mkdir -p "${SCRIPT_DIR}/secrets"
         gcloud iam service-accounts keys create "${KEY_FILE}" --iam-account="${SA_EMAIL}"
-        chmod 644 "${KEY_FILE}"
+        chmod 600 "${KEY_FILE}"
 
         sed -i.bak "s/STORAGE_BACKEND=.*/STORAGE_BACKEND=gcs/" .env
         sed -i.bak -E "s|^#?[[:space:]]*GCS_BUCKET_NAME=.*|GCS_BUCKET_NAME=${GCS_BUCKET}|" .env
