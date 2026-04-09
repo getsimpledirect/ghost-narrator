@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v2.3.7 (2026-04-09)
+
+### Bug Fixes
+
+- **install**: Auto-generate TTS_API_KEY and wire it end-to-end
+  ([#64](https://github.com/getsimpledirect/ghost-narrator/pull/64),
+  [`1f5395e`](https://github.com/getsimpledirect/ghost-narrator/commit/1f5395ee1fc5892416453dfdfd5c155667e747b8))
+
+The container aborted at startup with "TTS_API_KEY must be set" because install.sh never generated
+  the key and docker-compose.yml never passed it to n8n. The full auth chain was broken at every
+  link.
+
+Three fixes: - install.sh generates TTS_API_KEY on first run, same pattern as REDIS_PASSWORD and
+  N8N_ENCRYPTION_KEY - docker-compose.yml passes TTS_API_KEY to the n8n container so workflows can
+  read it via $env.TTS_API_KEY - Submit TTS Job node now sends Authorization: Bearer on every
+  request
+
+Also updates SECURITY.md to reflect reality (TTS service does have API key auth since PR #62) and
+  adds an auto-generated secrets table to README.md so users know what install.sh handles for them.
+
+
 ## v2.3.6 (2026-04-09)
 
 ### Bug Fixes
