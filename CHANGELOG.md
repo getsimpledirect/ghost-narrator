@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.3.11 (2026-04-09)
+
+### Bug Fixes
+
+- **gcs**: Change key file permissions to 644
+  ([`99f4907`](https://github.com/getsimpledirect/ghost-narrator/commit/99f49079b32b6d30a025a70598486c69042b884d))
+
+- chmod 640 assumed container user is in the file's owning group, but appuser (UID 1000) and the
+  host user (UID 1001, GID 1002) share no group membership. World-readable (644) is correct here
+  since the file is protected by directory permissions and mounted read-only.
+
+
 ## v2.3.10 (2026-04-09)
 
 ### Bug Fixes
