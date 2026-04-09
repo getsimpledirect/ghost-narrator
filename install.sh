@@ -117,8 +117,21 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
     # Generate encryption key if placeholder or empty
     if grep -qE "N8N_ENCRYPTION_KEY=(changeme|your-encryption-key-here|)$" .env 2>/dev/null; then
         ENC_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
-        sed -i.bak "s/N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=${ENC_KEY}/" .env
+        tmpfile=$(mktemp)
+        grep -v '^N8N_ENCRYPTION_KEY=' .env > "$tmpfile"
+        echo "N8N_ENCRYPTION_KEY=${ENC_KEY}" >> "$tmpfile"
+        mv "$tmpfile" .env
         ok "Generated N8N_ENCRYPTION_KEY"
+    fi
+
+    # Generate Redis password
+    if [ -z "$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2)" ]; then
+        REDIS_PASS=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
+        tmpfile=$(mktemp)
+        grep -v '^REDIS_PASSWORD=' .env > "$tmpfile"
+        echo "REDIS_PASSWORD=${REDIS_PASS}" >> "$tmpfile"
+        mv "$tmpfile" .env
+        info "Generated REDIS_PASSWORD"
     fi
 
     # Hardware tier override (optional — auto-detected by default)
