@@ -117,10 +117,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager for startup and shutdown."""
     global _model_loader_task
 
+    setup_logging()
+
     # Fail fast on configuration errors before any other startup
     validate_config()
 
-    setup_logging()
     logger.info('Starting TTS service...')
 
     # Start model loading in the background so the API comes up immediately.
