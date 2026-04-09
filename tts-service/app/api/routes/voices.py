@@ -9,7 +9,7 @@ from app.api.dependencies import require_api_key
 from app.domains.voices.registry import VoiceRegistry
 from app.config import VOICE_SAMPLE_PATH
 
-router = APIRouter(prefix='/voices', tags=['voices'], dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix='/voices', tags=['Voices'], dependencies=[Depends(require_api_key)])
 
 
 def _get_registry() -> VoiceRegistry:

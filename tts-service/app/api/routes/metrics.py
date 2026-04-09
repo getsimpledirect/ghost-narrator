@@ -16,7 +16,7 @@ except ImportError:
     PROMETHEUS_AVAILABLE = False
     CollectorRegistry = Counter = Gauge = Histogram = generate_latest = CONTENT_TYPE_LATEST = None
 
-router = APIRouter(tags=['monitoring'])
+router = APIRouter(tags=['Monitoring'])
 
 registry = None
 if PROMETHEUS_AVAILABLE:

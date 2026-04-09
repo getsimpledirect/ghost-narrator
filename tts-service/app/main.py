@@ -78,6 +78,14 @@ TAGS_METADATA = [
         'name': 'Config',
         'description': 'TTS generation parameter configuration (Redis-backed, persists restarts).',
     },
+    {
+        'name': 'Voices',
+        'description': 'Voice profile management — upload, list, and delete named voice profiles.',
+    },
+    {
+        'name': 'Monitoring',
+        'description': 'Prometheus metrics endpoint.',
+    },
 ]
 
 API_DESCRIPTION = """

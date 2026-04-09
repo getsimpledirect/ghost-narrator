@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.dependencies import require_api_key
 from app.core.hardware import ENGINE_CONFIG
 from app.domains.tts_config.store import (
     clear_overrides,
@@ -23,7 +24,7 @@ from app.models.schemas import TTSGenerationConfigResponse, TTSGenerationConfigU
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix='/tts/config', tags=['Config'])
+router = APIRouter(prefix='/tts/config', tags=['Config'], dependencies=[Depends(require_api_key)])
 
 
 @router.get(
