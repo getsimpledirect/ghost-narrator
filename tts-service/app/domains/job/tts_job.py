@@ -36,6 +36,7 @@ import logging
 import os
 import shutil
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -76,6 +77,17 @@ from app.domains.synthesis.service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _span(name: str):
+    """Return an OTel span context manager, or a no-op if tracing is unavailable."""
+    try:
+        from app.core.tracing import tracer
+        if tracer is not None:
+            return tracer.start_as_current_span(name)
+    except Exception:
+        pass
+    return nullcontext()
 
 
 async def run_tts_job(
@@ -212,6 +224,8 @@ async def run_tts_job(
         total_words = 0
         chunk_index = 0
         narration_skipped = False
+        _ns_span = _span('tts.narration_synthesis')
+        _ns_span.__enter__()
 
         if narration is not None:
             # Pipelined: narrate chunk N, synthesize chunk N while narrating chunk N+1
@@ -272,6 +286,8 @@ async def run_tts_job(
                 status_check_callback=_check_status,
                 generation_kwargs=generation_kwargs,
             )
+
+        _ns_span.__exit__(None, None, None)
 
         if not chunk_wav_paths:
             raise RuntimeError('No audio chunks were synthesized')
@@ -387,12 +403,13 @@ async def run_tts_job(
         audio_uri: Optional[str] = None
         upload_failed = False
         try:
-            backend = get_storage_backend()
-            audio_uri = await backend.upload(
-                Path(final_mp3),
-                job_id,
-                site_slug,
-            )
+            with _span('tts.storage_upload'):
+                backend = get_storage_backend()
+                audio_uri = await backend.upload(
+                    Path(final_mp3),
+                    job_id,
+                    site_slug,
+                )
         except Exception as exc:
             logger.error(f'[{job_id}] Storage upload failed (non-fatal): {exc}')
             audio_uri = None
