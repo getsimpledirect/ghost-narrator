@@ -53,7 +53,7 @@ class TestTracing:
 
         # Test inject with active span - creates new traceparent
         carrier = {}
-        with tracer.start_as_current_span('test-span') as span:
+        with tracer.start_as_current_span('test-span'):
             inject_trace_context(carrier)
             assert 'traceparent' in carrier
             # Verify it has proper format

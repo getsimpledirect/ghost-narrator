@@ -20,19 +20,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-# tts-service/tests/test_narration_strategy.py
-import sys
-from unittest.mock import AsyncMock, MagicMock
-import types
-
-# Mock qwen_tts before any app imports
-_mock = types.ModuleType('qwen_tts')
-_mock.Qwen3TTSModel = MagicMock
-sys.modules.setdefault('qwen_tts', _mock)
+from __future__ import annotations
 
 import pytest
-from app.domains.narration.strategy import ChunkedStrategy, SingleShotStrategy
+from unittest.mock import AsyncMock, MagicMock
+
 from app.core.hardware import HardwareTier
+from app.domains.narration.strategy import ChunkedStrategy, SingleShotStrategy
 
 
 def _make_llm_client(response: str) -> AsyncMock:
@@ -82,7 +76,7 @@ async def test_chunked_strategy_uses_continuity_seed():
     )
     # Two 5-word paragraphs → 2 chunks (each paragraph hits the limit)
     source = 'alfa bravo charlie delta echo\n\nfoxtrot golf hotel india juliet'
-    result = await strategy.narrate(source)
+    await strategy.narrate(source)
     # Second call should include continuity context from first response
     second_call_messages = client.chat.completions.create.call_args_list[1][1]['messages']
     user_content = next(m['content'] for m in second_call_messages if m['role'] == 'user')
@@ -106,7 +100,7 @@ async def test_single_shot_strategy_one_call():
         tier=HardwareTier.MID_VRAM,
     )
     source = ' '.join(['word'] * 50)  # under threshold
-    result = await strategy.narrate(source)
+    await strategy.narrate(source)
     assert client.chat.completions.create.call_count == 1
 
 
@@ -121,6 +115,6 @@ async def test_single_shot_falls_back_to_chunked_when_over_threshold():
     )
     # 6 paragraphs of 5 words each → 6 chunks at chunk_words=5
     source = '\n\n'.join(['alfa bravo charlie delta echo'] * 6)
-    result = await strategy.narrate(source)
+    await strategy.narrate(source)
     # Chunked fallback -> multiple calls
     assert client.chat.completions.create.call_count > 1

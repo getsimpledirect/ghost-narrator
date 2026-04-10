@@ -20,15 +20,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import pytest
-import sys
-import types
-from unittest.mock import MagicMock
+from __future__ import annotations
 
-# Mock qwen_tts before any app imports
-_mock = types.ModuleType('qwen_tts')
-_mock.Qwen3TTSModel = MagicMock
-sys.modules.setdefault('qwen_tts', _mock)
+import pytest
 
 from app.domains.voices.registry import VoiceRegistry
 

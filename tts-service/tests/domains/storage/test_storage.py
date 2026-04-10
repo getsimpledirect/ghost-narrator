@@ -151,7 +151,7 @@ def test_gcs_make_public_url():
 @pytest.mark.asyncio
 async def test_s3_storage_upload(tmp_path):
     """Test S3StorageBackend upload with mocked boto3."""
-    boto3 = pytest.importorskip('boto3', reason='boto3 not installed')
+    pytest.importorskip('boto3', reason='boto3 not installed')
 
     with patch.dict(
         os.environ,
