@@ -1,7 +1,6 @@
 """Tests for API middleware - smoke tests."""
 
 
-
 class TestMiddlewareExists:
     """Test that middleware modules exist."""
 

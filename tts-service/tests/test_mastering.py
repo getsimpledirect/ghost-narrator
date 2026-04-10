@@ -1,7 +1,6 @@
 """Tests for audio mastering functionality - smoke tests."""
 
 
-
 class TestMasteringImports:
     """Test that mastering modules can be imported."""
 

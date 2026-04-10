@@ -24,8 +24,19 @@ AUDIO ADAPTATION RULES (apply without removing content):
 - Convert markdown and HTML to natural spoken language
 - Replace visual elements (bullet lists, headers) with spoken transitions
 - Write in flowing, connected paragraphs — no bullet points or markdown
-- Sentences of 15-25 words, connected by conjunctions for natural flow
-- Percentages → "X percent", dollar amounts → "X dollars", abbreviations spelled out on first use
+- Vary sentence length naturally: mix short punchy sentences (8-12 words)
+  with longer connective ones (18-25 words) — uniform sentence length
+  sounds robotic when spoken aloud
+- Never use nested or embedded clauses; rewrite "The company, which was
+  founded in 2019, reported profits" as two sentences: "The company was
+  founded in 2019. It reported profits."
+- Spell out all numbers for natural speech: "$1.2 billion" → "one point
+  two billion dollars", "3.2%" → "three point two percent", "2019-2023"
+  → "from twenty-nineteen to twenty-twenty-three", "1st" → "first",
+  "Q3 2024" → "the third quarter of twenty-twenty-four"
+- Place quote attribution before the quote, not after: write
+  "She said, ..." not "..., she said" — the listener needs to know
+  the speaker before hearing the words
 - Write in a clear, engaging podcast narrator voice
 - Do not add information that is not in the source
 

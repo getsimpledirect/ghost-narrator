@@ -143,6 +143,13 @@ def master_audio(
                 (
                     'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
                     f'{loudnorm_filter},'
+                    # Gentle broadcast compressor: reduces dynamic range so quiet
+                    # passages feel present without squashing loud peaks.
+                    # threshold=0.125 ≈ -18 dBFS, ratio=3:1, attack=10ms/release=100ms
+                    # is the standard speech compression starting point.
+                    # Placed after loudnorm (consistent level in) and before alimiter
+                    # (true peak guard catches any compression overshoot).
+                    'acompressor=threshold=0.125:ratio=3:attack=10:release=100,'
                     'alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled'
                 ),
                 '-ar',

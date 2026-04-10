@@ -1,7 +1,6 @@
 """Tests for audio concatenation - smoke tests."""
 
 
-
 class TestConcatenateImports:
     """Test that concatenate module can be imported."""
 

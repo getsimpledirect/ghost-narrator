@@ -1,7 +1,6 @@
 """Tests for audio quality check functionality - smoke tests."""
 
 
-
 class TestQualityCheckImports:
     """Test that quality_check module can be imported."""
 

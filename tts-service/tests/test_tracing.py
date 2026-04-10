@@ -21,7 +21,6 @@ class TestTracing:
         if not OPENTELEMETRY_AVAILABLE:
             pytest.skip('OpenTelemetry not available')
 
-
         # Test extraction from carrier with traceparent
         test_trace_id = '0af7651916cd43dd8448eb211c80319c'
         test_span_id = 'b7ad6b7169203331'

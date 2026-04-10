@@ -1,7 +1,6 @@
 """Tests for RedisCache async client usage."""
 
 
-
 class TestRedisCacheImport:
     """Test that RedisCache uses async client."""
 
