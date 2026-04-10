@@ -1,14 +1,9 @@
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 import os
 import sys
-import types
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-# Mock qwen_tts before any app imports
-_mock = types.ModuleType('qwen_tts')
-_mock.Qwen3TTSModel = MagicMock
-sys.modules.setdefault('qwen_tts', _mock)
+import pytest
 
 
 def test_get_storage_backend_local():

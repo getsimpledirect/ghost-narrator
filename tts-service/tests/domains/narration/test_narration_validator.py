@@ -1,13 +1,3 @@
-# tts-service/tests/test_narration_validator.py
-import sys
-import types
-
-
-# Mock qwen_tts so the import chain through app.services doesn't crash
-_mock = types.ModuleType('qwen_tts')
-_mock.Qwen3TTSModel = type('Qwen3TTSModel', (), {})
-sys.modules.setdefault('qwen_tts', _mock)
-
 from app.domains.narration.validator import NarrationValidator
 
 
