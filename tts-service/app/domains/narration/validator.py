@@ -61,8 +61,9 @@ class NarrationValidator:
         entities.extend(self._NUMBER_RE.findall(text))
         entities.extend(self._QUOTE_RE.findall(text))
         entities.extend(self._DATE_RE.findall(text))
-        entities.extend(self._URL_RE.findall(text))
-        entities.extend(self._EMAIL_RE.findall(text))
+        # URLs and emails are intentionally excluded — the narration prompt
+        # instructs the LLM to replace them with spoken descriptions, so
+        # their absence in the output is correct, not a validation failure.
         # Extract multi-word proper nouns
         for match in self._PROPER_NOUN_RE.finditer(text):
             name = match.group(1) or match.group(2)

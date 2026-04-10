@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BITRATE: Final[str] = MP3_BITRATE
 STREAMING_THRESHOLD: Final[int] = STREAMING_THRESHOLD_MS
-CROSSFADE_MS: Final[int] = 15
+CROSSFADE_MS: Final[int] = 60
 SILENCE_THRESHOLD_DB: Final[int] = -40
 MIN_SILENCE_MS: Final[int] = 100
 

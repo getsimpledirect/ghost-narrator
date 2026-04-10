@@ -2,14 +2,13 @@
 import sys
 import types
 
-import pytest
 
 # Mock qwen_tts so the import chain through app.services doesn't crash
-_mock = types.ModuleType("qwen_tts")
-_mock.Qwen3TTSModel = type("Qwen3TTSModel", (), {})
-sys.modules.setdefault("qwen_tts", _mock)
+_mock = types.ModuleType('qwen_tts')
+_mock.Qwen3TTSModel = type('Qwen3TTSModel', (), {})
+sys.modules.setdefault('qwen_tts', _mock)
 
-from app.domains.narration.validator import NarrationValidator, ValidationResult
+from app.domains.narration.validator import NarrationValidator
 
 
 def test_passes_when_number_present():

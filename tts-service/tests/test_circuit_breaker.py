@@ -1,6 +1,5 @@
 import pytest
 from datetime import datetime, timedelta
-import asyncio
 from app.core.circuit_breaker import CircuitBreaker, CircuitState, CircuitBreakerOpenError
 
 

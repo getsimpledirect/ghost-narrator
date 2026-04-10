@@ -1,6 +1,5 @@
 """Tests for audio quality check functionality - smoke tests."""
 
-import pytest
 
 
 class TestQualityCheckImports:

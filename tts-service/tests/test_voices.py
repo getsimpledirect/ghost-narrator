@@ -1,13 +1,12 @@
 import pytest
-from pathlib import Path
 import sys
 import types
 from unittest.mock import MagicMock
 
 # Mock qwen_tts before any app imports
-_mock = types.ModuleType("qwen_tts")
+_mock = types.ModuleType('qwen_tts')
 _mock.Qwen3TTSModel = MagicMock
-sys.modules.setdefault("qwen_tts", _mock)
+sys.modules.setdefault('qwen_tts', _mock)
 
 from app.domains.voices.registry import VoiceRegistry
 

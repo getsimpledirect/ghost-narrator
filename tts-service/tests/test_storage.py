@@ -6,9 +6,9 @@ import sys
 import types
 
 # Mock qwen_tts before any app imports
-_mock = types.ModuleType("qwen_tts")
+_mock = types.ModuleType('qwen_tts')
 _mock.Qwen3TTSModel = MagicMock
-sys.modules.setdefault("qwen_tts", _mock)
+sys.modules.setdefault('qwen_tts', _mock)
 
 
 def test_get_storage_backend_local():

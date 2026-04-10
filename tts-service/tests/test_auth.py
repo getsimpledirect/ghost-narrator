@@ -1,5 +1,5 @@
 """Tests for API key auth dependency."""
-import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from unittest.mock import patch
@@ -8,6 +8,7 @@ from unittest.mock import patch
 def _make_app():
     from app.api.dependencies import require_api_key
     from fastapi import Depends
+
     app = FastAPI()
 
     @app.get('/protected')

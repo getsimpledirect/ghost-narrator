@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import MagicMock, patch
 
 
 class TestTracing:
@@ -20,22 +19,21 @@ class TestTracing:
         )
 
         if not OPENTELEMETRY_AVAILABLE:
-            pytest.skip("OpenTelemetry not available")
+            pytest.skip('OpenTelemetry not available')
 
-        from opentelemetry import trace
 
         # Test extraction from carrier with traceparent
-        test_trace_id = "0af7651916cd43dd8448eb211c80319c"
-        test_span_id = "b7ad6b7169203331"
-        carrier = {"traceparent": f"00-{test_trace_id}-{test_span_id}-01"}
+        test_trace_id = '0af7651916cd43dd8448eb211c80319c'
+        test_span_id = 'b7ad6b7169203331'
+        carrier = {'traceparent': f'00-{test_trace_id}-{test_span_id}-01'}
 
         context = extract_trace_context(carrier)
         assert context is not None
 
         # Test inject with active span - creates new traceparent
         carrier = {}
-        with tracer.start_as_current_span("test-span") as span:
+        with tracer.start_as_current_span('test-span') as span:
             inject_trace_context(carrier)
-            assert "traceparent" in carrier
+            assert 'traceparent' in carrier
             # Verify it has proper format
-            assert carrier["traceparent"].startswith("00-")
+            assert carrier['traceparent'].startswith('00-')

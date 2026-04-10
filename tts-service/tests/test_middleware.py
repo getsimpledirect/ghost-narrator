@@ -1,6 +1,5 @@
 """Tests for API middleware - smoke tests."""
 
-import pytest
 
 
 class TestMiddlewareExists:

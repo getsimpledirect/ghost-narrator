@@ -1,7 +1,5 @@
 """Tests for TTS HTTP routes - smoke tests."""
 
-import pytest
-from unittest.mock import patch
 
 
 class TestRoutesExist:

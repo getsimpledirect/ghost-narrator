@@ -1,7 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
-import time
 from app.domains.job.store import JobStore
 
 

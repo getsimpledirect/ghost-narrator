@@ -1,7 +1,6 @@
 import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-from app.core.exceptions import SynthesisError
+from unittest.mock import patch
 from app.domains.synthesis.service import (
     synthesize_chunks_sequential,
     synthesize_chunks_parallel,

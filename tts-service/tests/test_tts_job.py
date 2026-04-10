@@ -1,7 +1,6 @@
-import asyncio
 from concurrent.futures import Future
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from app.core.exceptions import SynthesisError

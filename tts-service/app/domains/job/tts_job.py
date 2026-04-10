@@ -227,28 +227,78 @@ async def run_tts_job(
         narration_skipped = False
         with _span('tts.narration_synthesis'):
             if narration is not None:
-                # Pipelined: narrate chunk N, synthesize chunk N while narrating chunk N+1
+                # True pipelined: LLM narration of chunk N+1 runs concurrently with
+                # TTS synthesis of chunk N via asyncio producer-consumer with a queue.
+                #
+                # The original `async for` loop was NOT pipelined — Python's async
+                # generator only advances when __anext__() is called, which happens
+                # after the loop body (TTS synthesis) fully completes. Using a
+                # background task + Queue decouples the two stages so the LLM HTTP
+                # call and Ollama inference genuinely overlap with TTS thread work.
                 try:
-                    async for narrated_segment in narration.narrate_iter(text):
-                        await _check_status()
-                        # Split this narrated segment into TTS-sized chunks
-                        tts_chunks, seg_words = prepare_text_for_synthesis(
-                            narrated_segment, MAX_CHUNK_WORDS
-                        )
-                        all_chunks.extend(tts_chunks)
-                        total_words += seg_words
+                    _narration_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=2)
+                    _producer_errors: list[BaseException] = []
 
-                        # Synthesize these TTS chunks immediately (don't wait for next narration)
-                        segment_paths = await synthesize_chunks_auto(
-                            chunks=tts_chunks,
-                            job_dir=job_dir,
-                            job_id=f'{job_id}',
-                            status_check_callback=_check_status,
-                            chunk_offset=chunk_index,
-                            generation_kwargs=generation_kwargs,
-                        )
-                        chunk_wav_paths.extend(segment_paths)
-                        chunk_index += len(tts_chunks)
+                    async def _narration_producer() -> None:
+                        try:
+                            async for segment in narration.narrate_iter(text):
+                                await _check_status()
+                                await _narration_queue.put(segment)
+                        except Exception as exc:
+                            _producer_errors.append(exc)
+                        finally:
+                            # Always deliver sentinel so consumer can exit cleanly
+                            await _narration_queue.put(None)
+
+                    async def _synthesis_consumer() -> None:
+                        nonlocal total_words, chunk_index
+                        while True:
+                            segment = await _narration_queue.get()
+                            if segment is None:
+                                break
+                            await _check_status()
+                            tts_chunks, seg_words = prepare_text_for_synthesis(
+                                segment, MAX_CHUNK_WORDS
+                            )
+                            all_chunks.extend(tts_chunks)
+                            total_words += seg_words
+                            paths = await synthesize_chunks_auto(
+                                chunks=tts_chunks,
+                                job_dir=job_dir,
+                                job_id=job_id,
+                                status_check_callback=_check_status,
+                                chunk_offset=chunk_index,
+                                generation_kwargs=generation_kwargs,
+                            )
+                            chunk_wav_paths.extend(paths)
+                            chunk_index += len(tts_chunks)
+
+                    _producer_task = asyncio.create_task(_narration_producer())
+                    try:
+                        await _synthesis_consumer()
+                    finally:
+                        if not _producer_task.done():
+                            _producer_task.cancel()
+                        # Drain the queue so the producer's blocked put() can
+                        # complete and the task can exit.  get_nowait() calls
+                        # _wakeup_next internally, waking the awaiting putter;
+                        # await sleep(0) yields the event loop so it can run.
+                        for _ in range(50):
+                            if _producer_task.done():
+                                break
+                            while not _narration_queue.empty():
+                                try:
+                                    _narration_queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            await asyncio.sleep(0)
+                        try:
+                            await _producer_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+
+                    if _producer_errors:
+                        raise _producer_errors[0]
 
                     logger.info(
                         f'[{job_id}] Pipelined narration+synthesis complete — '

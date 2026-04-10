@@ -1,8 +1,6 @@
 """Tests for configuration validation."""
 
-import os
 import pytest
-from unittest.mock import patch
 
 
 class TestConfigValues:
@@ -44,7 +42,7 @@ class TestValidateConfig:
 
     def test_validate_config_can_run(self):
         """Test that validate_config can run without error."""
-        from app.config import validate_config, STORAGE_BACKEND, TTS_API_KEY
+        from app.config import validate_config, TTS_API_KEY
 
         # Only test if we have valid config (TTS_API_KEY might be empty in test env)
         if TTS_API_KEY:

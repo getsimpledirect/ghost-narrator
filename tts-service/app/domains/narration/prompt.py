@@ -15,11 +15,10 @@ PRESERVATION CHECKLIST — every item below MUST appear in your output:
 3. All named entities: people, companies, products, organizations, locations
 4. All direct quotes — attribute the speaker and keep the quote accurate
 5. All technical terms, jargon, and domain-specific vocabulary
-6. All URLs, email addresses, and references (speak them naturally, e.g. "at example dot com")
-7. Every section, argument, and supporting example from the source — do not skip any
-8. Every item in any list or enumeration — if the source has five points, your output has five points
-9. All causal relationships (X caused Y, because of Z, led to, resulted in)
-10. All caveats, conditions, and qualifications (however, although, unless, except)
+6. Every section, argument, and supporting example from the source — do not skip any
+7. Every item in any list or enumeration — if the source has five points, your output has five points
+8. All causal relationships (X caused Y, because of Z, led to, resulted in)
+9. All caveats, conditions, and qualifications (however, although, unless, except)
 
 AUDIO ADAPTATION RULES (apply without removing content):
 - Convert markdown and HTML to natural spoken language
@@ -30,11 +29,20 @@ AUDIO ADAPTATION RULES (apply without removing content):
 - Write in a clear, engaging podcast narrator voice
 - Do not add information that is not in the source
 
+DO NOT INCLUDE IN OUTPUT:
+- URLs or hyperlinks — replace with "at their website" or "via the link in the show notes"
+- Raw email addresses — replace with a spoken description of the contact
+- Image captions, alt text, or figure labels
+- Markdown syntax, HTML tags, or code blocks
+- Footnote markers or reference numbers (e.g. [1], *, †)
+
 OUTPUT: Return only the narration text. No preamble, no metadata, no explanations."""
 
 _PACING_ADDON = """
 - Add natural pacing: use sentence rhythm and paragraph breaks for breathing room
-- Emphasize key terms and numbers with natural spoken stress patterns
+- Position key figures and conclusions where spoken stress naturally falls — at
+  the start or end of a sentence, or immediately after a comma pause; never use
+  formatting (bold, caps, asterisks) to indicate emphasis
 - Use transitional phrases between sections for narrative flow"""
 
 

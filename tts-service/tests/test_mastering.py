@@ -1,6 +1,5 @@
 """Tests for audio mastering functionality - smoke tests."""
 
-import pytest
 
 
 class TestMasteringImports:

@@ -127,11 +127,10 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
 | Low | <10 GB | Qwen3-TTS-0.6B | qwen3:4b | 192kbps, 44.1kHz | T4 / older GPUs |
 | Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3:8b | 192kbps, 44.1kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (fp32)** | **qwen3:14b** | **256kbps, 48kHz, −14 LUFS** | **2 parallel workers, multi-voice quotes, quality re-synthesis, voice pre-caching** |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3:14b** | **256kbps, 48kHz, −14 LUFS** | **Pipelined narrate+synthesize, multi-voice quotes, quality re-synthesis, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
-- **fp32 TTS precision** — cleaner audio with less quantization noise
-- **2 parallel TTS workers** — ~2x faster synthesis for multi-chunk articles
+- **bf16 TTS precision** — 1.5–2x faster synthesis on Tensor Core GPUs with imperceptible quality difference
 - **qwen3:14b LLM** — significantly better narration quality (nuance, argument handling, natural phrasing)
 - **Pipelined narration+synthesis** — LLM narrates chunk N+1 while TTS synthesizes chunk N
 - **Pre-computed voice reference** — voice embedding cached at startup, saves 2-5s per job
@@ -503,7 +502,7 @@ The TTS service implements a sophisticated multi-stage pipeline:
 **Stage 2: Parallel/Sequential Synthesis**
 - **CPU Mode**: Parallel synthesis using ThreadPoolExecutor (MAX_WORKERS=4 default)
 - **GPU Mode**: Sequential synthesis (optimal for CUDA memory management)
-- **HIGH_VRAM**: 2 parallel workers with fp32 precision
+- **HIGH_VRAM**: bf16 precision, serial synthesis (GPU synthesis is serialized by `_synthesis_lock`)
 - Each chunk synthesized independently using Qwen3-TTS
 - Voice reference pre-cached at startup (skips per-job load)
 
@@ -518,7 +517,7 @@ The TTS service implements a sophisticated multi-stage pipeline:
 
 **Stage 5: Dynamic Gap Insertion + Crossfade**
 - Analyzes chunk endings to determine appropriate pause duration
-- 15ms crossfade at chunk boundaries eliminates clicks/pops
+- 60ms crossfade at chunk boundaries eliminates clicks/pops and smooths prosodic resets
 - Trims leading/trailing silence from each chunk
 - Inserts natural-sounding gaps between sentences/paragraphs
 
@@ -623,7 +622,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | CPU only | 0 GB | Ollama (CPU) + TTS (CPU) + n8n + Redis | 0 GB | ~4 GB | Any machine with 4+ cores |
 | Low (4–8 GB) | 4–8 GB | Ollama (GPU) + TTS-0.6B (GPU) + n8n + Redis | ~4–6 GB | ~6 GB | T4 / older GPUs |
 | Mid (10–16 GB) | 10–16 GB | Ollama (GPU) + TTS-1.7B (GPU) + n8n + Redis | ~8–12 GB | ~8 GB | L4 / RTX 3060+ |
-| High (20+ GB) | 20+ GB | Ollama 14B (GPU) + TTS-1.7B fp32 ×2 (GPU) + n8n + Redis | ~16–18 GB | ~10 GB | A100 / RTX 4090 |
+| High (20+ GB) | 20+ GB | Ollama 14B (GPU) + TTS-1.7B bf16 ×1 (GPU) + n8n + Redis | ~14–16 GB | ~10 GB | A100 / RTX 4090 |
 
 **Component breakdown:**
 
@@ -632,7 +631,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | Ollama (Qwen3-14B-q4, GPU) | ~9 GB | ~2 GB | HIGH_VRAM LLM for premium narration |
 | Ollama (Qwen3-8B-q4, GPU) | ~5–6 GB | ~2 GB | Mid tier LLM |
 | Ollama (Qwen3-4B-q4, GPU) | ~3 GB | ~1.5 GB | Lighter model option |
-| Qwen3-TTS-1.7B fp32 (GPU) | ~7 GB | ~6 GB | HIGH_VRAM — cleaner audio, 2 workers |
+| Qwen3-TTS-1.7B bf16 (GPU) | ~3.4 GB | ~6 GB | HIGH_VRAM — 1.5–2x faster on Tensor Cores, imperceptible quality diff vs fp32 |
 | Qwen3-TTS-1.7B fp16 (GPU) | ~3.4 GB | ~6 GB | Mid/high tier TTS model |
 | Qwen3-TTS-0.6B (GPU) | ~1–2 GB | ~3 GB | Low tier / CPU fallback |
 | Qwen3-TTS (CPU mode) | 0 GB VRAM | ~1 GB | **Recommended for most setups** |

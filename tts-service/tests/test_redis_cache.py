@@ -1,6 +1,5 @@
 """Tests for RedisCache async client usage."""
 
-import pytest
 
 
 class TestRedisCacheImport:
@@ -8,7 +7,6 @@ class TestRedisCacheImport:
 
     def test_redis_cache_uses_async(self):
         """Verify RedisCache uses async redis client."""
-        from app.cache.redis_cache import RedisCache
         import inspect
 
         # Check that the module uses redis.asyncio

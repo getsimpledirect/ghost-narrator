@@ -1,6 +1,5 @@
 """Tests for audio concatenation - smoke tests."""
 
-import pytest
 
 
 class TestConcatenateImports:
