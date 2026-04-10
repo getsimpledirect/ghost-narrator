@@ -398,9 +398,9 @@ If CPU crashes with OOM:
 
 ### Poor audio quality
 
-- Ensure reference WAV is high quality (no noise, 22 kHz)
-- Use 5+ seconds of reference audio (optimal 45+)
-- Reduce `MAX_CHUNK_WORDS` for better pronunciation
+- Ensure reference WAV is high quality (no noise, 22 kHz, 15–30s ideal)
+- Set `VOICE_SAMPLE_REF_TEXT` to the transcription of your reference audio — enables ICL mode (significantly better voice cloning than x-vector-only)
+- Use `HARDWARE_TIER=high_vram` if your GPU supports it — bf16 precision, larger LLM, quality re-synthesis
 - Ensure language matches reference voice
 
 ### Jobs lost after restart
@@ -503,7 +503,7 @@ tts-service/
 | `app/domains/synthesis/service.py` | Parallel/sequential chunk synthesis |
 | `app/domains/synthesis/concatenate.py` | WAV concatenation with streaming for large files |
 | `app/domains/synthesis/normalize.py` | EBU R128 loudness normalization |
-| `app/domains/synthesis/mastering.py` | Two-pass audio mastering with loudnorm |
+| `app/domains/synthesis/mastering.py` | Broadcast mastering chain: compress → two-pass EBU R128 loudnorm → true peak limit |
 | `app/domains/narration/strategy.py` | ChunkedStrategy (CPU/LOW) and SingleShotStrategy (MID/HIGH) |
 | `app/domains/narration/validator.py` | Entity-level information preservation check |
 | `app/domains/storage/` | Pluggable storage: LocalStorageBackend, GCSStorageBackend, S3StorageBackend |

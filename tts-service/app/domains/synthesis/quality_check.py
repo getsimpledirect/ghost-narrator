@@ -92,9 +92,16 @@ async def _resynthesize_chunk(
     wav_path = str(job_dir / f'chunk_{chunk_idx:04d}.wav')
 
     try:
+        # Bump temperature slightly on retry — re-synthesizing with identical
+        # parameters often reproduces the same artifact; more variance breaks
+        # the model out of the bad local optimum.
+        retry_kwargs = dict(generation_kwargs or {})
+        orig_temp = retry_kwargs.get('temperature', 0.72)
+        retry_kwargs['temperature'] = min(orig_temp + 0.1, 0.85)
+
         # run_in_executor only accepts positional args; use partial to bind
         # generation_kwargs as a keyword so it doesn't collide with job_id.
-        synth_fn = functools.partial(engine.synthesize_to_file, generation_kwargs=generation_kwargs)
+        synth_fn = functools.partial(engine.synthesize_to_file, generation_kwargs=retry_kwargs)
         await loop.run_in_executor(executor, synth_fn, chunk_texts[chunk_idx], wav_path, job_id)
         return wav_path
     except Exception as exc:

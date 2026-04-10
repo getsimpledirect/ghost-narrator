@@ -99,6 +99,18 @@ def master_audio(
         True if mastering succeeded, False otherwise.
     """
     try:
+        # Broadcast mastering order: compress → normalise → limit.
+        # The compressor runs first in both passes so pass-1 measures the
+        # loudness of the already-compressed signal; pass-2 then applies the
+        # correction to that same compressed signal, hitting the LUFS target
+        # accurately. Reversing the order (normalise → compress) would cause
+        # the compressor to alter the carefully measured level after the fact.
+        _COMPRESSOR = (
+            # threshold=0.125 ≈ -18 dBFS, ratio=3:1, attack=10ms, release=100ms
+            # is the standard starting point for broadcast speech compression.
+            'acompressor=threshold=0.125:ratio=3:attack=10:release=100'
+        )
+
         measure_result = subprocess.run(
             [
                 'ffmpeg',
@@ -108,6 +120,7 @@ def master_audio(
                 '-af',
                 (
                     'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
+                    f'{_COMPRESSOR},'
                     f'loudnorm=I={target_lufs}:TP={true_peak}:LRA={lra}:print_format=json'
                 ),
                 '-f',
@@ -142,6 +155,7 @@ def master_audio(
                 '-af',
                 (
                     'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
+                    f'{_COMPRESSOR},'
                     f'{loudnorm_filter},'
                     'alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled'
                 ),

@@ -1,7 +1,6 @@
 """Tests for TTS HTTP routes - smoke tests."""
 
 
-
 class TestRoutesExist:
     """Test that route modules can be imported."""
 
