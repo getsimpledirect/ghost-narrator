@@ -182,12 +182,43 @@ class TTSEngine:
                     self._cached_voice_path = voice_path_str
                 # Strip None values so absent optional params use model defaults
                 gen_kw = {k: v for k, v in (generation_kwargs or {}).items() if v is not None}
-                wavs, sr = self._model.generate_voice_clone(
-                    text=text,
-                    language=TTS_LANGUAGE,
-                    voice_clone_prompt=prompt,
-                    **gen_kw,
-                )
+                try:
+                    wavs, sr = self._model.generate_voice_clone(
+                        text=text,
+                        language=TTS_LANGUAGE,
+                        voice_clone_prompt=prompt,
+                        **gen_kw,
+                    )
+                except RuntimeError as exc:
+                    # fp16 logits can overflow to inf/nan on older GPUs, causing
+                    # "probability tensor contains either inf, nan or element < 0".
+                    # Cast model to fp32 and retry once — permanent for this session
+                    # since the model stays fp32, but safe because fp32 works on all CUDA GPUs.
+                    if 'probability tensor' not in str(exc):
+                        raise
+                    import torch
+
+                    logger.warning(
+                        'fp16 NaN/inf detected during synthesis — casting model to fp32 and retrying'
+                    )
+                    self._model = self._model.to(torch.float32)
+                    # Invalidate cached voice prompt: it was computed under fp16 weights
+                    self._cached_voice_prompt = None
+                    self._cached_voice_path = None
+                    use_x_vector_only = not bool(VOICE_SAMPLE_REF_TEXT)
+                    prompt = self._model.create_voice_clone_prompt(
+                        voice_path_str,
+                        ref_text=VOICE_SAMPLE_REF_TEXT,
+                        x_vector_only_mode=use_x_vector_only,
+                    )
+                    self._cached_voice_prompt = prompt
+                    self._cached_voice_path = voice_path_str
+                    wavs, sr = self._model.generate_voice_clone(
+                        text=text,
+                        language=TTS_LANGUAGE,
+                        voice_clone_prompt=prompt,
+                        **gen_kw,
+                    )
                 sf.write(str(output_path), wavs[0], sr)
             return str(output_path)
         except SynthesisError:

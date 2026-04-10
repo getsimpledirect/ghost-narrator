@@ -101,7 +101,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tier=HardwareTier.LOW_VRAM,
         tts_model='Qwen/Qwen3-TTS-12Hz-0.6B-Base',
         tts_device='cuda',
-        tts_precision='fp16',
+        tts_precision='fp32',  # fp16 overflows on older GPUs → inf/nan logits; 0.6B fp32 = ~1.2 GB VRAM
         llm_model='qwen3:4b',
         narration_strategy='chunked',
         narration_chunk_words=1000,
