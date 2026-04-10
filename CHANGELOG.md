@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v2.3.12 (2026-04-10)
+
+### Bug Fixes
+
+- **tts-service**: Clear stale cancel signal before new synthesis run
+  ([`352cae5`](https://github.com/getsimpledirect/ghost-narrator/commit/352cae5a82d52e56b568a203760461dee8ef8111))
+
+- Added `clear_cancel(job_id)` to TTSEngine to discard any leftover entry in `_cancelled_jobs`
+  before a new run starts - `cancel_job()` intentionally persists the signal so an in-flight
+  synthesis can be aborted; the signal must be cleared at the start of the next run, not at deletion
+  time - Without this fix, reusing a job_id after deletion caused the pipelined narration path to
+  raise SynthesisError immediately, falling back silently to sequential synthesis - Called
+  `engine.clear_cancel(job_id)` in `tts_job.py` immediately after engine readiness check, before
+  synthesis begins
+
+
 ## v2.3.11 (2026-04-09)
 
 ### Bug Fixes
