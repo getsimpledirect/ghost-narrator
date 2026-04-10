@@ -208,6 +208,11 @@ async def run_tts_job(
         if not engine.is_ready:
             raise RuntimeError('TTS engine failed to initialize within timeout')
 
+        # Clear any stale cancel signal from a previous delete of this job_id.
+        # cancel_job() persists in the in-memory set; if the same job_id is
+        # reused the new run would be cancelled immediately without this reset.
+        engine.clear_cancel(job_id)
+
         # Fetch generation config once (async Redis read) before entering thread pool
         generation_kwargs, _overrides = await get_effective_config()
 

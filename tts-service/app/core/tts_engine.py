@@ -202,6 +202,15 @@ class TTSEngine:
         """Signal that the next synthesize_to_file call for this job_id should abort."""
         self._cancelled_jobs.add(job_id)
 
+    def clear_cancel(self, job_id: str) -> None:
+        """Clear any stale cancel signal for a job_id before a new run starts.
+
+        cancel_job() leaves the job_id in _cancelled_jobs after the job is
+        deleted from Redis. If the same job_id is reused, the new run would
+        be cancelled immediately. Call this at the start of every new job.
+        """
+        self._cancelled_jobs.discard(job_id)
+
 
 _engine: Optional[TTSEngine] = None
 _engine_lock = threading.Lock()
