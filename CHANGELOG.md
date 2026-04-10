@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v2.3.14 (2026-04-10)
+
+### Bug Fixes
+
+- **tts-service**: Fix audio quality, pipelining deadlock, and docs
+  ([`2673f00`](https://github.com/getsimpledirect/ghost-narrator/commit/2673f00a520d906423eb28b5dae27050eccc2e85))
+
+- temperature 0.9→0.72, top_p 1.0→0.92 across all tiers: sharpens sampling distribution to eliminate
+  robotic voice and prosodic instability (pitch/speed variation between synthesis calls) - chunk
+  word limits increased per tier (175/175/225/250): fewer synthesis resets = smoother prosody
+  continuity at audio joins - crossfade 15 ms→60 ms: audible fade-in masks prosodic resets at chunk
+  boundaries instead of just suppressing clicks - HIGH_VRAM: fp32→bf16 for 1.5–2x faster synthesis
+  on Tensor Core GPUs; quality difference is imperceptible at 1.7B params - HIGH_VRAM:
+  synthesis_workers 2→1; _synthesis_lock serialises all TTS calls so the second worker was a no-op
+  adding overhead - pipelining deadlock fix: consumer failure with full queue (maxsize=2) blocked
+  producer's put(None) in finally; fix drains queue via get_nowait() to wake the putter, then yields
+  with sleep(0) before awaiting the producer task - narration prompt: added DO NOT INCLUDE section
+  for URLs, emails, image captions, markdown; rewrote emphasis instruction to use sentence-position
+  guidance (bold/CAPS markup was appearing in output) - validator: removed URL/email entity checks —
+  prompt now replaces them with spoken descriptions so their absence is correct - ARCHITECTURE.md:
+  fp32→bf16, 2 workers→1, 15 ms→60 ms crossfade, VRAM budget table corrected
+
+
 ## v2.3.13 (2026-04-10)
 
 ### Bug Fixes
