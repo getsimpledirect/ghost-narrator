@@ -508,7 +508,8 @@ The TTS service implements a sophisticated multi-stage pipeline:
 
 **Stage 3: Quality Check (HIGH_VRAM)**
 - Checks each chunk for excessive silence, clipping, or low energy
-- Automatically re-synthesizes failed chunks
+- Re-synthesizes failed chunks with a slight temperature bump (+0.1) to
+  avoid reproducing the same artefact with identical parameters
 
 **Stage 4: LUFS Normalization**
 - Each chunk normalized to -23 LUFS (broadcast standard)
@@ -518,7 +519,7 @@ The TTS service implements a sophisticated multi-stage pipeline:
 **Stage 5: Dynamic Gap Insertion + Crossfade**
 - Analyzes chunk endings to determine appropriate pause duration
 - 60ms crossfade at chunk boundaries eliminates clicks/pops and smooths prosodic resets
-- Trims leading/trailing silence from each chunk
+- Trims leading/trailing silence above −35 dBFS (catches breath sounds at chunk edges)
 - Inserts natural-sounding gaps between sentences/paragraphs
 
 **Stage 6: Streaming Concatenation**
@@ -527,8 +528,12 @@ The TTS service implements a sophisticated multi-stage pipeline:
 - Standard concatenation for small files (faster)
 
 **Stage 7: Final Mastering**
+- Broadcast processing chain: compress → normalise → limit
+- Gentle speech compressor (3:1 ratio, −18 dBFS threshold) reduces dynamic
+  range so quiet passages feel present — applied before loudnorm so the
+  two-pass measurement reflects the compressed signal accurately
 - Two-pass EBU R128 loudness normalization (measure then apply)
-- Target: -16 LUFS (podcast/streaming standard)
+- Target: -16 LUFS (podcast/streaming standard), −14 LUFS on HIGH_VRAM
 - True peak limiting to -1.0 dBFS
 - Resample to 44.1kHz, 192kbps MP3 (or 48kHz 256kbps on High tier)
 - Quality validation (non-fatal, logs only)
