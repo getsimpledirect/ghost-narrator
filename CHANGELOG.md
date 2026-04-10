@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v2.3.13 (2026-04-10)
+
+### Bug Fixes
+
+- **tts-service**: Guard cancel_job call to active jobs only
+  ([`ce9ab65`](https://github.com/getsimpledirect/ghost-narrator/commit/ce9ab65c72db7f64123eeb86a8e340d033106c41))
+
+- Moved the root cause fix to delete_job: only call cancel_job() when the job status is
+  pending/processing; completed/failed jobs have already self-cleaned the signal via
+  synthesize_to_file's finally block - Unconditionally calling cancel_job() on every delete left a
+  stale signal in _cancelled_jobs, causing the first synthesis chunk of a reused job_id to be
+  silently aborted (pipelined path fell back to sequential) - Removed clear_cancel() from TTSEngine
+  and its call site in tts_job.py — defensive workaround is unnecessary once the call site is
+  correct
+
+
 ## v2.3.12 (2026-04-10)
 
 ### Bug Fixes
