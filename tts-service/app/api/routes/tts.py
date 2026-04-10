@@ -425,10 +425,15 @@ async def delete_job(
     # 1. Update status to 'deleted' to signal the background worker to stop
     await job_store.update(job_id, {'status': 'deleted'})
 
-    # 2. Instantly kill any active synthesis processes
+    # 2. Instantly kill any active synthesis processes.
+    # Only signal for jobs that are still running — completed/failed jobs have
+    # already cleaned up their cancel signal via the synthesize_to_file finally
+    # block, so calling cancel_job on them would leave a stale signal that
+    # cancels any future run reusing the same job_id.
     from app.core.tts_engine import get_tts_engine
 
-    get_tts_engine().cancel_job(job_id)
+    if job.get('status') in ('pending', 'processing'):
+        get_tts_engine().cancel_job(job_id)
 
     logger.info(f'TTS job signal for deletion: {job_id}')
 
