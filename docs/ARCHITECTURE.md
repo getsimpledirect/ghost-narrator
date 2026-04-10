@@ -125,7 +125,7 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | Tier | VRAM | TTS Model | LLM | Output Quality | Features |
 |---|---|---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
-| Low | <10 GB | Qwen3-TTS-0.6B | qwen3:4b | 192kbps, 44.1kHz | T4 / older GPUs |
+| Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3:4b | 192kbps, 44.1kHz | Compatible with all CUDA GPUs incl. older hardware |
 | Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3:8b | 192kbps, 44.1kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
 | **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3:14b** | **256kbps, 48kHz, −14 LUFS** | **Pipelined narrate+synthesize, multi-voice quotes, quality re-synthesis, voice pre-caching** |
 
@@ -625,7 +625,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | Tier | VRAM | Components | Total VRAM | Total RAM | Notes |
 |---|---|---|---|---|---|
 | CPU only | 0 GB | Ollama (CPU) + TTS (CPU) + n8n + Redis | 0 GB | ~4 GB | Any machine with 4+ cores |
-| Low (4–8 GB) | 4–8 GB | Ollama (GPU) + TTS-0.6B (GPU) + n8n + Redis | ~4–6 GB | ~6 GB | T4 / older GPUs |
+| Low (4–8 GB) | 4–8 GB | Ollama (GPU) + TTS-0.6B fp32 (GPU) + n8n + Redis | ~4–5 GB | ~6 GB | All CUDA GPUs; fp32 avoids fp16 overflow on older hardware |
 | Mid (10–16 GB) | 10–16 GB | Ollama (GPU) + TTS-1.7B (GPU) + n8n + Redis | ~8–12 GB | ~8 GB | L4 / RTX 3060+ |
 | High (20+ GB) | 20+ GB | Ollama 14B (GPU) + TTS-1.7B bf16 ×1 (GPU) + n8n + Redis | ~14–16 GB | ~10 GB | A100 / RTX 4090 |
 
@@ -638,7 +638,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | Ollama (Qwen3-4B-q4, GPU) | ~3 GB | ~1.5 GB | Lighter model option |
 | Qwen3-TTS-1.7B bf16 (GPU) | ~3.4 GB | ~6 GB | HIGH_VRAM — 1.5–2x faster on Tensor Cores, imperceptible quality diff vs fp32 |
 | Qwen3-TTS-1.7B fp16 (GPU) | ~3.4 GB | ~6 GB | Mid/high tier TTS model |
-| Qwen3-TTS-0.6B (GPU) | ~1–2 GB | ~3 GB | Low tier / CPU fallback |
+| Qwen3-TTS-0.6B fp32 (GPU) | ~1.2 GB | ~3 GB | LOW_VRAM tier — fp32 for stability on all CUDA GPUs |
 | Qwen3-TTS (CPU mode) | 0 GB VRAM | ~1 GB | **Recommended for most setups** |
 | Redis | 0 GB VRAM | ~50 MB | Persistent job storage |
 | n8n | 0 GB VRAM | up to 2 GB | Workflow orchestration (2 GB container limit) |

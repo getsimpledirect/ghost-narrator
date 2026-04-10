@@ -55,7 +55,7 @@ Ghost Narrator auto-detects your hardware and selects the right models:
 | Tier | VRAM | TTS Model | LLM Model | Output Quality | Key Features |
 |---|---|---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
-| Low | <10 GB | Qwen3-TTS-0.6B | qwen3:4b | 192kbps, 44.1kHz | T4 / older GPUs |
+| Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3:4b | 192kbps, 44.1kHz | Compatible with all CUDA GPUs incl. older hardware |
 | Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3:8b | 192kbps, 44.1kHz | Pipelined narrate+synthesize |
 | **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3:14b** | **256kbps, 48kHz** | **Pipelined narrate+synthesize, multi-voice, quality re-synth, voice caching** |
 
