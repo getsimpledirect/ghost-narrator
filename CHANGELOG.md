@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v2.3.15 (2026-04-10)
+
+### Refactoring
+
+- **tts-service**: Restructure tests/ to mirror app/ domain layout
+  ([#68](https://github.com/getsimpledirect/ghost-narrator/pull/68),
+  [`0659c1b`](https://github.com/getsimpledirect/ghost-narrator/commit/0659c1b6699f6757926d7e9ac2c57e6337be18a9))
+
+- moved all 22 test files into subdirectories matching app/ structure: tests/api/, tests/core/,
+  tests/domains/{job,narration,synthesis,storage,voices}/ - added __init__.py to every subdirectory
+  so pytest treats them as packages, preventing import shadowing across subdirectories - added
+  tests/conftest.py with pytest_configure() to stub out qwen_tts before any test module is imported
+  — removes the duplicated 4-line mock block that was copy-pasted into every file needing app
+  imports - removed now-redundant inline qwen_tts mock blocks from the 4 files that had them;
+  cleaned up stale path comments and import ordering
+
+
 ## v2.3.14 (2026-04-10)
 
 ### Bug Fixes
