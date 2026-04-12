@@ -1,20 +1,154 @@
 # CHANGELOG
 
 
-## [Unreleased]
+## v2.4.0 (2026-04-12)
 
-### Fixed
-- **Critical:** Concurrent TTS jobs now queue through a global `asyncio.Semaphore(1)` instead of fighting `_synthesis_lock` at the chunk level. Two simultaneous 5,500-word jobs previously took 2+ days; they now complete sequentially in ~10–15 minutes each on an L4 GPU.
-- **Critical:** Narration validator no longer flags correctly-converted numbers (`$1.2B` → `"one point two billion dollars"`) as missing entities. This was triggering a spurious retry LLM call on every chunk of any finance article.
-- `LLM_TIMEOUT` default raised from 120s to 300s; `LLM_COMPLETENESS_TIMEOUT` from 180s to 360s — `qwen3:8b` narrates a 2,500-word chunk in 30–60s leaving 5× headroom.
-- `tts-service` Docker memory limit raised from 8G to 12G in GPU compose — prevents OOM kills when two jobs run concurrently.
+### Bug Fixes
 
-### Changed
-- HIGH_VRAM tier LLM downgraded from `qwen3:14b` to `qwen3:8b`. Narration is a format-conversion task; `qwen3:8b` delivers equivalent output at ~4.5 GB VRAM vs ~8.5 GB, freeing ~4 GB headroom on the GPU.
-- `tts_max_new_tokens` reduced from 8000 → 3000 (HIGH_VRAM) and 6000 → 3000 (MID_VRAM). A 250-word TTS chunk produces ~1,384 codec tokens at 12 Hz; 3000 gives 2.2× headroom and prevents runaway synthesis loops.
-- `hardware-probe.sh` now computes `OLLAMA_NUM_PARALLEL` dynamically from actual free VRAM: `floor((vram − llm − tts − safety) / kv_per_slot)`, capped at 4. Previously unset (serial Ollama), causing queued LLM requests to breach `LLM_TIMEOUT`.
-- `OLLAMA_FLASH_ATTENTION=1` enabled on all GPU tiers (LOW, MID, HIGH). L4 and other Ampere+ GPUs gain 20–40% lower LLM inference latency.
-- HIGH_VRAM `hardware-probe.sh` model corrected from `qwen3:14b` to `qwen3:8b` to match `hardware.py`.
+- **infra**: Raise LLM timeouts to 300/360s and tts-service memory to 12G
+  ([`beab4a8`](https://github.com/getsimpledirect/ghost-narrator/commit/beab4a8879a2cc2e94a4b4f1028e80cda90156fc))
+
+qwen3:8b narrates a 2500-word chunk in 30-60s; the previous 120s default left no margin when Ollama
+  served multiple concurrent jobs. 300s gives 5x headroom. tts-service memory limit raised from 8G
+  to 12G in the GPU compose: two concurrent jobs load WAV buffers and PyTorch CUDA contexts
+  simultaneously, pushing usage well above 8G and risking silent OOM kills that restart the
+  container mid-job. LLM_COMPLETENESS_TIMEOUT raised from 180s to 360s proportionally. Defaults in
+  config.py updated to match so local dev without Docker inherits the safer values.
+
+- **n8n**: Correct mojibake in Ghost Audio Pipeline workflow name (Ghost Article → Audio Pipeline)
+  ([`2386de1`](https://github.com/getsimpledirect/ghost-narrator/commit/2386de1928092a0592c126f9e4c8358677529977))
+
+- **narration**: Remove number/date entity checks from validator
+  ([`f0959b2`](https://github.com/getsimpledirect/ghost-narrator/commit/f0959b2462243fbbd8b572e1dd66829f20c6d8e5))
+
+The narration prompt instructs the LLM to convert numbers to spoken form ('$1.2B' -> 'one point two
+  billion dollars', 'Q3 2024' -> 'the third quarter of twenty-twenty-four'). _NUMBER_RE and _DATE_RE
+  then flagged these correctly-converted forms as missing, triggering a spurious retry LLM call on
+  every narration chunk in any finance article. Removing these checks eliminates the false
+  positives. Proper noun and direct quote checks are retained; MIN_WORD_RATIO=0.55 catches major
+  content drops.
+
+- **tts-service**: Bound GPU hold time and close retry coverage gaps
+  ([`232dfcf`](https://github.com/getsimpledirect/ghost-narrator/commit/232dfcf0786c9797812c14a9c794b32565366cde))
+
+Four reliability gaps identified in post-deploy code review:
+
+- Job timeout: without a wall-clock limit on the GPU semaphore, a CUDA driver stall, OOM recovery,
+  or model deadlock would block all subsequent jobs indefinitely with no recovery path short of a
+  manual service restart. asyncio.timeout(MAX_JOB_DURATION_SECONDS, default 7200s) now wraps Steps
+  1-5 so the semaphore is always released and the job marked failed cleanly.
+
+- TimeoutError excluded from retry: retry_with_backoff(exceptions=(Exception,)) was silently
+  retrying asyncio.TimeoutError, meaning a genuine Ollama overload burned 3 × 300s before surfacing
+  the failure. A new exclude parameter prevents timeout errors from being retried uselessly.
+
+- Single-shot narration lacked retry: the MID_VRAM single-shot path called _call_llm directly,
+  unlike every other narration call site. A transient connection reset would fail the entire article
+  with no recovery attempt.
+
+- Misleading job status: status jumped to processing before the semaphore was acquired, making
+  queued jobs indistinguishable from actively running ones in monitoring and n8n callbacks. Status
+  now progresses queued → processing the moment the GPU slot is granted.
+
+- **tts-service**: Serialize GPU pipeline with asyncio semaphore
+  ([`21197f7`](https://github.com/getsimpledirect/ghost-narrator/commit/21197f74398df9bcb99d874c56a178822df9a79f))
+
+Concurrent jobs were fighting _synthesis_lock at the chunk level, giving each job ~50% GPU
+  throughput. Simultaneously their LLM narration requests queued in Ollama, pushing wait times past
+  LLM_TIMEOUT and triggering cascading retry storms. Adding a process-wide Semaphore(1) serializes
+  the narration+synthesis pipeline so jobs queue cleanly. Non-GPU steps (upload, cleanup, webhook)
+  run outside the semaphore so the GPU slot is released the moment the MP3 is ready.
+
+### Chores
+
+- Bump VERSION to 2.3.15
+  ([`5755e0b`](https://github.com/getsimpledirect/ghost-narrator/commit/5755e0b18163cd8a02c57cf389c0db65153d9ef4))
+
+- **ghost-narrator**: Bump VERSION to 2.3.15 to reflect latest changes; include pending README tweak
+  ([`b18ebf8`](https://github.com/getsimpledirect/ghost-narrator/commit/b18ebf8d6e98cbf258af0aab34be5a64f7aab4a4))
+
+- **tts-service**: Add MIT license header to all Python source files
+  ([#69](https://github.com/getsimpledirect/ghost-narrator/pull/69),
+  [`30ca49d`](https://github.com/getsimpledirect/ghost-narrator/commit/30ca49d58397313237fe9dec0ff1a571288ff28f))
+
+* chore(tts-service): add MIT license header to all Python source files
+
+- 54 files in app/ and tests/ were missing the standard MIT license header that the rest of the
+  codebase carries — adds it uniformly so every file is correctly attributed before open-sourcing
+
+* chore(tts-service): add MIT headers to shell scripts and fix residual lint
+
+- Add MIT license header to install.sh, hardware-probe.sh, ollama-init.sh - Add MIT license header
+  to tests/conftest.py - Remove leftover inline qwen_tts mock blocks in test_narration_strategy,
+  test_narration_validator, test_voices — conftest.py pytest_configure handles the stub
+  session-wide, making per-file patching redundant - Drop unused variables (span, boto3, result)
+  flagged by ruff F841/F401
+
+### Documentation
+
+- Document concurrent job serialization and dynamic Ollama config
+  ([`aba9539`](https://github.com/getsimpledirect/ghost-narrator/commit/aba9539227a33f1ab0afc183b6d2d70261be65d5))
+
+- Update HIGH_VRAM LLM reference from qwen3:14b to qwen3:8b
+  ([`8179b50`](https://github.com/getsimpledirect/ghost-narrator/commit/8179b50b608795535f2a6fd03bf012c2e6cd78cb))
+
+The hardware doc commit (2fdcb3a) updated the tier config and tests but left the README hardware
+  table and ARCHITECTURE.md feature list still showing qwen3:14b. Both docs now reflect the actual
+  deployed model.
+
+- **CHANGELOG**: Add note clarifying current codebase state is v2.3.15
+  ([`32b295c`](https://github.com/getsimpledirect/ghost-narrator/commit/32b295c9497614841dc6efc5ab3e2484ebab449d))
+
+- **CHANGELOG**: Remove accidental v2.3.15 note added during audit; keep changelog clean
+  ([`588a832`](https://github.com/getsimpledirect/ghost-narrator/commit/588a832fd8e10b30e8a86e5966b4382eecafd3b8))
+
+### Features
+
+- **hardware**: Compute OLLAMA_NUM_PARALLEL from actual free VRAM
+  ([`2261dab`](https://github.com/getsimpledirect/ghost-narrator/commit/2261dabb7c10fe61f2b35477fecc9973b200ed9d))
+
+Previously OLLAMA_NUM_PARALLEL was unset (defaulting to 1), so Ollama queued concurrent LLM
+  narration requests serially. With two jobs each needing 3 narration chunks at 60-90s each, queued
+  requests regularly exceeded LLM_TIMEOUT=120s, triggering 3-attempt retry storms per chunk.
+
+Now hardware-probe.sh computes the value at startup: floor((vram - llm_size - tts_size - safety) /
+  kv_per_slot), capped at 4
+
+The cap of 4 reflects realistic concurrent job submission — Ollama pre-allocates all KV cache slots
+  at startup so a higher value wastes VRAM permanently regardless of actual in-flight requests.
+
+OLLAMA_FLASH_ATTENTION=1 is also set on GPU tiers; the L4 (Ampere) gains 20-40% lower per-token
+  latency from flash attention.
+
+high_vram LLM changed from qwen3:14b to qwen3:8b to match hardware.py.
+
+- **tts-service**: Spoken-form validation for numeric/date entities
+  ([`ddc77d3`](https://github.com/getsimpledirect/ghost-narrator/commit/ddc77d31ee0e87f8758e54d232118d27a2ddee69))
+
+Restore number and date entity checking in NarrationValidator with spoken-form equivalents generated
+  by num2words, replacing the naive literal-string match that caused false positives on every
+  finance chunk.
+
+_to_spoken_forms() maps source literals to all acceptable spoken forms: 47% → forty-seven percent
+  \$2.3B → two point three billion dollars Q3 2024 → third quarter / the third quarter FY2024 →
+  fiscal year twenty twenty-four 2024 → twenty twenty-four
+
+validate() now checks any(form in narration for form in spoken_forms) so correctly-converted
+  narration passes while completely dropped entities still trigger a retry.
+
+Adds num2words>=0.5.13 as a runtime dependency (already satisfied in the existing Python env at
+  0.5.14).
+
+### Performance Improvements
+
+- **hardware**: Downsize HIGH_VRAM LLM to qwen3:8b, cap max_new_tokens to 3000
+  ([`2fdcb3a`](https://github.com/getsimpledirect/ghost-narrator/commit/2fdcb3a4e510885bf0837f468ec05f6e0631da17))
+
+qwen3:14b consumed ~8.5 GB VRAM for a narration task that is pure format conversion — qwen3:8b
+  delivers equivalent output at ~4.5 GB, freeing 4 GB headroom on the L4. tts_max_new_tokens reduced
+  from 8000 to 3000 across HIGH and MID tiers: a 250-word TTS chunk produces ~1384 codec tokens at
+  12 Hz, making 3000 a safe 2.2x ceiling that prevents runaway synthesis loops from running for 11+
+  minutes before the quality check catches them.
 
 
 ## v2.3.15 (2026-04-10)
