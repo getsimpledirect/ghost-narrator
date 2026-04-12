@@ -26,60 +26,57 @@ jobs:
           CURRENT_TAG="v${{ steps.version.outputs.VERSION }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | sed 's/^v//')
           
-          # Initialize sections
-          FEATURES=""
-          BUG_FIXES=""
-          PERFORMANCE=""
-          DOCS=""
-          OTHER=""
+          # Create temp files for each category
+          touch features.txt bugfixes.txt performance.txt docs.txt other.txt
           
-          # Categorize commits
-          git log "v$PREV_TAG..HEAD" --format="* %s (%h)" --no-merges | while read -r line; do
+          # Categorize commits using a script that writes to temp files
+          while IFS= read -r line; do
             case "$line" in
-              feat*|feat!*) FEATURES="$FEATURES"$'\n'"$line" ;;
-              fix*|fix!*) BUG_FIXES="$BUG_FIXES"$'\n'"$line" ;;
-              perf*) PERFORMANCE="$PERFORMANCE"$'\n'"$line" ;;
-              docs*) DOCS="$DOCS"$'\n'"$line" ;;
-              *) OTHER="$OTHER"$'\n'"$line" ;;
+              feat*|feat!*) echo "$line" >> features.txt ;;
+              fix*|fix!*) echo "$line" >> bugfixes.txt ;;
+              perf*) echo "$line" >> performance.txt ;;
+              docs*) echo "$line" >> docs.txt ;;
+              *) echo "$line" >> other.txt ;;
             esac
-          done
+          done < <(git log "v$PREV_TAG..HEAD" --format="* %s (%h)" --no-merges || true)
           
+          # Build release notes
           {
             echo "## What's Changed"
             echo ""
             
             # Features
-            if [ -n "$FEATURES" ]; then
+            if [ -s features.txt ]; then
               echo "### ✨ Features"
-              echo "$FEATURES"
+              cat features.txt
               echo ""
             fi
             
             # Bug Fixes
-            if [ -n "$BUG_FIXES" ]; then
+            if [ -s bugfixes.txt ]; then
               echo "### 🐛 Bug Fixes"
-              echo "$BUG_FIXES"
+              cat bugfixes.txt
               echo ""
             fi
             
             # Performance
-            if [ -n "$PERFORMANCE" ]; then
+            if [ -s performance.txt ]; then
               echo "### ⚡ Performance"
-              echo "$PERFORMANCE"
+              cat performance.txt
               echo ""
             fi
             
             # Docs
-            if [ -n "$DOCS" ]; then
+            if [ -s docs.txt ]; then
               echo "### 📝 Documentation"
-              echo "$DOCS"
+              cat docs.txt
               echo ""
             fi
             
             # Other
-            if [ -n "$OTHER" ]; then
+            if [ -s other.txt ]; then
               echo "### 🔧 Other Changes"
-              echo "$OTHER"
+              cat other.txt
               echo ""
             fi
             
