@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## [Unreleased]
+
+### Fixed
+- **Critical:** Concurrent TTS jobs now queue through a global `asyncio.Semaphore(1)` instead of fighting `_synthesis_lock` at the chunk level. Two simultaneous 5,500-word jobs previously took 2+ days; they now complete sequentially in ~10–15 minutes each on an L4 GPU.
+- **Critical:** Narration validator no longer flags correctly-converted numbers (`$1.2B` → `"one point two billion dollars"`) as missing entities. This was triggering a spurious retry LLM call on every chunk of any finance article.
+- `LLM_TIMEOUT` default raised from 120s to 300s; `LLM_COMPLETENESS_TIMEOUT` from 180s to 360s — `qwen3:8b` narrates a 2,500-word chunk in 30–60s leaving 5× headroom.
+- `tts-service` Docker memory limit raised from 8G to 12G in GPU compose — prevents OOM kills when two jobs run concurrently.
+
+### Changed
+- HIGH_VRAM tier LLM downgraded from `qwen3:14b` to `qwen3:8b`. Narration is a format-conversion task; `qwen3:8b` delivers equivalent output at ~4.5 GB VRAM vs ~8.5 GB, freeing ~4 GB headroom on the GPU.
+- `tts_max_new_tokens` reduced from 8000 → 3000 (HIGH_VRAM) and 6000 → 3000 (MID_VRAM). A 250-word TTS chunk produces ~1,384 codec tokens at 12 Hz; 3000 gives 2.2× headroom and prevents runaway synthesis loops.
+- `hardware-probe.sh` now computes `OLLAMA_NUM_PARALLEL` dynamically from actual free VRAM: `floor((vram − llm − tts − safety) / kv_per_slot)`, capped at 4. Previously unset (serial Ollama), causing queued LLM requests to breach `LLM_TIMEOUT`.
+- `OLLAMA_FLASH_ATTENTION=1` enabled on all GPU tiers (LOW, MID, HIGH). L4 and other Ampere+ GPUs gain 20–40% lower LLM inference latency.
+- HIGH_VRAM `hardware-probe.sh` model corrected from `qwen3:14b` to `qwen3:8b` to match `hardware.py`.
+
+
 ## v2.3.15 (2026-04-10)
 
 ### Refactoring

@@ -127,7 +127,7 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
 | Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3:4b | 192kbps, 44.1kHz | Compatible with all CUDA GPUs incl. older hardware |
 | Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3:8b | 192kbps, 44.1kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3:14b** | **256kbps, 48kHz, −14 LUFS** | **Pipelined narrate+synthesize, multi-voice quotes, quality re-synthesis, voice pre-caching** |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3:8b** | **256kbps, 48kHz, −14 LUFS** | **Pipelined narrate+synthesize, multi-voice quotes, quality re-synthesis, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
 - **bf16 TTS precision** — 1.5–2x faster synthesis on Tensor Core GPUs with imperceptible quality difference
@@ -483,6 +483,24 @@ See the [Storage Backends](#storage-backends) section for setup details.
 
 ---
 
+### Job Serialization
+
+A process-wide `asyncio.Semaphore(1)` in `app/domains/job/tts_job.py` (`get_gpu_semaphore()`) serializes the GPU-bound section of each job: Steps 1–5 (LLM narration, TTS synthesis, per-chunk normalization, concatenation, final mastering). Non-GPU steps (quality validation, storage upload, cleanup, webhook notification) run outside the semaphore so the GPU slot is released as soon as the MP3 is ready.
+
+**Why not per-chunk serialization:** `synthesize_chunks_auto` on GPU tiers processes all chunks sequentially while holding `_synthesis_lock`. Putting the semaphore around each synthesis call would still serialize at the chunk level but with much higher lock acquisition overhead. Serializing at the job level is simpler and equally correct given that the LLM narration also queues through Ollama's `OLLAMA_NUM_PARALLEL` slot pool.
+
+### Ollama Parallelism
+
+`OLLAMA_NUM_PARALLEL` is computed at startup by `scripts/init/hardware-probe.sh` and exported by `scripts/init/ollama-init.sh` before `ollama serve` starts. Formula:
+
+```
+parallel = clamp(floor((vram_mib − llm_mib − tts_mib − safety_mib) / kv_per_slot_mib), 1, 4)
+```
+
+The cap of 4 reflects the practical maximum of concurrent narration requests in a typical deployment — Ollama pre-allocates all KV cache slots at startup, so a higher value wastes VRAM permanently.
+
+---
+
 ### 6. TTS Pipeline — Audio Processing Flow
 
 The TTS service implements a sophisticated multi-stage pipeline:
@@ -502,7 +520,7 @@ The TTS service implements a sophisticated multi-stage pipeline:
 **Stage 2: Parallel/Sequential Synthesis**
 - **CPU Mode**: Parallel synthesis using ThreadPoolExecutor (MAX_WORKERS=4 default)
 - **GPU Mode**: Sequential synthesis (optimal for CUDA memory management)
-- **HIGH_VRAM**: bf16 precision, serial synthesis (GPU synthesis is serialized by `_synthesis_lock`)
+- **HIGH_VRAM**: bf16 precision, serial synthesis (GPU slot serialized by `get_gpu_semaphore()` + `_synthesis_lock`)
 - Each chunk synthesized independently using Qwen3-TTS
 - Voice reference pre-cached at startup (skips per-job load)
 
