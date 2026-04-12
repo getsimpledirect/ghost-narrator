@@ -3,8 +3,6 @@
 
 ## [Unreleased]
 
-> Note: The current codebase state is reflected in v2.3.15. See the v2.3.15 section for the latest changes.
-
 ### Fixed
 - **Critical:** Concurrent TTS jobs now queue through a global `asyncio.Semaphore(1)` instead of fighting `_synthesis_lock` at the chunk level. Two simultaneous 5,500-word jobs previously took 2+ days; they now complete sequentially in ~10–15 minutes each on an L4 GPU.
 - **Critical:** Narration validator no longer flags correctly-converted numbers (`$1.2B` → `"one point two billion dollars"`) as missing entities. This was triggering a spurious retry LLM call on every chunk of any finance article.
