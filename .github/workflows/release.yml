@@ -16,34 +16,89 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version from tag
+      - name: Extract version
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Extract changelog for this version
+      - name: Generate Release Notes from CHANGELOG
         id: changelog
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          # Strip 'v' prefix: v2.1.1 → 2.1.1
-          CLEAN_VERSION="${VERSION#v}"
-          # Extract section between this version header and the next version header
-          awk -v ver="$CLEAN_VERSION" '
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          
+          # Map section headers to emojis
+          declare -A EMOJI_MAP=(
+            "Bug Fixes" "🐛"
+            "Bugfixes" "🐛"
+            "Features" "✨"
+            "Feature" "✨"
+            "Performance Improvements" "⚡"
+            "Performance" "⚡"
+            "Documentation" "📝"
+            "Docs" "📝"
+            "Chores" "🔧"
+            "Chore" "🔧"
+            "Security" "🔒"
+            "Refactor" "♻️"
+            "Refactoring" "♻️"
+            "Infrastructure" "🏗️"
+            "Infra" "🏗️"
+          )
+          
+          # Extract changelog section for this version
+          awk -v ver="$VERSION" '
             BEGIN { found=0 }
             /^## \[/ {
               if (found) exit
-              if ($0 ~ "\\[" ver "\\]") { found=1; next }
+              if ($0 ~ "\\[" ver "\\]") {
+                found=1
+                # Extract date if present: ## v2.4.0 (2026-04-12)
+                match($0, /\([0-9]{4}-[0-9]{2}-[0-9]{2}\)/, date)
+                if (date[0] != "") {
+                  print "## 🚀 " ver " (" substr(date[0], 2, length(date[0]) - 2) ")"
+                } else {
+                  print "## 🚀 " ver
+                }
+                next
+              }
             }
-            found { print }
-          ' CHANGELOG.md > release_notes.md
-          # If empty, use a fallback
-          if [ ! -s release_notes.md ]; then
-            echo "No changelog entry found for $VERSION." > release_notes.md
+            found {
+              # Stop at next version header
+              if (/^## \[/) exit
+              # Print lines
+              print
+            }
+          ' CHANGELOG.md | sed 's/^### /### /' > release_notes.md
+          
+          # Add emoji prefixes to section headers
+          while IFS= read -r line; do
+            for key in "${!EMOJI_MAP[@]}"; do
+              if echo "$line" | grep -q "^### $key"; then
+                line=$(echo "$line" | sed "s/^### $key/### ${EMOJI_MAP[$key]} $key/")
+                break
+              fi
+            done
+            echo "$line"
+          done < release_notes.md > release_notes_final.md
+          
+          mv release_notes_final.md release_notes.md
+          
+          # Add Detailed Changes comparison link at the end
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | sed 's/^v//')
+          if [ -n "$PREV_TAG" ]; then
+            echo "" >> release_notes.md
+            echo "---" >> release_notes.md
+            echo "📋 **Full Changelog**: https://github.com/${{ github.repository }}/compare/v$PREV_TAG...v$VERSION" >> release_notes.md
           fi
+          
+          cat release_notes.md
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
+          tag_name: ${{ github.ref }}
+          name: "🚀 Release ${{ steps.version.outputs.VERSION }}"
           body_path: release_notes.md
+          draft: false
           generate_release_notes: false
