@@ -1,9 +1,15 @@
 # CHANGELOG
 
 
+## v2.4.1 (2026-04-12)
+
+
 ## v2.4.0 (2026-04-12)
 
 ### Bug Fixes
+
+- **ci**: Improve VERSION sync and release notes formatting
+  ([`df4ff81`](https://github.com/getsimpledirect/ghost-narrator/commit/df4ff816b6467694a9044788fc3318b18e692f7d))
 
 - **infra**: Raise LLM timeouts to 300/360s and tts-service memory to 12G
   ([`beab4a8`](https://github.com/getsimpledirect/ghost-narrator/commit/beab4a8879a2cc2e94a4b4f1028e80cda90156fc))
