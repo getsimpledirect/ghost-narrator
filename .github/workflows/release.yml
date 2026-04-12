@@ -16,58 +16,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version from tag
+      - name: Extract version
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare changelog
+      - name: Generate Release Notes
         id: changelog
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          CLEAN_VERSION="${VERSION#v}"
+          CURRENT_TAG="v${{ steps.version.outputs.VERSION }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | sed 's/^v//')
           
-          # Get the previous tag for comparison
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          echo "## What's Changed" > release_notes.md
+          echo "" >> release_notes.md
           
-          # Generate changelog using git log
           if [ -n "$PREV_TAG" ]; then
-            CHANGES=$(git log "$PREV_TAG..HEAD" --pretty=format:"- %s (%h)" --grep -v -E "^(Merge|Revert)" || true)
+            echo "Changes from v$PREV_TAG to $CURRENT_TAG:" >> release_notes.md
+            echo "" >> release_notes.md
+            git log "v$PREV_TAG..HEAD" --format="* %s (%h)" --no-merges | grep -v "^$" >> release_notes.md || true
           else
-            CHANGES=$(git log --pretty=format:"- %s (%h)" -n 20 || true)
+            echo "First release! Changes from initial commit:" >> release_notes.md
+            echo "" >> release_notes.md
+            git log --format="* %s (%h)" --no-merges -n 30 | grep -v "^$" >> release_notes.md || true
           fi
           
-          # Build a clean release note
-          cat > release_notes.md << 'HEADER'
-          ## What's Changed
-          
-          HEADER
-          
-          echo "$CHANGES" >> release_notes.md
-          
-          # Add贡献者 section
-          echo -e "\n## Contributors" >> release_notes.md
-          echo "$(git shortlog -sn --no-merges | head -5 | sed 's/^[0-9]*[[:space:]]*/- /')" >> release_notes.md
-          
-          # If empty, add fallback
-          if [ ! -s release_notes.md ] || [ $(wc -l < release_notes.md) -le 2 ]; then
-            cat > release_notes.md << 'FALLBACK'
-          ## What's Changed
-          
-          See commit history for details.
-          
-          ## Contributors
-          
-          - See commit history
-          FALLBACK
-          fi
+          echo "" >> release_notes.md
+          echo "---" >> release_notes.md
+          echo "*Full Changelog*: https://github.com/${{ github.repository }}/compare/v$PREV_TAG...$CURRENT_TAG" >> release_notes.md
           
           cat release_notes.md
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
+          tag_name: ${{ github.ref }}
+          name: "Release ${{ steps.version.outputs.VERSION }}"
           body_path: release_notes.md
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') }}
+          generate_release_notes: false
