@@ -1,33 +1,34 @@
 # CHANGELOG
 
 
-## v2.4.3 (2026-04-12)
-
-### 🐛 Bug Fixes
-
-- **ci**: Add emojis to release notes for better visual appeal
-  ([`98cf58d`](https://github.com/getsimpledirect/ghost-narrator/commit/98cf58d))
-
-
-## v2.4.2 (2026-04-12)
-
-### 🔧 Chores
-
-- **ci**: Remove VERSION file - not needed, version tracked in pyproject.toml and init.py
-  ([`78abdbc`](https://github.com/getsimpledirect/ghost-narrator/commit/78abdbc))
-
-
-## v2.4.1 (2026-04-12)
-
-### 🐛 Bug Fixes
-
-- **ci**: Improve release notes format and disable auto-generated notes
-  ([`53f6c33`](https://github.com/getsimpledirect/ghost-narrator/commit/53f6c336606a66367e2f74e590db86ac8f9aa951))
+## v2.4.4 (2026-04-12)
 
 ### Bug Fixes
 
+- Resolve CHANGELOG merge conflict with emojis
+  ([`94da44c`](https://github.com/getsimpledirect/ghost-narrator/commit/94da44c56b9bfc96906c2d948aa58182125f2f90))
+
+- **ci**: Fix shell variable scoping in release workflow
+  ([`6e82792`](https://github.com/getsimpledirect/ghost-narrator/commit/6e827927601e250d1c4e736ddbf33ba3ed878688))
+
+
+## v2.4.3 (2026-04-12)
+
+### Bug Fixes
+
+- **ci**: Add emoji sections to release notes, fix CHANGELOG formatting
+  ([`b97ba7e`](https://github.com/getsimpledirect/ghost-narrator/commit/b97ba7e451f7bb5eced1adea94e4e389229e158a))
+
+- **ci**: Add emojis to release notes for better visual appeal
+  ([`98cf58d`](https://github.com/getsimpledirect/ghost-narrator/commit/98cf58d11e2001b41721950671cc48d086555568))
+
 - **ci**: Improve release notes format and disable auto-generated notes
   ([`53f6c33`](https://github.com/getsimpledirect/ghost-narrator/commit/53f6c336606a66367e2f74e590db86ac8f9aa951))
+
+### Chores
+
+- Remove VERSION file - not needed, version tracked in pyproject.toml and __init__.py
+  ([`78abdbc`](https://github.com/getsimpledirect/ghost-narrator/commit/78abdbccdedb44467f5d5a60fe93d8b4e1e7bc37))
 
 
 ## v2.4.0 (2026-04-12)
