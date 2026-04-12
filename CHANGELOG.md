@@ -1,7 +1,20 @@
 # CHANGELOG
 
 
+## v2.4.3 (2026-04-12)
+
+### 🐛 Bug Fixes
+
+- **ci**: Add emojis to release notes for better visual appeal
+  ([`98cf58d`](https://github.com/getsimpledirect/ghost-narrator/commit/98cf58d))
+
+
 ## v2.4.2 (2026-04-12)
+
+### 🔧 Chores
+
+- **ci**: Remove VERSION file - not needed, version tracked in pyproject.toml and init.py
+  ([`78abdbc`](https://github.com/getsimpledirect/ghost-narrator/commit/78abdbc))
 
 
 ## v2.4.1 (2026-04-12)

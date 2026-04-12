@@ -26,22 +26,66 @@ jobs:
           CURRENT_TAG="v${{ steps.version.outputs.VERSION }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | sed 's/^v//')
           
-          echo "## What's Changed" > release_notes.md
-          echo "" >> release_notes.md
+          # Initialize sections
+          FEATURES=""
+          BUG_FIXES=""
+          PERFORMANCE=""
+          DOCS=""
+          OTHER=""
           
-          if [ -n "$PREV_TAG" ]; then
-            echo "Changes from v$PREV_TAG to $CURRENT_TAG:" >> release_notes.md
-            echo "" >> release_notes.md
-            git log "v$PREV_TAG..HEAD" --format="* %s (%h)" --no-merges | grep -v "^$" >> release_notes.md || true
-          else
-            echo "First release! Changes from initial commit:" >> release_notes.md
-            echo "" >> release_notes.md
-            git log --format="* %s (%h)" --no-merges -n 30 | grep -v "^$" >> release_notes.md || true
-          fi
+          # Categorize commits
+          git log "v$PREV_TAG..HEAD" --format="* %s (%h)" --no-merges | while read -r line; do
+            case "$line" in
+              feat*|feat!*) FEATURES="$FEATURES"$'\n'"$line" ;;
+              fix*|fix!*) BUG_FIXES="$BUG_FIXES"$'\n'"$line" ;;
+              perf*) PERFORMANCE="$PERFORMANCE"$'\n'"$line" ;;
+              docs*) DOCS="$DOCS"$'\n'"$line" ;;
+              *) OTHER="$OTHER"$'\n'"$line" ;;
+            esac
+          done
           
-          echo "" >> release_notes.md
-          echo "---" >> release_notes.md
-          echo "*Full Changelog*: https://github.com/${{ github.repository }}/compare/v$PREV_TAG...$CURRENT_TAG" >> release_notes.md
+          {
+            echo "## What's Changed"
+            echo ""
+            
+            # Features
+            if [ -n "$FEATURES" ]; then
+              echo "### ✨ Features"
+              echo "$FEATURES"
+              echo ""
+            fi
+            
+            # Bug Fixes
+            if [ -n "$BUG_FIXES" ]; then
+              echo "### 🐛 Bug Fixes"
+              echo "$BUG_FIXES"
+              echo ""
+            fi
+            
+            # Performance
+            if [ -n "$PERFORMANCE" ]; then
+              echo "### ⚡ Performance"
+              echo "$PERFORMANCE"
+              echo ""
+            fi
+            
+            # Docs
+            if [ -n "$DOCS" ]; then
+              echo "### 📝 Documentation"
+              echo "$DOCS"
+              echo ""
+            fi
+            
+            # Other
+            if [ -n "$OTHER" ]; then
+              echo "### 🔧 Other Changes"
+              echo "$OTHER"
+              echo ""
+            fi
+            
+            echo "---"
+            echo "*Full Changelog*: https://github.com/${{ github.repository }}/compare/v$PREV_TAG...$CURRENT_TAG"
+          } > release_notes.md
           
           cat release_notes.md
 
