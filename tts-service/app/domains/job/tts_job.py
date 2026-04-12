@@ -78,6 +78,28 @@ from app.domains.synthesis.service import (
 
 logger = logging.getLogger(__name__)
 
+# Process-wide GPU serialization semaphore — created lazily.
+# asyncio.Semaphore requires no running event loop at construction time in
+# Python 3.10+, and is always acquired from coroutines in a single event loop.
+_gpu_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def get_gpu_semaphore() -> asyncio.Semaphore:
+    """Return the process-wide GPU serialization semaphore (lazily created).
+
+    Limits concurrent GPU-bound pipeline execution to one job at a time.
+    Without this, concurrent jobs fight _synthesis_lock at the chunk level
+    (~50% throughput each) and Ollama queues their LLM requests past
+    LLM_TIMEOUT, triggering cascading retry storms.
+
+    Non-GPU steps (quality validation, upload, cleanup, webhook) run outside
+    the semaphore so the GPU slot is released as soon as the MP3 is ready.
+    """
+    global _gpu_semaphore
+    if _gpu_semaphore is None:
+        _gpu_semaphore = asyncio.Semaphore(1)
+    return _gpu_semaphore
+
 
 def _span(name: str):
     """Return an OTel span context manager, or a no-op if tracing is unavailable."""
@@ -211,115 +233,133 @@ async def run_tts_job(
         # Fetch generation config once (async Redis read) before entering thread pool
         generation_kwargs, _overrides = await get_effective_config()
 
-        # Step 1+2+3: Narrate, chunk, and synthesize (pipelined when possible)
-        await _check_status()
-        logger.info(f'[{job_id}] Starting narration + synthesis pipeline...')
-        try:
-            narration = get_narration_strategy()
-        except Exception as exc:
-            logger.warning(f'[{job_id}] Narration strategy init failed: {exc}')
-            narration = None
+        # Acquire GPU slot — serializes narration + synthesis + mastering.
+        # One job runs its full pipeline at a time; the next job waits here.
+        # Upload, cleanup, and webhook fire AFTER release so the slot is not
+        # held during network I/O.
+        logger.info(f'[{job_id}] Waiting for GPU slot...')
+        async with get_gpu_semaphore():
+            logger.info(f'[{job_id}] GPU slot acquired')
 
-        chunk_wav_paths: list[str] = []
-        all_chunks: list[str] = []
-        total_words = 0
-        chunk_index = 0
-        narration_skipped = False
-        with _span('tts.narration_synthesis'):
-            if narration is not None:
-                # True pipelined: LLM narration of chunk N+1 runs concurrently with
-                # TTS synthesis of chunk N via asyncio producer-consumer with a queue.
-                #
-                # The original `async for` loop was NOT pipelined — Python's async
-                # generator only advances when __anext__() is called, which happens
-                # after the loop body (TTS synthesis) fully completes. Using a
-                # background task + Queue decouples the two stages so the LLM HTTP
-                # call and Ollama inference genuinely overlap with TTS thread work.
-                try:
-                    _narration_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=2)
-                    _producer_errors: list[BaseException] = []
+            # Step 1+2+3: Narrate, chunk, and synthesize (pipelined when possible)
+            await _check_status()
+            logger.info(f'[{job_id}] Starting narration + synthesis pipeline...')
+            try:
+                narration = get_narration_strategy()
+            except Exception as exc:
+                logger.warning(f'[{job_id}] Narration strategy init failed: {exc}')
+                narration = None
 
-                    async def _narration_producer() -> None:
-                        try:
-                            async for segment in narration.narrate_iter(text):
-                                await _check_status()
-                                await _narration_queue.put(segment)
-                        except Exception as exc:
-                            _producer_errors.append(exc)
-                        finally:
-                            # Always deliver sentinel so consumer can exit cleanly
-                            await _narration_queue.put(None)
-
-                    async def _synthesis_consumer() -> None:
-                        nonlocal total_words, chunk_index
-                        while True:
-                            segment = await _narration_queue.get()
-                            if segment is None:
-                                break
-                            await _check_status()
-                            tts_chunks, seg_words = prepare_text_for_synthesis(
-                                segment, MAX_CHUNK_WORDS
-                            )
-                            all_chunks.extend(tts_chunks)
-                            total_words += seg_words
-                            paths = await synthesize_chunks_auto(
-                                chunks=tts_chunks,
-                                job_dir=job_dir,
-                                job_id=job_id,
-                                status_check_callback=_check_status,
-                                chunk_offset=chunk_index,
-                                generation_kwargs=generation_kwargs,
-                            )
-                            chunk_wav_paths.extend(paths)
-                            chunk_index += len(tts_chunks)
-
-                    _producer_task = asyncio.create_task(_narration_producer())
+            chunk_wav_paths: list[str] = []
+            all_chunks: list[str] = []
+            total_words = 0
+            chunk_index = 0
+            narration_skipped = False
+            with _span('tts.narration_synthesis'):
+                if narration is not None:
+                    # True pipelined: LLM narration of chunk N+1 runs concurrently with
+                    # TTS synthesis of chunk N via asyncio producer-consumer with a queue.
+                    #
+                    # The original `async for` loop was NOT pipelined — Python's async
+                    # generator only advances when __anext__() is called, which happens
+                    # after the loop body (TTS synthesis) fully completes. Using a
+                    # background task + Queue decouples the two stages so the LLM HTTP
+                    # call and Ollama inference genuinely overlap with TTS thread work.
                     try:
-                        await _synthesis_consumer()
-                    finally:
-                        if not _producer_task.done():
-                            _producer_task.cancel()
-                        # Drain the queue so the producer's blocked put() can
-                        # complete and the task can exit.  get_nowait() calls
-                        # _wakeup_next internally, waking the awaiting putter;
-                        # await sleep(0) yields the event loop so it can run.
-                        for _ in range(50):
-                            if _producer_task.done():
-                                break
-                            while not _narration_queue.empty():
-                                try:
-                                    _narration_queue.get_nowait()
-                                except asyncio.QueueEmpty:
+                        _narration_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=2)
+                        _producer_errors: list[BaseException] = []
+
+                        async def _narration_producer() -> None:
+                            try:
+                                async for segment in narration.narrate_iter(text):
+                                    await _check_status()
+                                    await _narration_queue.put(segment)
+                            except Exception as exc:
+                                _producer_errors.append(exc)
+                            finally:
+                                # Always deliver sentinel so consumer can exit cleanly
+                                await _narration_queue.put(None)
+
+                        async def _synthesis_consumer() -> None:
+                            nonlocal total_words, chunk_index
+                            while True:
+                                segment = await _narration_queue.get()
+                                if segment is None:
                                     break
-                            await asyncio.sleep(0)
+                                await _check_status()
+                                tts_chunks, seg_words = prepare_text_for_synthesis(
+                                    segment, MAX_CHUNK_WORDS
+                                )
+                                all_chunks.extend(tts_chunks)
+                                total_words += seg_words
+                                paths = await synthesize_chunks_auto(
+                                    chunks=tts_chunks,
+                                    job_dir=job_dir,
+                                    job_id=job_id,
+                                    status_check_callback=_check_status,
+                                    chunk_offset=chunk_index,
+                                    generation_kwargs=generation_kwargs,
+                                )
+                                chunk_wav_paths.extend(paths)
+                                chunk_index += len(tts_chunks)
+
+                        _producer_task = asyncio.create_task(_narration_producer())
                         try:
-                            await _producer_task
-                        except (asyncio.CancelledError, Exception):
-                            pass
+                            await _synthesis_consumer()
+                        finally:
+                            if not _producer_task.done():
+                                _producer_task.cancel()
+                            # Drain the queue so the producer's blocked put() can
+                            # complete and the task can exit.  get_nowait() calls
+                            # _wakeup_next internally, waking the awaiting putter;
+                            # await sleep(0) yields the event loop so it can run.
+                            for _ in range(50):
+                                if _producer_task.done():
+                                    break
+                                while not _narration_queue.empty():
+                                    try:
+                                        _narration_queue.get_nowait()
+                                    except asyncio.QueueEmpty:
+                                        break
+                                await asyncio.sleep(0)
+                            try:
+                                await _producer_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
 
-                    if _producer_errors:
-                        raise _producer_errors[0]
+                        if _producer_errors:
+                            raise _producer_errors[0]
 
-                    logger.info(
-                        f'[{job_id}] Pipelined narration+synthesis complete — '
-                        f'{len(chunk_wav_paths)} audio chunks, {total_words} words'
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        f'[{job_id}] Pipelined narration failed, falling back to sequential: {exc}'
-                    )
-                    # Fallback: narrate all, then synthesize all
-                    try:
-                        narrated_text = await narration.narrate(text)
-                    except Exception as narration_exc:
-                        logger.warning(
-                            f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
+                        logger.info(
+                            f'[{job_id}] Pipelined narration+synthesis complete — '
+                            f'{len(chunk_wav_paths)} audio chunks, {total_words} words'
                         )
-                        narrated_text = text
-                        narration_skipped = True
-                    all_chunks, total_words = prepare_text_for_synthesis(
-                        narrated_text, MAX_CHUNK_WORDS
-                    )
+                    except Exception as exc:
+                        logger.warning(
+                            f'[{job_id}] Pipelined narration failed, falling back to sequential: {exc}'
+                        )
+                        # Fallback: narrate all, then synthesize all
+                        try:
+                            narrated_text = await narration.narrate(text)
+                        except Exception as narration_exc:
+                            logger.warning(
+                                f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
+                            )
+                            narrated_text = text
+                            narration_skipped = True
+                        all_chunks, total_words = prepare_text_for_synthesis(
+                            narrated_text, MAX_CHUNK_WORDS
+                        )
+                        chunk_wav_paths = await synthesize_chunks_auto(
+                            chunks=all_chunks,
+                            job_dir=job_dir,
+                            job_id=job_id,
+                            status_check_callback=_check_status,
+                            generation_kwargs=generation_kwargs,
+                        )
+                else:
+                    # No narration available — synthesize raw text directly
+                    all_chunks, total_words = prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
                     chunk_wav_paths = await synthesize_chunks_auto(
                         chunks=all_chunks,
                         job_dir=job_dir,
@@ -327,113 +367,106 @@ async def run_tts_job(
                         status_check_callback=_check_status,
                         generation_kwargs=generation_kwargs,
                     )
-            else:
-                # No narration available — synthesize raw text directly
-                all_chunks, total_words = prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
-                chunk_wav_paths = await synthesize_chunks_auto(
-                    chunks=all_chunks,
-                    job_dir=job_dir,
-                    job_id=job_id,
-                    status_check_callback=_check_status,
-                    generation_kwargs=generation_kwargs,
+
+            if not chunk_wav_paths:
+                raise RuntimeError('No audio chunks were synthesized')
+
+            # Step 3b: Quality check and re-synthesis (HIGH_VRAM only)
+            from app.core.hardware import ENGINE_CONFIG, HardwareTier
+
+            if ENGINE_CONFIG.tier == HardwareTier.HIGH_VRAM:
+                await _check_status()
+                logger.info(f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...')
+                chunk_wav_paths = await _quality_check_and_resynthesize(
+                    chunk_wav_paths, all_chunks, job_id, engine, loop, executor, generation_kwargs
                 )
 
-        if not chunk_wav_paths:
-            raise RuntimeError('No audio chunks were synthesized')
-
-        # Step 3b: Quality check and re-synthesis (HIGH_VRAM only)
-        from app.core.hardware import ENGINE_CONFIG, HardwareTier
-
-        if ENGINE_CONFIG.tier == HardwareTier.HIGH_VRAM:
+            # Step 4: Normalize chunks to -23 LUFS (skip very short chunks —
+            # single-pass loudnorm is inaccurate under ~10s, and final mastering
+            # re-normalizes the whole file anyway)
             await _check_status()
-            logger.info(f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...')
-            chunk_wav_paths = await _quality_check_and_resynthesize(
-                chunk_wav_paths, all_chunks, job_id, engine, loop, executor, generation_kwargs
-            )
+            logger.info(f'[{job_id}] Normalizing {len(chunk_wav_paths)} chunks (parallel)...')
 
-        # Step 4: Normalize chunks to -23 LUFS (skip very short chunks —
-        # single-pass loudnorm is inaccurate under ~10s, and final mastering
-        # re-normalizes the whole file anyway)
-        await _check_status()
-        logger.info(f'[{job_id}] Normalizing {len(chunk_wav_paths)} chunks (parallel)...')
+            async def _normalize_one(i: int, wav_path: str) -> str:
+                try:
+                    # Skip normalization for very short chunks (<10s) — not enough
+                    # signal for loudnorm to measure accurately, and final mastering
+                    # will re-normalize the concatenated file
+                    seg = _AudioSegment.from_wav(wav_path)
+                    if len(seg) < 10_000:  # <10 seconds
+                        logger.debug(
+                            f'[{job_id}] Chunk {i} is {len(seg) / 1000:.1f}s — skipping per-chunk norm'
+                        )
+                        return wav_path
 
-        async def _normalize_one(i: int, wav_path: str) -> str:
-            try:
-                # Skip normalization for very short chunks (<10s) — not enough
-                # signal for loudnorm to measure accurately, and final mastering
-                # will re-normalize the concatenated file
-                seg = _AudioSegment.from_wav(wav_path)
-                if len(seg) < 10_000:  # <10 seconds
-                    logger.debug(
-                        f'[{job_id}] Chunk {i} is {len(seg) / 1000:.1f}s — skipping per-chunk norm'
+                    normalized_path = await loop.run_in_executor(
+                        executor,
+                        normalize_chunk_to_target_lufs,
+                        wav_path,
+                        DEFAULT_TARGET_LUFS,
                     )
+                    if normalized_path != wav_path:
+                        normalized_temp_files.append(normalized_path)
+                    return normalized_path
+                except Exception as exc:
+                    logger.warning(f'[{job_id}] Chunk {i} normalization failed, using original: {exc}')
                     return wav_path
 
-                normalized_path = await loop.run_in_executor(
-                    executor,
-                    normalize_chunk_to_target_lufs,
-                    wav_path,
-                    DEFAULT_TARGET_LUFS,
-                )
-                if normalized_path != wav_path:
-                    normalized_temp_files.append(normalized_path)
-                return normalized_path
-            except Exception as exc:
-                logger.warning(f'[{job_id}] Chunk {i} normalization failed, using original: {exc}')
-                return wav_path
-
-        normalized_wav_paths = list(
-            await asyncio.gather(*[_normalize_one(i, p) for i, p in enumerate(chunk_wav_paths)])
-        )
-
-        logger.info(f'[{job_id}] Normalization complete')
-
-        # Step 4: Concatenate WAVs with dynamic gaps into raw WAV
-        await _check_status()
-        try:
-            await loop.run_in_executor(
-                executor,
-                concatenate_wavs_auto,
-                normalized_wav_paths,
-                raw_wav,
-                all_chunks,  # Pass chunk texts for dynamic pause detection
+            normalized_wav_paths = list(
+                await asyncio.gather(*[_normalize_one(i, p) for i, p in enumerate(chunk_wav_paths)])
             )
-        except Exception as exc:
-            raise RuntimeError(f'Audio concatenation failed: {exc}') from exc
 
-        # Verify raw WAV was created
-        if not Path(raw_wav).exists():
-            raise RuntimeError('Raw WAV file was not created')
+            logger.info(f'[{job_id}] Normalization complete')
 
-        raw_size = Path(raw_wav).stat().st_size / (1024 * 1024)
-        logger.info(f'[{job_id}] Raw WAV created ({raw_size:.2f} MB)')
+            # Step 4: Concatenate WAVs with dynamic gaps into raw WAV
+            await _check_status()
+            try:
+                await loop.run_in_executor(
+                    executor,
+                    concatenate_wavs_auto,
+                    normalized_wav_paths,
+                    raw_wav,
+                    all_chunks,  # Pass chunk texts for dynamic pause detection
+                )
+            except Exception as exc:
+                raise RuntimeError(f'Audio concatenation failed: {exc}') from exc
 
-        # Step 5: Apply final mastering (tier-based LUFS, sample rate, bitrate)
-        await _check_status()
-        logger.info(f'[{job_id}] Applying final mastering...')
-        mastering_ok = await loop.run_in_executor(
-            executor,
-            apply_final_mastering,
-            raw_wav,
-            final_mp3,
-        )
+            # Verify raw WAV was created
+            if not Path(raw_wav).exists():
+                raise RuntimeError('Raw WAV file was not created')
 
-        mastering_used_fallback = False
-        if not mastering_ok:
-            # Fallback: use the raw MP3 if mastering fails
-            logger.warning(f'[{job_id}] Mastering failed, falling back to raw export')
-            # Fallback: export raw WAV to MP3 without mastering
-            if Path(raw_wav).exists():
-                seg = _AudioSegment.from_wav(raw_wav)
-                seg.export(final_mp3, format='mp3', bitrate=MP3_BITRATE)
-                mastering_used_fallback = True
+            raw_size = Path(raw_wav).stat().st_size / (1024 * 1024)
+            logger.info(f'[{job_id}] Raw WAV created ({raw_size:.2f} MB)')
 
-        # Verify final MP3 was created
-        if not Path(final_mp3).exists():
-            raise RuntimeError('Final MP3 file was not created')
+            # Step 5: Apply final mastering (tier-based LUFS, sample rate, bitrate)
+            await _check_status()
+            logger.info(f'[{job_id}] Applying final mastering...')
+            mastering_ok = await loop.run_in_executor(
+                executor,
+                apply_final_mastering,
+                raw_wav,
+                final_mp3,
+            )
 
-        mp3_size = Path(final_mp3).stat().st_size / (1024 * 1024)
-        logger.info(f'[{job_id}] Final MP3 created ({mp3_size:.2f} MB)')
+            mastering_used_fallback = False
+            if not mastering_ok:
+                # Fallback: use the raw MP3 if mastering fails
+                logger.warning(f'[{job_id}] Mastering failed, falling back to raw export')
+                # Fallback: export raw WAV to MP3 without mastering
+                if Path(raw_wav).exists():
+                    seg = _AudioSegment.from_wav(raw_wav)
+                    seg.export(final_mp3, format='mp3', bitrate=MP3_BITRATE)
+                    mastering_used_fallback = True
+
+            # Verify final MP3 was created
+            if not Path(final_mp3).exists():
+                raise RuntimeError('Final MP3 file was not created')
+
+            mp3_size = Path(final_mp3).stat().st_size / (1024 * 1024)
+            logger.info(f'[{job_id}] Final MP3 created ({mp3_size:.2f} MB)')
+
+        # GPU slot released — next queued job can start its pipeline.
+        logger.info(f'[{job_id}] GPU slot released')
 
         # Step 6: Quality validation (non-fatal, log only)
         try:

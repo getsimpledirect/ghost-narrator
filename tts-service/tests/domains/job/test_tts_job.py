@@ -20,13 +20,55 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import asyncio
 from concurrent.futures import Future
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import app.domains.job.tts_job as _tts_job_module
 from app.core.exceptions import SynthesisError
 from app.domains.job.runner import run_tts_job
+from app.domains.job.tts_job import get_gpu_semaphore
+
+
+@pytest.fixture(autouse=False)
+def reset_gpu_semaphore():
+    """Isolate semaphore state between tests."""
+    original = _tts_job_module._gpu_semaphore
+    _tts_job_module._gpu_semaphore = None
+    yield
+    _tts_job_module._gpu_semaphore = original
+
+
+def test_get_gpu_semaphore_returns_asyncio_semaphore(reset_gpu_semaphore):
+    sem = get_gpu_semaphore()
+    assert isinstance(sem, asyncio.Semaphore)
+
+
+def test_get_gpu_semaphore_is_singleton(reset_gpu_semaphore):
+    s1 = get_gpu_semaphore()
+    s2 = get_gpu_semaphore()
+    assert s1 is s2
+
+
+@pytest.mark.asyncio
+async def test_gpu_semaphore_serializes_concurrent_coroutines(reset_gpu_semaphore):
+    """Second coroutine must not enter the critical section until the first exits."""
+    sem = get_gpu_semaphore()
+    order: list[str] = []
+
+    async def job(name: str) -> None:
+        async with sem:
+            order.append(f'{name}_start')
+            await asyncio.sleep(0.05)
+            order.append(f'{name}_end')
+
+    await asyncio.gather(job('A'), job('B'))
+
+    a_end = order.index('A_end')
+    b_start = order.index('B_start')
+    assert a_end < b_start, f'Expected A_end before B_start, got: {order}'
 
 
 @pytest.fixture
