@@ -20,30 +20,54 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
-      - name: Extract changelog for this version
+      - name: Prepare changelog
         id: changelog
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # Strip 'v' prefix: v2.1.1 → 2.1.1
           CLEAN_VERSION="${VERSION#v}"
-          # Extract section between this version header and the next version header
-          awk -v ver="$CLEAN_VERSION" '
-            BEGIN { found=0 }
-            /^## \[/ {
-              if (found) exit
-              if ($0 ~ "\\[" ver "\\]") { found=1; next }
-            }
-            found { print }
-          ' CHANGELOG.md > release_notes.md
-          # If empty, use a fallback
-          if [ ! -s release_notes.md ]; then
-            echo "No changelog entry found for $VERSION." > release_notes.md
+          
+          # Get the previous tag for comparison
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          # Generate changelog using git log
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log "$PREV_TAG..HEAD" --pretty=format:"- %s (%h)" --grep -v -E "^(Merge|Revert)" || true)
+          else
+            CHANGES=$(git log --pretty=format:"- %s (%h)" -n 20 || true)
           fi
+          
+          # Build a clean release note
+          cat > release_notes.md << 'HEADER'
+          ## What's Changed
+          
+          HEADER
+          
+          echo "$CHANGES" >> release_notes.md
+          
+          # Add贡献者 section
+          echo -e "\n## Contributors" >> release_notes.md
+          echo "$(git shortlog -sn --no-merges | head -5 | sed 's/^[0-9]*[[:space:]]*/- /')" >> release_notes.md
+          
+          # If empty, add fallback
+          if [ ! -s release_notes.md ] || [ $(wc -l < release_notes.md) -le 2 ]; then
+            cat > release_notes.md << 'FALLBACK'
+          ## What's Changed
+          
+          See commit history for details.
+          
+          ## Contributors
+          
+          - See commit history
+          FALLBACK
+          fi
+          
+          cat release_notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
           body_path: release_notes.md
-          generate_release_notes: false
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') }}

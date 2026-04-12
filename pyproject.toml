@@ -5,8 +5,8 @@ version = "2.3.15"
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["tts-service/app/__init__.py:__version__"]
-# Sync the standalone VERSION file on every release
-build_command = "echo $NEW_VERSION > VERSION"
+# Sync VERSION file on every release - use absolute path to avoid cwd issues
+build_command = "echo $NEW_VERSION > $GITHUB_WORKSPACE/VERSION"
 tag_format = "v{version}"
 commit_message = "chore(release): v{version} [skip ci]"
 
