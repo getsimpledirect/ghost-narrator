@@ -21,56 +21,119 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 # hardware-probe.sh — Detects GPU/VRAM and writes tier.env to /shared/
+#
+# Outputs to /shared/tier.env:
+#   HARDWARE_TIER          — cpu_only | low_vram | mid_vram | high_vram
+#   SELECTED_TTS_MODEL     — HuggingFace model ID for Qwen3-TTS
+#   SELECTED_LLM_MODEL     — Ollama model tag for narration LLM
+#   OLLAMA_NUM_PARALLEL    — concurrent Ollama request slots (computed from VRAM)
+#   OLLAMA_FLASH_ATTENTION — 1 on GPU tiers (Ampere+ supports flash attention)
 set -e
 
 SHARED_DIR="${SHARED_DIR:-/shared}"
 mkdir -p "$SHARED_DIR"
 
-detect_tier() {
-    if [ -n "$HARDWARE_TIER" ]; then
-        echo "HARDWARE_TIER override: $HARDWARE_TIER" >&2
-        echo "$HARDWARE_TIER"
-        return
-    fi
-    if ! command -v nvidia-smi >/dev/null 2>&1; then
-        echo "No nvidia-smi found — CPU_ONLY" >&2
-        echo "cpu_only"
-        return
-    fi
-    if ! nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits >/dev/null 2>&1; then
-        echo "nvidia-smi present but no GPU detected — CPU_ONLY" >&2
-        echo "cpu_only"
-        return
-    fi
-    VRAM_MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
-    if [ -z "$VRAM_MIB" ] || ! [ "$VRAM_MIB" -eq "$VRAM_MIB" ] 2>/dev/null; then
+# ── Detect VRAM ───────────────────────────────────────────────────────────────
+VRAM_MIB=0
+if [ -n "$HARDWARE_TIER" ]; then
+    echo "HARDWARE_TIER override: $HARDWARE_TIER" >&2
+    TIER="$HARDWARE_TIER"
+elif ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "No nvidia-smi found — CPU_ONLY" >&2
+    TIER="cpu_only"
+else
+    _VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
+            | head -1 | tr -d ' ')
+    if [ -z "$_VRAM" ] || ! [ "$_VRAM" -eq "$_VRAM" ] 2>/dev/null; then
         echo "nvidia-smi returned no VRAM value — defaulting to cpu_only" >&2
-        echo "cpu_only"
-        return
-    fi
-    echo "GPU VRAM: ${VRAM_MIB} MiB" >&2
-    if [ "$VRAM_MIB" -lt 10240 ]; then
-        echo "low_vram"
-    elif [ "$VRAM_MIB" -lt 18432 ]; then
-        echo "mid_vram"
+        TIER="cpu_only"
     else
-        echo "high_vram"
+        VRAM_MIB="$_VRAM"
+        echo "GPU VRAM: ${VRAM_MIB} MiB" >&2
+        if [ "$VRAM_MIB" -lt 10240 ]; then
+            TIER="low_vram"
+        elif [ "$VRAM_MIB" -lt 18432 ]; then
+            TIER="mid_vram"
+        else
+            TIER="high_vram"
+        fi
     fi
-}
+fi
 
-TIER=$(detect_tier)
+# ── Model and VRAM budget constants per tier ─────────────────────────────────
+# LLM_SIZE_MIB  — approximate VRAM for the LLM model weights (Q4_K_M quant)
+# TTS_SIZE_MIB  — approximate VRAM for the TTS model weights
+# KV_PER_SLOT   — KV cache per Ollama parallel slot at 4096-token context (fp16)
+# SAFETY_MIB    — reserved for CUDA context, activations, and OS overhead
 case "$TIER" in
-    cpu_only) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"; LLM_MODEL="qwen3:1.7b" ;;
-    low_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"; LLM_MODEL="qwen3:4b" ;;
-    mid_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"; LLM_MODEL="qwen3:8b" ;;
-    high_vram) TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"; LLM_MODEL="qwen3:14b" ;;
-    *) echo "Unknown tier '$TIER' — defaulting to cpu_only" >&2; TIER="cpu_only"; TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"; LLM_MODEL="qwen3:1.7b" ;;
+    cpu_only)
+        TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+        LLM_MODEL="qwen3:1.7b"
+        LLM_SIZE_MIB=1100; TTS_SIZE_MIB=2400; KV_PER_SLOT=200; SAFETY_MIB=512
+        OLLAMA_FA=0
+        ;;
+    low_vram)
+        TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+        LLM_MODEL="qwen3:4b"
+        LLM_SIZE_MIB=2500; TTS_SIZE_MIB=2400; KV_PER_SLOT=350; SAFETY_MIB=1024
+        OLLAMA_FA=1
+        ;;
+    mid_vram)
+        TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+        LLM_MODEL="qwen3:8b"
+        LLM_SIZE_MIB=4700; TTS_SIZE_MIB=3400; KV_PER_SLOT=600; SAFETY_MIB=2048
+        OLLAMA_FA=1
+        ;;
+    high_vram)
+        TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+        LLM_MODEL="qwen3:8b"
+        LLM_SIZE_MIB=4700; TTS_SIZE_MIB=3400; KV_PER_SLOT=600; SAFETY_MIB=2048
+        OLLAMA_FA=1
+        ;;
+    *)
+        echo "Unknown HARDWARE_TIER='$HARDWARE_TIER' — defaulting to cpu_only" >&2
+        TIER="cpu_only"
+        TTS_MODEL="Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+        LLM_MODEL="qwen3:1.7b"
+        LLM_SIZE_MIB=1100; TTS_SIZE_MIB=2400; KV_PER_SLOT=200; SAFETY_MIB=512
+        OLLAMA_FA=0
+        ;;
 esac
 
+# Allow environment overrides for model selection (install.sh may set these)
+TTS_MODEL="${SELECTED_TTS_MODEL:-$TTS_MODEL}"
+LLM_MODEL="${SELECTED_LLM_MODEL:-$LLM_MODEL}"
+
+# ── Compute OLLAMA_NUM_PARALLEL from actual free VRAM ─────────────────────────
+# Formula: floor((vram_mib - llm_size - tts_size - safety) / kv_per_slot)
+# Capped at 4: reflects realistic concurrent job submission, not raw headroom.
+# Ollama pre-allocates ALL slots at startup — setting it too high wastes VRAM.
+#
+# Worked examples:
+#   24 GB L4,  qwen3:8b: (24576 - 4700 - 3400 - 2048) / 600 = 24 → capped 4
+#   12 GB GPU, qwen3:8b: (12288 - 4700 - 3400 - 2048) / 600 =  3 → 3
+#   8 GB GPU,  qwen3:4b: ( 8192 - 2500 - 2400 - 1024) / 350 =  6 → capped 4
+if [ "$TIER" = "cpu_only" ] || [ "$VRAM_MIB" -le 0 ]; then
+    OLLAMA_PARALLEL=1
+else
+    AVAIL=$((VRAM_MIB - LLM_SIZE_MIB - TTS_SIZE_MIB - SAFETY_MIB))
+    if [ "$AVAIL" -le 0 ]; then
+        OLLAMA_PARALLEL=1
+    else
+        OLLAMA_PARALLEL=$((AVAIL / KV_PER_SLOT))
+        [ "$OLLAMA_PARALLEL" -lt 1 ] && OLLAMA_PARALLEL=1
+        [ "$OLLAMA_PARALLEL" -gt 4 ] && OLLAMA_PARALLEL=4
+    fi
+    echo "Ollama parallelism: ${OLLAMA_PARALLEL} (${AVAIL} MiB free / ${KV_PER_SLOT} MiB per slot)" >&2
+fi
+
+# ── Write tier.env ─────────────────────────────────────────────────────────────
 cat > "$SHARED_DIR/tier.env" <<EOF
 HARDWARE_TIER=${TIER}
 SELECTED_TTS_MODEL=${TTS_MODEL}
 SELECTED_LLM_MODEL=${LLM_MODEL}
+OLLAMA_NUM_PARALLEL=${OLLAMA_PARALLEL}
+OLLAMA_FLASH_ATTENTION=${OLLAMA_FA}
 EOF
 
 echo "Wrote $SHARED_DIR/tier.env:" >&2
