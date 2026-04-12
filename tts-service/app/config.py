@@ -167,16 +167,16 @@ except ValueError:
 
 # LLM timeouts (seconds) - configurable for different model performance
 try:
-    LLM_TIMEOUT: Final[float] = max(30, float(os.environ.get('LLM_TIMEOUT', '120')))
+    LLM_TIMEOUT: Final[float] = max(30, float(os.environ.get('LLM_TIMEOUT', '300')))
 except ValueError:
     LLM_TIMEOUT: Final[float] = 120.0
 
 try:
     LLM_COMPLETENESS_TIMEOUT: Final[float] = max(
-        30, float(os.environ.get('LLM_COMPLETENESS_TIMEOUT', '180'))
+        30, float(os.environ.get('LLM_COMPLETENESS_TIMEOUT', '360'))
     )
 except ValueError:
-    LLM_COMPLETENESS_TIMEOUT: Final[float] = 180.0
+    LLM_COMPLETENESS_TIMEOUT: Final[float] = 360.0
 
 # GCS upload settings
 GCS_UPLOAD_TIMEOUT: Final[int] = 300

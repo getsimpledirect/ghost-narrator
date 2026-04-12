@@ -29,10 +29,10 @@ class TestConfigValues:
     """Test config values are loaded correctly."""
 
     def test_llm_timeout_default(self):
-        """Test LLM_TIMEOUT default is 120."""
+        """Test LLM_TIMEOUT default is 300 (raised from 120 — qwen3:8b needs headroom)."""
         from app.config import LLM_TIMEOUT
 
-        assert LLM_TIMEOUT == 120.0
+        assert LLM_TIMEOUT == 300.0
 
     def test_log_format_default(self):
         """Test LOG_FORMAT defaults to empty (auto-detect)."""
