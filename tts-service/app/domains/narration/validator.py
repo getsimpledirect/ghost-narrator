@@ -80,18 +80,27 @@ class NarrationValidator:
 
     def _extract_entities(self, text: str) -> list[str]:
         entities = []
-        entities.extend(self._NUMBER_RE.findall(text))
+        # Numbers and dates are intentionally excluded from entity checking.
+        #
+        # The narration prompt instructs the LLM to convert numeric forms to
+        # spoken equivalents:
+        #   "$1.2B"   → "one point two billion dollars"
+        #   "3.2%"    → "three point two percent"
+        #   "Q3 2024" → "the third quarter of twenty-twenty-four"
+        #
+        # Checking for the original literal strings produces a false positive on
+        # every finance article chunk, triggering a spurious retry LLM call each
+        # time. The word-count ratio check (MIN_WORD_RATIO=0.55) is sufficient
+        # to catch major content drops.
+        #
+        # Direct quotes must survive verbatim — the prompt preserves them.
         entities.extend(self._QUOTE_RE.findall(text))
-        entities.extend(self._DATE_RE.findall(text))
-        # URLs and emails are intentionally excluded — the narration prompt
-        # instructs the LLM to replace them with spoken descriptions, so
-        # their absence in the output is correct, not a validation failure.
-        # Extract multi-word proper nouns
+        # Multi-word proper nouns (company and person names) must appear in output.
         for match in self._PROPER_NOUN_RE.finditer(text):
             name = match.group(1) or match.group(2)
             if name and len(name) > 3:
                 entities.append(name)
-        # Extract single proper nouns after prepositions
+        # Single proper nouns after prepositions (e.g. "by OpenAI", "from Sequoia")
         for match in self._SINGLE_PROPER_RE.finditer(text):
             name = match.group(1)
             if name and len(name) > 3:

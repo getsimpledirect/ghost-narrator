@@ -35,14 +35,47 @@ def test_passes_when_number_present():
     assert result.missing_entities == []
 
 
-def test_fails_when_number_missing():
+def test_spoken_form_dollar_amount_passes_validation():
+    """Dollar amounts spelled out per narration prompt must not fail validation.
+
+    The prompt says: '$1.2 billion' → 'one point two billion dollars'.
+    The old _NUMBER_RE check flagged this as missing on every finance chunk.
+    """
     v = NarrationValidator()
     result = v.validate(
-        source='Revenue grew 47% to $2.3 billion',
-        narration='Revenue grew significantly this year',
+        source='Revenue reached $2.3 billion, up 47% year over year',
+        narration=(
+            'Revenue reached two point three billion dollars, '
+            'up forty-seven percent year over year'
+        ),
+    )
+    assert result.passed
+    assert result.missing_entities == []
+
+
+def test_spoken_form_quarter_passes_validation():
+    """Quarter references spelled out per narration prompt must pass."""
+    v = NarrationValidator()
+    result = v.validate(
+        source='In Q3 2024 the company reported record sales',
+        narration='In the third quarter of twenty-twenty-four the company reported record sales',
+    )
+    assert result.passed
+    assert result.missing_entities == []
+
+
+def test_fails_when_proper_noun_dropped():
+    """Company and person names must still be caught when missing."""
+    v = NarrationValidator()
+    result = v.validate(
+        source='OpenAI secured a major investment from Sequoia Capital and Microsoft',
+        narration='A startup secured a major investment from several investors',
     )
     assert not result.passed
-    assert '47%' in result.missing_entities
+    assert any(
+        entity in result.missing_entities
+        for entity in ('OpenAI', 'Sequoia Capital', 'Microsoft')
+    )
 
 
 def test_fails_when_quoted_string_missing():
