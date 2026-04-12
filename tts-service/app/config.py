@@ -140,6 +140,16 @@ try:
     )
 except ValueError:
     SEMANTIC_TOKEN_TIMEOUT: Final[int] = 360
+
+# Maximum wall-clock time a job may hold the GPU semaphore (seconds).
+# A job that exceeds this is killed and marked failed so the queue unblocks.
+# Default 7200 (2 h) covers even very large articles with slow hardware.
+try:
+    MAX_JOB_DURATION_SECONDS: Final[int] = max(
+        300, int(os.environ.get('MAX_JOB_DURATION_SECONDS', '7200'))
+    )
+except ValueError:
+    MAX_JOB_DURATION_SECONDS: Final[int] = 7200
 try:
     AUDIO_DECODE_TIMEOUT: Final[int] = max(30, int(os.environ.get('AUDIO_DECODE_TIMEOUT', '180')))
 except ValueError:
@@ -169,7 +179,7 @@ except ValueError:
 try:
     LLM_TIMEOUT: Final[float] = max(30, float(os.environ.get('LLM_TIMEOUT', '300')))
 except ValueError:
-    LLM_TIMEOUT: Final[float] = 120.0
+    LLM_TIMEOUT: Final[float] = 300.0
 
 try:
     LLM_COMPLETENESS_TIMEOUT: Final[float] = max(

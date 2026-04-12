@@ -117,7 +117,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.72,
         tts_top_k_sub_talker=50,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=4000,
+        tts_max_new_tokens=3000,  # 175 words ≈ 969 tokens; 3000 = 3.1× headroom
     ),
     HardwareTier.MID_VRAM: EngineConfig(
         tier=HardwareTier.MID_VRAM,
@@ -146,7 +146,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-Base',
         tts_device='cuda',
         tts_precision='bf16',  # bf16: 1.5-2x faster on Tensor Core GPUs, imperceptible quality diff
-        llm_model='qwen3:8b',   # sufficient for format-conversion narration at half the VRAM cost
+        llm_model='qwen3:8b',  # sufficient for format-conversion narration at half the VRAM cost
         narration_strategy='chunked',  # chunked enables pipelined narrate+synthesize
         narration_chunk_words=2500,  # large chunks, pipelining hides latency
         tts_chunk_words=250,  # fewer chunk boundaries = fewer prosodic resets

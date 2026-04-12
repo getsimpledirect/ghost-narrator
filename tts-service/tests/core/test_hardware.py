@@ -205,3 +205,15 @@ def test_mid_vram_tts_max_new_tokens_is_3000():
 
     cfg = _TIER_CONFIGS[HardwareTier.MID_VRAM]
     assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
+
+
+def test_low_vram_tts_max_new_tokens_is_3000():
+    """LOW_VRAM max_new_tokens must be 3000 for consistency with MID/HIGH.
+
+    175-word chunk ≈ 969 codec tokens at 12 Hz; 3000 = 3.1× headroom —
+    sufficient for the 0.6B model on older hardware without runaway risk.
+    """
+    from app.core.hardware import _TIER_CONFIGS
+
+    cfg = _TIER_CONFIGS[HardwareTier.LOW_VRAM]
+    assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
