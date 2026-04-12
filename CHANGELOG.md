@@ -1,7 +1,15 @@
 # CHANGELOG
 
 
+## v2.4.2 (2026-04-12)
+
+
 ## v2.4.1 (2026-04-12)
+
+### Bug Fixes
+
+- **ci**: Improve release notes format and disable auto-generated notes
+  ([`53f6c33`](https://github.com/getsimpledirect/ghost-narrator/commit/53f6c336606a66367e2f74e590db86ac8f9aa951))
 
 
 ## v2.4.0 (2026-04-12)
