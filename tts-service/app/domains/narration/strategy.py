@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -114,12 +115,20 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
     return response.choices[0].message.content.strip()
 
 
-# Retry wrapper for LLM calls - handles transient failures
-@retry_with_backoff(max_attempts=3, base_delay=2.0, max_delay=30.0, exceptions=(Exception,))
+# Retry wrapper for LLM calls - handles transient failures.
+# TimeoutError is excluded: if Ollama can't respond within LLM_TIMEOUT, retrying
+# with the same timeout burns 3× the wait. Let it fail fast and surface the error.
+@retry_with_backoff(
+    max_attempts=3,
+    base_delay=2.0,
+    max_delay=30.0,
+    exceptions=(Exception,),
+    exclude=(asyncio.TimeoutError,),
+)
 async def _call_llm_with_retry(
     client, messages: list[dict], model: str, timeout: float = None
 ) -> str:
-    """Call LLM with retry on failure."""
+    """Call LLM with retry on transient failures. TimeoutError is not retried."""
     return await _call_llm(client, messages, model, timeout)
 
 
@@ -280,7 +289,7 @@ class SingleShotStrategy(NarrationStrategy):
             {'role': 'system', 'content': self._system_prompt},
             {'role': 'user', 'content': text},
         ]
-        result = await _call_llm(self._client, messages, self._model)
+        result = await _call_llm_with_retry(self._client, messages, self._model)
         validation = _validator.validate(text, result)
         if not validation.passed:
             logger.warning('Validation failed — retrying. Missing: %s', validation.missing_entities)

@@ -39,7 +39,12 @@ while [ ! -f "$TIER_ENV" ]; do
 done
 
 . "$TIER_ENV"
-echo "Hardware tier: $HARDWARE_TIER — LLM: $SELECTED_LLM_MODEL" >&2
+echo "Hardware tier: $HARDWARE_TIER — LLM: $SELECTED_LLM_MODEL — Ollama parallel: ${OLLAMA_NUM_PARALLEL:-1}" >&2
+
+# Export Ollama tunables sourced from tier.env so they are in the environment
+# when 'ollama serve' starts. Ollama reads these at process startup only.
+export OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-1}"
+export OLLAMA_FLASH_ATTENTION="${OLLAMA_FLASH_ATTENTION:-0}"
 
 ollama serve &
 OLLAMA_PID=$!

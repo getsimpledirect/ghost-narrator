@@ -18,79 +18,30 @@ jobs:
 
       - name: Extract version
         id: version
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
-      - name: Generate Release Notes from CHANGELOG
+      - name: Generate Release Notes
         id: changelog
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          
-          # Map section headers to emojis
-          declare -A EMOJI_MAP=(
-            "Bug Fixes" "🐛"
-            "Bugfixes" "🐛"
-            "Features" "✨"
-            "Feature" "✨"
-            "Performance Improvements" "⚡"
-            "Performance" "⚡"
-            "Documentation" "📝"
-            "Docs" "📝"
-            "Chores" "🔧"
-            "Chore" "🔧"
-            "Security" "🔒"
-            "Refactor" "♻️"
-            "Refactoring" "♻️"
-            "Infrastructure" "🏗️"
-            "Infra" "🏗️"
-          )
-          
-          # Extract changelog section for this version
-          awk -v ver="$VERSION" '
-            BEGIN { found=0 }
-            /^## \[/ {
-              if (found) exit
-              if ($0 ~ "\\[" ver "\\]") {
-                found=1
-                # Extract date if present: ## v2.4.0 (2026-04-12)
-                match($0, /\([0-9]{4}-[0-9]{2}-[0-9]{2}\)/, date)
-                if (date[0] != "") {
-                  print "## 🚀 " ver " (" substr(date[0], 2, length(date[0]) - 2) ")"
-                } else {
-                  print "## 🚀 " ver
-                }
-                next
-              }
-            }
-            found {
-              # Stop at next version header
-              if (/^## \[/) exit
-              # Print lines
-              print
-            }
-          ' CHANGELOG.md | sed 's/^### /### /' > release_notes.md
-          
-          # Add emoji prefixes to section headers
-          while IFS= read -r line; do
-            for key in "${!EMOJI_MAP[@]}"; do
-              if echo "$line" | grep -q "^### $key"; then
-                line=$(echo "$line" | sed "s/^### $key/### ${EMOJI_MAP[$key]} $key/")
-                break
-              fi
-            done
-            echo "$line"
-          done < release_notes.md > release_notes_final.md
-          
-          mv release_notes_final.md release_notes.md
-          
-          # Add Detailed Changes comparison link at the end
+          CURRENT_TAG="v${{ steps.version.outputs.VERSION }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | sed 's/^v//')
+          
+          echo "## What's Changed" > release_notes.md
+          echo "" >> release_notes.md
+          
           if [ -n "$PREV_TAG" ]; then
+            echo "Changes from v$PREV_TAG to $CURRENT_TAG:" >> release_notes.md
             echo "" >> release_notes.md
-            echo "---" >> release_notes.md
-            echo "📋 **Full Changelog**: https://github.com/${{ github.repository }}/compare/v$PREV_TAG...v$VERSION" >> release_notes.md
+            git log "v$PREV_TAG..HEAD" --format="* %s (%h)" --no-merges | grep -v "^$" >> release_notes.md || true
+          else
+            echo "First release! Changes from initial commit:" >> release_notes.md
+            echo "" >> release_notes.md
+            git log --format="* %s (%h)" --no-merges -n 30 | grep -v "^$" >> release_notes.md || true
           fi
+          
+          echo "" >> release_notes.md
+          echo "---" >> release_notes.md
+          echo "*Full Changelog*: https://github.com/${{ github.repository }}/compare/v$PREV_TAG...$CURRENT_TAG" >> release_notes.md
           
           cat release_notes.md
 
@@ -98,7 +49,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref }}
-          name: "🚀 Release ${{ steps.version.outputs.VERSION }}"
+          name: "Release ${{ steps.version.outputs.VERSION }}"
           body_path: release_notes.md
           draft: false
           generate_release_notes: false

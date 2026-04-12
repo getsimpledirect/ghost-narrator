@@ -20,13 +20,55 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import asyncio
 from concurrent.futures import Future
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import app.domains.job.tts_job as _tts_job_module
 from app.core.exceptions import SynthesisError
 from app.domains.job.runner import run_tts_job
+from app.domains.job.tts_job import get_gpu_semaphore
+
+
+@pytest.fixture(autouse=False)
+def reset_gpu_semaphore():
+    """Isolate semaphore state between tests."""
+    original = _tts_job_module._gpu_semaphore
+    _tts_job_module._gpu_semaphore = None
+    yield
+    _tts_job_module._gpu_semaphore = original
+
+
+def test_get_gpu_semaphore_returns_asyncio_semaphore(reset_gpu_semaphore):
+    sem = get_gpu_semaphore()
+    assert isinstance(sem, asyncio.Semaphore)
+
+
+def test_get_gpu_semaphore_is_singleton(reset_gpu_semaphore):
+    s1 = get_gpu_semaphore()
+    s2 = get_gpu_semaphore()
+    assert s1 is s2
+
+
+@pytest.mark.asyncio
+async def test_gpu_semaphore_serializes_concurrent_coroutines(reset_gpu_semaphore):
+    """Second coroutine must not enter the critical section until the first exits."""
+    sem = get_gpu_semaphore()
+    order: list[str] = []
+
+    async def job(name: str) -> None:
+        async with sem:
+            order.append(f'{name}_start')
+            await asyncio.sleep(0.05)
+            order.append(f'{name}_end')
+
+    await asyncio.gather(job('A'), job('B'))
+
+    a_end = order.index('A_end')
+    b_start = order.index('B_start')
+    assert a_end < b_start, f'Expected A_end before B_start, got: {order}'
 
 
 @pytest.fixture
@@ -255,3 +297,102 @@ async def test_run_tts_job_executor_not_initialized(mock_job_store, mock_tts_eng
         ]
         assert 'failed' in statuses
         assert 'completed' not in statuses
+
+
+@pytest.mark.asyncio
+async def test_run_tts_job_transitions_through_queued_status(
+    mock_job_store, mock_tts_engine, mock_storage_backend
+):
+    """Job must be marked 'queued' before acquiring the GPU slot, 'processing' after."""
+    mock_job_store.get.return_value = {'status': 'processing'}
+
+    with (
+        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
+        patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
+        patch('app.domains.job.tts_job.concatenate_wavs_auto'),
+        patch(
+            'app.domains.job.tts_job.normalize_chunk_to_target_lufs',
+            side_effect=lambda p, _, **kw: p,
+        ),
+        patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
+        patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
+        patch(
+            'app.domains.job.tts_job.get_storage_backend',
+            return_value=mock_storage_backend,
+        ),
+        patch('app.domains.job.tts_job.notify_job_completed', new_callable=AsyncMock),
+        patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
+        patch('app.domains.job.tts_job.cleanup_chunk_files'),
+        patch('app.domains.job.tts_job._AudioSegment') as mock_audio_segment,
+        patch.object(Path, 'mkdir'),
+        patch.object(Path, 'exists', return_value=True),
+        patch.object(Path, 'stat') as mock_stat,
+    ):
+        mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
+        mock_stat.return_value.st_size = 1024 * 1024
+        mock_prepare.return_value = (['Hello world.'], 2)
+        mock_synth.return_value = ['/tmp/chunk_0000.wav']
+
+        await run_tts_job('test-queued', 'Hello world.', 'audio/test.mp3')
+
+        all_statuses = [
+            call.args[1].get('status')
+            for call in mock_job_store.update.call_args_list
+            if isinstance(call.args[1], dict) and 'status' in call.args[1]
+        ]
+        assert 'queued' in all_statuses
+        assert 'processing' in all_statuses
+        # queued must come before processing
+        assert all_statuses.index('queued') < all_statuses.index('processing')
+
+
+@pytest.mark.asyncio
+async def test_run_tts_job_exceeds_max_duration(mock_job_store, mock_tts_engine):
+    """A job that hangs past MAX_JOB_DURATION_SECONDS must fail and release the GPU slot."""
+    mock_job_store.get.return_value = {'status': 'processing'}
+
+    async def _slow_synth(*args, **kwargs):
+        await asyncio.sleep(10)  # simulate stuck synthesis
+        return []
+
+    with (
+        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
+        patch('app.domains.job.tts_job.synthesize_chunks_auto', side_effect=_slow_synth),
+        patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
+        patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
+        patch(
+            'app.domains.job.tts_job.get_effective_config',
+            new_callable=AsyncMock,
+            return_value=({}, {}),
+        ),
+        patch.object(Path, 'mkdir'),
+        # Set a tiny timeout so the test doesn't actually wait 2 hours
+        patch('app.domains.job.tts_job.MAX_JOB_DURATION_SECONDS', 0.05),
+    ):
+        mock_prepare.return_value = (['Hello world.'], 2)
+
+        await run_tts_job('test-timeout', 'Hello world.', 'audio/timeout.mp3')
+
+        statuses = [
+            call.args[1].get('status')
+            for call in mock_job_store.update.call_args_list
+            if isinstance(call.args[1], dict)
+        ]
+        assert 'failed' in statuses
+        assert 'completed' not in statuses
+
+        # Error message must mention the timeout/duration
+        failed_updates = [
+            call.args[1]
+            for call in mock_job_store.update.call_args_list
+            if isinstance(call.args[1], dict) and call.args[1].get('status') == 'failed'
+        ]
+        assert any(
+            'duration' in str(u.get('error', '')).lower()
+            or 'exceeded' in str(u.get('error', '')).lower()
+            for u in failed_updates
+        )
+
+        # GPU semaphore must be released — the next job can acquire it immediately
+        sem = get_gpu_semaphore()
+        assert sem._value == 1  # semaphore is available

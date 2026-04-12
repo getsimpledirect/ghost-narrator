@@ -34,6 +34,7 @@ def retry_with_backoff(
     max_delay: float = 60.0,
     exponential_base: float = 2.0,
     exceptions: Tuple[Type[Exception], ...] = (Exception,),
+    exclude: Tuple[Type[Exception], ...] = (),
 ):
     """
     Decorator for retrying async functions with exponential backoff.
@@ -44,9 +45,12 @@ def retry_with_backoff(
         max_delay: Maximum delay between retries
         exponential_base: Base for exponential backoff
         exceptions: Tuple of exception types to retry on
+        exclude: Tuple of exception types that are never retried, even if they
+            match `exceptions`. Useful for excluding TimeoutError when the caller
+            wants network-error retries but not timeout retries.
 
     Usage:
-        @retry_with_backoff(max_attempts=3, base_delay=2.0)
+        @retry_with_backoff(max_attempts=3, base_delay=2.0, exclude=(asyncio.TimeoutError,))
         async def call_api():
             ...
     """
@@ -60,6 +64,9 @@ def retry_with_backoff(
                 try:
                     return await func(*args, **kwargs)
                 except exceptions as e:
+                    if exclude and isinstance(e, exclude):
+                        raise  # never retry excluded exception types
+
                     last_exception = e
 
                     if attempt == max_attempts - 1:
