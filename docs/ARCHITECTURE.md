@@ -131,7 +131,7 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 
 **HIGH_VRAM exclusive features:**
 - **bf16 TTS precision** — 1.5–2x faster synthesis on Tensor Core GPUs with imperceptible quality difference
-- **qwen3:14b LLM** — significantly better narration quality (nuance, argument handling, natural phrasing)
+- **qwen3:8b LLM** — sufficient for format-conversion narration at half the VRAM cost of qwen3:14b
 - **Pipelined narration+synthesis** — LLM narrates chunk N+1 while TTS synthesizes chunk N
 - **Pre-computed voice reference** — voice embedding cached at startup, saves 2-5s per job
 - **Multi-voice for quotes** — quoted speech is pitch-shifted for speaker differentiation
