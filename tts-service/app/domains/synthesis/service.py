@@ -280,7 +280,6 @@ async def synthesize_chunks_auto(
     chunks: list[str],
     job_dir: Path,
     job_id: str,
-    device: Optional[str] = None,
     status_check_callback: Optional[Callable[[], Coroutine[Any, Any, None]]] = None,
     chunk_offset: int = 0,
     generation_kwargs: Optional[dict] = None,
@@ -289,13 +288,12 @@ async def synthesize_chunks_auto(
     Automatically choose the best synthesis strategy based on EngineConfig.
 
     - synthesis_workers == 1: sequential (GPU path)
-    - synthesis_workers > 1: parallel (CPU 4 workers, HIGH_VRAM 2 workers)
+    - synthesis_workers > 1: parallel (CPU 4 workers)
 
     Args:
         chunks: List of text chunks to synthesize.
         job_dir: Directory for output chunk files.
         job_id: Job identifier for logging.
-        device: Device type (cpu, cuda). Defaults to config DEVICE.
         chunk_offset: Starting index for chunk file naming (for pipelined synthesis).
 
     Returns:

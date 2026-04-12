@@ -107,7 +107,7 @@ def test_high_vram_when_24gb():
         config = get_engine_config()
     assert config.tier == HardwareTier.HIGH_VRAM
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-1.7B-Base'
-    assert config.llm_model == 'qwen3:14b'
+    assert config.llm_model == 'qwen3:8b'
     assert config.synthesis_workers == 1
     assert config.mp3_bitrate == '256k'
     assert config.sample_rate == 48000
@@ -170,3 +170,50 @@ def test_invalid_env_override_falls_back_to_probe():
         mock_torch.cuda.is_available.return_value = False
         config = get_engine_config()
     assert config.tier == HardwareTier.CPU_ONLY
+
+
+def test_high_vram_llm_model_is_qwen3_8b():
+    """HIGH_VRAM must use qwen3:8b.
+
+    qwen3:14b consumes ~8.5 GB VRAM — combined with the 1.7B TTS model
+    (~3.5 GB) it leaves under 13 GB headroom on a 24 GB L4 for KV caches
+    and activations. qwen3:8b (~4.5 GB) delivers equivalent narration
+    quality for format-conversion tasks at half the VRAM cost.
+    """
+    from app.core.hardware import _TIER_CONFIGS
+
+    cfg = _TIER_CONFIGS[HardwareTier.HIGH_VRAM]
+    assert cfg.llm_model == 'qwen3:8b', f'Expected qwen3:8b, got {cfg.llm_model!r}'
+
+
+def test_high_vram_tts_max_new_tokens_is_3000():
+    """HIGH_VRAM max_new_tokens must be 3000.
+
+    250 words at 130 WPM ≈ 1,384 codec tokens at 12 Hz.
+    3000 = 2.2× headroom — sufficient for natural variation,
+    prevents runaway loops that previously ran to 8000 tokens.
+    """
+    from app.core.hardware import _TIER_CONFIGS
+
+    cfg = _TIER_CONFIGS[HardwareTier.HIGH_VRAM]
+    assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
+
+
+def test_mid_vram_tts_max_new_tokens_is_3000():
+    """MID_VRAM max_new_tokens must be 3000 (was 6000, same runaway risk)."""
+    from app.core.hardware import _TIER_CONFIGS
+
+    cfg = _TIER_CONFIGS[HardwareTier.MID_VRAM]
+    assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
+
+
+def test_low_vram_tts_max_new_tokens_is_3000():
+    """LOW_VRAM max_new_tokens must be 3000 for consistency with MID/HIGH.
+
+    175-word chunk ≈ 969 codec tokens at 12 Hz; 3000 = 3.1× headroom —
+    sufficient for the 0.6B model on older hardware without runaway risk.
+    """
+    from app.core.hardware import _TIER_CONFIGS
+
+    cfg = _TIER_CONFIGS[HardwareTier.LOW_VRAM]
+    assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
