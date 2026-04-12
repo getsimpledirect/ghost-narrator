@@ -19,6 +19,11 @@
 
 ## v2.4.1 (2026-04-12)
 
+### 🐛 Bug Fixes
+
+- **ci**: Improve release notes format and disable auto-generated notes
+  ([`53f6c33`](https://github.com/getsimpledirect/ghost-narrator/commit/53f6c336606a66367e2f74e590db86ac8f9aa951))
+
 ### Bug Fixes
 
 - **ci**: Improve release notes format and disable auto-generated notes
@@ -28,6 +33,9 @@
 ## v2.4.0 (2026-04-12)
 
 ### Bug Fixes
+
+- **ci**: Add emojis to release notes for better visual appeal
+  ([`53069c3`](https://github.com/getsimpledirect/ghost-narrator/commit/53069c3a0224db2bda4f102bc10b009a622e6959))
 
 - **ci**: Improve VERSION sync and release notes formatting
   ([`df4ff81`](https://github.com/getsimpledirect/ghost-narrator/commit/df4ff816b6467694a9044788fc3318b18e692f7d))
