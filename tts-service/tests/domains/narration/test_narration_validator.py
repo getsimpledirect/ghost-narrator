@@ -45,8 +45,7 @@ def test_spoken_form_dollar_amount_passes_validation():
     result = v.validate(
         source='Revenue reached $2.3 billion, up 47% year over year',
         narration=(
-            'Revenue reached two point three billion dollars, '
-            'up forty-seven percent year over year'
+            'Revenue reached two point three billion dollars, up forty-seven percent year over year'
         ),
     )
     assert result.passed
@@ -73,8 +72,7 @@ def test_fails_when_proper_noun_dropped():
     )
     assert not result.passed
     assert any(
-        entity in result.missing_entities
-        for entity in ('OpenAI', 'Sequoia Capital', 'Microsoft')
+        entity in result.missing_entities for entity in ('OpenAI', 'Sequoia Capital', 'Microsoft')
     )
 
 
@@ -98,6 +96,21 @@ def test_passes_on_empty_source():
     v = NarrationValidator()
     result = v.validate(source='', narration='some narration')
     assert result.passed
+
+
+def test_fails_when_number_completely_dropped():
+    """A number absent in all spoken forms must still fail validation.
+
+    '47%' → acceptable forms include 'forty-seven percent', '47%', etc.
+    If the narration contains none of them the entity is genuinely missing.
+    """
+    v = NarrationValidator()
+    result = v.validate(
+        source='Revenue grew 47% this quarter',
+        narration='Revenue grew this quarter',
+    )
+    assert not result.passed
+    assert any('47' in e for e in result.missing_entities)
 
 
 def test_build_retry_prompt_contains_missing():
