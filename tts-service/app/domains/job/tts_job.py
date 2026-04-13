@@ -410,48 +410,14 @@ async def run_tts_job(
                         generation_kwargs,
                     )
 
-                    # Step 4: Normalize chunks to -23 LUFS (skip very short chunks —
-                    # single-pass loudnorm is inaccurate under ~10s, and final mastering
-                    # re-normalizes the whole file anyway)
+                    # Step 4: Skip per-chunk normalization — it causes inconsistent loudness
+                    # between chunks (single-pass loudnorm is inaccurate). Final mastering
+                    # applies proper two-pass loudness normalization to the entire file.
                     await _check_status()
                     logger.info(
-                        f'[{job_id}] Normalizing {len(chunk_wav_paths)} chunks (parallel)...'
+                        f'[{job_id}] Skipping per-chunk normalization (relying on final mastering)'
                     )
-
-                    async def _normalize_one(i: int, wav_path: str) -> str:
-                        try:
-                            # Skip normalization for very short chunks (<10s) — not enough
-                            # signal for loudnorm to measure accurately, and final mastering
-                            # will re-normalize the concatenated file
-                            seg = _AudioSegment.from_wav(wav_path)
-                            if len(seg) < 10_000:  # <10 seconds
-                                logger.debug(
-                                    f'[{job_id}] Chunk {i} is {len(seg) / 1000:.1f}s — skipping per-chunk norm'
-                                )
-                                return wav_path
-
-                            normalized_path = await loop.run_in_executor(
-                                executor,
-                                normalize_chunk_to_target_lufs,
-                                wav_path,
-                                DEFAULT_TARGET_LUFS,
-                            )
-                            if normalized_path != wav_path:
-                                normalized_temp_files.append(normalized_path)
-                            return normalized_path
-                        except Exception as exc:
-                            logger.warning(
-                                f'[{job_id}] Chunk {i} normalization failed, using original: {exc}'
-                            )
-                            return wav_path
-
-                    normalized_wav_paths = list(
-                        await asyncio.gather(
-                            *[_normalize_one(i, p) for i, p in enumerate(chunk_wav_paths)]
-                        )
-                    )
-
-                    logger.info(f'[{job_id}] Normalization complete')
+                    normalized_wav_paths = chunk_wav_paths
 
                     # Step 4: Concatenate WAVs with dynamic gaps into raw WAV
                     await _check_status()

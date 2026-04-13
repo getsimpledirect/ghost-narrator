@@ -99,16 +99,15 @@ def master_audio(
         True if mastering succeeded, False otherwise.
     """
     try:
-        # Broadcast mastering order: compress → normalise → limit.
-        # The compressor runs first in both passes so pass-1 measures the
-        # loudness of the already-compressed signal; pass-2 then applies the
-        # correction to that same compressed signal, hitting the LUFS target
-        # accurately. Reversing the order (normalise → compress) would cause
-        # the compressor to alter the carefully measured level after the fact.
+        # Conservative mastering chain: minimal processing to avoid artifacts.
+        # - silenceremove: trim leading silence
+        # - compressor: gentle 2:1 compression for consistency
+        # - loudnorm: two-pass EBU R128 for accurate final loudness
+        # - limiter: prevent clipping
+        # Removed: highpass (causes harshness), equalizer (unnecessary for TTS)
         _COMPRESSOR = (
-            # threshold=0.125 ≈ -18 dBFS, ratio=3:1, attack=10ms, release=100ms
-            # is the standard starting point for broadcast speech compression.
-            'acompressor=threshold=0.125:ratio=3:attack=10:release=100'
+            # threshold=0.177 ≈ -15 dBFS (gentler than -18), ratio=2:1 (softer than 3:1)
+            'acompressor=threshold=0.177:ratio=2:attack=20:release=150'
         )
 
         measure_result = subprocess.run(
@@ -120,8 +119,6 @@ def master_audio(
                 '-af',
                 (
                     'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
-                    'highpass=f=80,'
-                    'equalizer=f=6500:width_type=o:width=2:g=-3,'
                     f'{_COMPRESSOR},'
                     f'loudnorm=I={target_lufs}:TP={true_peak}:LRA={lra}:print_format=json'
                 ),
@@ -157,8 +154,6 @@ def master_audio(
                 '-af',
                 (
                     'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
-                    'highpass=f=80,'
-                    'equalizer=f=6500:width_type=o:width=2:g=-3,'
                     f'{_COMPRESSOR},'
                     f'{loudnorm_filter},'
                     'alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled'

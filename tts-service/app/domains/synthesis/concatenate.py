@@ -45,10 +45,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BITRATE: Final[str] = MP3_BITRATE
 STREAMING_THRESHOLD: Final[int] = STREAMING_THRESHOLD_MS
-CROSSFADE_MS: Final[int] = 60
+CROSSFADE_MS: Final[int] = 200  # Increased from 60ms for smoother transitions
 SILENCE_THRESHOLD_DB: Final[int] = -50  # was -35; more aggressive trailing trim
 MIN_SILENCE_MS: Final[int] = 100
-TRAILING_HARD_CAP_MS: Final[int] = 60  # New: exact trailing silence after trim
+TRAILING_SOFT_CAP_MS: Final[int] = 150  # Changed: soft cap instead of hard 60ms
 
 
 def _trim_silence(segment: AudioSegment) -> AudioSegment:
@@ -83,9 +83,13 @@ def _trim_silence(segment: AudioSegment) -> AudioSegment:
     if len(segment) - trailing > MIN_SILENCE_MS:
         segment = segment[:trailing]
 
-    # Hard cap: always end with exactly TRAILING_HARD_CAP_MS of silence.
-    # Prevents TTS padding from accumulating into audible gaps between chunks.
-    return segment + AudioSegment.silent(duration=TRAILING_HARD_CAP_MS)
+    # Soft cap: end with TRAILING_SOFT_CAP_MS of silence max.
+    # The crossfade handles smooth transitions, so we don't need exact trailing silence.
+    if len(segment) > TRAILING_SOFT_CAP_MS:
+        segment = segment[:-TRAILING_SOFT_CAP_MS] + AudioSegment.silent(
+            duration=TRAILING_SOFT_CAP_MS
+        )
+    return segment
 
 
 def _crossfade_append(
