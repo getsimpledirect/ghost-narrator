@@ -264,6 +264,7 @@ async def run_tts_job(
 
                     chunk_wav_paths: list[str] = []
                     all_chunks: list[str] = []
+                    chunk_pause_durations: list[int] = []
                     total_words = 0
                     chunk_index = 0
                     narration_skipped = False
@@ -301,10 +302,11 @@ async def run_tts_job(
                                         if segment is None:
                                             break
                                         await _check_status()
-                                        tts_chunks, seg_words = prepare_text_for_synthesis(
-                                            segment, MAX_CHUNK_WORDS
+                                        tts_chunks, seg_words, seg_pauses = (
+                                            prepare_text_for_synthesis(segment, MAX_CHUNK_WORDS)
                                         )
                                         all_chunks.extend(tts_chunks)
+                                        chunk_pause_durations.extend(seg_pauses)
                                         total_words += seg_words
                                         paths = await synthesize_chunks_auto(
                                             chunks=tts_chunks,
@@ -361,8 +363,8 @@ async def run_tts_job(
                                     )
                                     narrated_text = text
                                     narration_skipped = True
-                                all_chunks, total_words = prepare_text_for_synthesis(
-                                    narrated_text, MAX_CHUNK_WORDS
+                                all_chunks, total_words, chunk_pause_durations = (
+                                    prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
                                 )
                                 chunk_wav_paths = await synthesize_chunks_auto(
                                     chunks=all_chunks,
@@ -373,8 +375,8 @@ async def run_tts_job(
                                 )
                         else:
                             # No narration available — synthesize raw text directly
-                            all_chunks, total_words = prepare_text_for_synthesis(
-                                text, MAX_CHUNK_WORDS
+                            all_chunks, total_words, chunk_pause_durations = (
+                                prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
                             )
                             chunk_wav_paths = await synthesize_chunks_auto(
                                 chunks=all_chunks,

@@ -323,45 +323,57 @@ async def synthesize_chunks_auto(
 def prepare_text_for_synthesis(
     text: str,
     max_chunk_words: int = MAX_CHUNK_WORDS,
-) -> tuple[list[str], int]:
-    """
-    Prepare text for synthesis by cleaning and splitting into chunks.
-
-    Applies TTS-specific text cleanup (abbreviation expansion, markdown
-    stripping, special character normalization) before chunking.
-
-    Args:
-        text: The full text to prepare.
-        max_chunk_words: Maximum words per chunk.
+) -> tuple[list[str], int, list[int]]:
+    """Prepare text for synthesis by cleaning, splitting at pause markers, and chunking.
 
     Returns:
-        A tuple of (chunks, total_word_count).
+        A tuple of (chunks, total_word_count, pause_after_chunk) where
+        pause_after_chunk[i] is the ms of silence to insert after chunks[i].
+        A value of 0 means "use the heuristic from get_pause_ms_after_chunk".
 
     Raises:
         SynthesisError: If text is empty or chunking fails.
     """
+    from app.utils.text import parse_pause_markers
+
     if not text or not text.strip():
         raise SynthesisError('Cannot prepare empty text for synthesis')
 
-    # Clean text for TTS (abbreviations, markdown, special chars)
-    cleaned = clean_text_for_tts(text)
+    # Split at [PAUSE]/[LONG_PAUSE] markers first, then clean and chunk each segment
+    pause_segments = parse_pause_markers(text)
 
-    chunks = split_into_chunks(cleaned, max_chunk_words)
+    all_chunks: list[str] = []
+    pause_after_chunk: list[int] = []
 
-    if not chunks:
+    for segment_text, pause_ms in pause_segments:
+        cleaned = clean_text_for_tts(segment_text)
+        seg_chunks = split_into_chunks(cleaned, max_chunk_words)
+
+        if not seg_chunks:
+            continue
+
+        # All chunks in this segment get pause_ms=0 except the last one,
+        # which gets the pause that follows this segment.
+        for chunk in seg_chunks[:-1]:
+            all_chunks.append(chunk)
+            pause_after_chunk.append(0)
+        all_chunks.append(seg_chunks[-1])
+        pause_after_chunk.append(pause_ms)
+
+    if not all_chunks:
         raise SynthesisError(
             'Text chunking resulted in empty chunks',
             details=f'Original text length: {len(text)}',
         )
 
-    total_words = sum(len(chunk.split()) for chunk in chunks)
+    total_words = sum(len(chunk.split()) for chunk in all_chunks)
 
     logger.debug(
-        f'Prepared {len(chunks)} chunks with {total_words} total words '
+        f'Prepared {len(all_chunks)} chunks with {total_words} total words '
         f'(max {max_chunk_words} words per chunk)'
     )
 
-    return chunks, total_words
+    return all_chunks, total_words, pause_after_chunk
 
 
 def cleanup_chunk_files(job_dir: Path, job_id: str) -> None:

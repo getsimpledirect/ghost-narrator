@@ -143,7 +143,7 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
         mock_audio_segment.return_value = MagicMock()
 
         mock_stat.return_value.st_size = 1024 * 1024
-        mock_prepare.return_value = (['Hello world.', 'This is a test.'], 6)
+        mock_prepare.return_value = (['Hello world.', 'This is a test.'], 6, [0, 0])
         mock_synth.return_value = ['/tmp/chunk_0000.wav']
         mock_concat.return_value = None
 
@@ -201,7 +201,7 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
         patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
         patch.object(Path, 'mkdir'),
     ):
-        mock_prepare.return_value = (['Some text to synthesize.'], 4)
+        mock_prepare.return_value = (['Some text to synthesize.'], 4, [0])
         mock_synth.side_effect = SynthesisError('GPU out of memory')
 
         await run_tts_job(job_id, text, storage_path)
@@ -253,7 +253,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
         mock_audio_segment.return_value = MagicMock()
 
         mock_stat.return_value.st_size = 1024 * 1024
-        mock_prepare.return_value = (['Hello world.'], 2)
+        mock_prepare.return_value = (['Hello world.'], 2, [0])
         mock_synth.return_value = ['/tmp/chunk_0000.wav']
 
         await run_tts_job(job_id, text, storage_path)
@@ -330,7 +330,7 @@ async def test_run_tts_job_transitions_through_queued_status(
     ):
         mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
         mock_stat.return_value.st_size = 1024 * 1024
-        mock_prepare.return_value = (['Hello world.'], 2)
+        mock_prepare.return_value = (['Hello world.'], 2, [0])
         mock_synth.return_value = ['/tmp/chunk_0000.wav']
 
         await run_tts_job('test-queued', 'Hello world.', 'audio/test.mp3')
@@ -369,7 +369,7 @@ async def test_run_tts_job_exceeds_max_duration(mock_job_store, mock_tts_engine)
         # Set a tiny timeout so the test doesn't actually wait 2 hours
         patch('app.domains.job.tts_job.MAX_JOB_DURATION_SECONDS', 0.05),
     ):
-        mock_prepare.return_value = (['Hello world.'], 2)
+        mock_prepare.return_value = (['Hello world.'], 2, [0])
 
         await run_tts_job('test-timeout', 'Hello world.', 'audio/timeout.mp3')
 
