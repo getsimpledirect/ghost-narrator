@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.6.3 (2026-04-13)
+
+### Bug Fixes
+
+- **narration**: Make word ratio the primary pass/fail check
+  ([`9b043ce`](https://github.com/getsimpledirect/ghost-narrator/commit/9b043cecb5ab04f9c7b31638c2258539688869ed))
+
+- Entity validation now purely informational (for logging only) - Word ratio (20%) is now the ONLY
+  pass/fail criteria - This prevents all-or-nothing validation loops while still catching genuine
+  content drops (when ratio <20%) - Updated tests to reflect new behavior
+
+
 ## v2.6.2 (2026-04-13)
 
 ### Bug Fixes
