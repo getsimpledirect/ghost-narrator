@@ -88,17 +88,17 @@ class NarrationValidator:
     )
     # Minimum acceptable word count ratio (narration / source)
     # Primary check for content preservation - if below this, significant
-    # content was likely dropped. 20% allows natural compression while
-    # catching genuine content loss.
-    MIN_WORD_RATIO = 0.20
+    # content was likely dropped. 40% allows natural compression while
+    # catching genuine content loss (60% max compression).
+    MIN_WORD_RATIO = 0.40
 
     # Warning threshold - log when ratio is below this but above MIN_WORD_RATIO
     # This provides visibility into potential content issues without blocking.
-    WARNING_WORD_RATIO = 0.30
+    WARNING_WORD_RATIO = 0.50
 
     # Critical threshold - hard fail below this (no retries)
     # Anything below this likely means major content was lost.
-    CRITICAL_WORD_RATIO = 0.15
+    CRITICAL_WORD_RATIO = 0.25
 
     # Entity validation is now SECONDARY and non-blocking.
     # It serves as a warning/logging mechanism, not a pass/fail criteria.
