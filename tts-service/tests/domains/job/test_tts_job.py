@@ -115,7 +115,21 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
     text = 'Hello world. This is a test.'
     storage_path = 'audio/test.mp3'
 
+    mock_narration = AsyncMock()
+    mock_narration.narrate.return_value = 'Hello world. This is a test.'
+
+    async def mock_narrate_iter(text):
+        yield 'Hello world. This is a test.'
+
+    mock_narration.narrate_iter = mock_narrate_iter
+
     with (
+        patch('app.domains.job.tts_job.get_narration_strategy', return_value=mock_narration),
+        patch(
+            'app.domains.job.tts_job.get_effective_config',
+            new_callable=AsyncMock,
+            return_value=({}, {}),
+        ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto') as mock_concat,
@@ -129,11 +143,11 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
         patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch('app.domains.job.tts_job.cleanup_chunk_files'),
         patch('app.domains.job.tts_job._AudioSegment') as mock_audio_segment,
+        patch('app.domains.synthesis.service._executor', _make_mock_executor()),
         patch.object(Path, 'mkdir'),
         patch.object(Path, 'exists', return_value=True),
         patch.object(Path, 'stat') as mock_stat,
     ):
-        # Mock audio segment to avoid file I/O
         mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
         mock_audio_segment.from_file.return_value = MagicMock(duration_seconds=1.0)
         mock_audio_segment.return_value = MagicMock()
@@ -145,7 +159,6 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
 
         await run_tts_job(job_id, text, storage_path)
 
-        # Assert job store was updated to completed
         statuses = [
             call.args[1].get('status')
             for call in mock_job_store.update.call_args_list
@@ -224,7 +237,21 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
     failing_backend = AsyncMock()
     failing_backend.upload.side_effect = Exception('Network error')
 
+    mock_narration = AsyncMock()
+    mock_narration.narrate.return_value = 'Hello world.'
+
+    async def mock_narrate_iter(text):
+        yield 'Hello world.'
+
+    mock_narration.narrate_iter = mock_narrate_iter
+
     with (
+        patch('app.domains.job.tts_job.get_narration_strategy', return_value=mock_narration),
+        patch(
+            'app.domains.job.tts_job.get_effective_config',
+            new_callable=AsyncMock,
+            return_value=({}, {}),
+        ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto'),
@@ -235,11 +262,11 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
         patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch('app.domains.job.tts_job.cleanup_chunk_files'),
         patch('app.domains.job.tts_job._AudioSegment') as mock_audio_segment,
+        patch('app.domains.synthesis.service._executor', _make_mock_executor()),
         patch.object(Path, 'mkdir'),
         patch.object(Path, 'exists', return_value=True),
         patch.object(Path, 'stat') as mock_stat,
     ):
-        # Mock audio segment to avoid file I/O
         mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
         mock_audio_segment.from_file.return_value = MagicMock(duration_seconds=1.0)
         mock_audio_segment.return_value = MagicMock()
@@ -298,7 +325,21 @@ async def test_run_tts_job_transitions_through_queued_status(
     """Job must be marked 'queued' before acquiring the GPU slot, 'processing' after."""
     mock_job_store.get.return_value = {'status': 'processing'}
 
+    mock_narration = AsyncMock()
+    mock_narration.narrate.return_value = 'Hello world.'
+
+    async def mock_narrate_iter(text):
+        yield 'Hello world.'
+
+    mock_narration.narrate_iter = mock_narrate_iter
+
     with (
+        patch('app.domains.job.tts_job.get_narration_strategy', return_value=mock_narration),
+        patch(
+            'app.domains.job.tts_job.get_effective_config',
+            new_callable=AsyncMock,
+            return_value=({}, {}),
+        ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto'),

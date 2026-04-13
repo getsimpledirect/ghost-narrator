@@ -36,8 +36,8 @@ from typing import Final
 
 logger = logging.getLogger(__name__)
 
-# Default maximum words per chunk (40-60 words = 8-12 second audio segments)
-DEFAULT_MAX_CHUNK_WORDS: Final[int] = 200
+# Default maximum words per chunk (larger chunks for single-shot fallback)
+DEFAULT_MAX_CHUNK_WORDS: Final[int] = 400  # Was 200 - aligned with SINGLE_SHOT_MAX_WORDS
 
 # Pause durations injected by LLM markers during narration
 PAUSE_MS: Final[int] = (

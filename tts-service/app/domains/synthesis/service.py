@@ -130,6 +130,68 @@ def synthesize_chunk(
     return engine.synthesize_to_file(text, output_path, job_id, generation_kwargs=generation_kwargs)
 
 
+def synthesize_single_shot(
+    text: str,
+    output_path: str,
+    job_id: str = 'default',
+    generation_kwargs: Optional[dict] = None,
+) -> str:
+    """
+    Synthesize a large text in a single pass using Qwen3-TTS.
+
+    This produces studio-quality audio with no chunk boundaries,
+    eliminating pitch/speed/volume variations between chunks.
+
+    Args:
+        text: The full text to synthesize (up to ~4000 words recommended).
+        output_path: Path where the WAV file will be saved.
+        job_id: Job identifier for process tracking.
+        generation_kwargs: Generation parameters forwarded to the TTS engine.
+
+    Returns:
+        The output path of the generated WAV file.
+
+    Raises:
+        SynthesisError: If synthesis fails.
+    """
+    if not text or not text.strip():
+        raise SynthesisError(
+            'Cannot synthesize empty text',
+            details=f'output_path={output_path}',
+        )
+
+    engine = get_tts_engine()
+    return engine.synthesize_to_file(text, output_path, job_id, generation_kwargs=generation_kwargs)
+
+
+async def synthesize_single_shot_async(
+    text: str,
+    output_path: str,
+    job_id: str = 'default',
+    generation_kwargs: Optional[dict] = None,
+) -> str:
+    """
+    Async wrapper for single-shot synthesis.
+
+    Runs the synchronous single-shot synthesis in a thread pool.
+    """
+    if not _executor:
+        raise SynthesisError(
+            'Executor not initialized',
+            details='Call initialize_executor() during startup',
+        )
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor,
+        synthesize_single_shot,
+        text,
+        output_path,
+        job_id,
+        generation_kwargs,
+    )
+
+
 async def synthesize_chunks_sequential(
     chunks: list[str],
     job_dir: Path,

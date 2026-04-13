@@ -103,6 +103,9 @@ Create a `.env` file:
 VOICE_SAMPLE_PATH=./voices/default/reference.wav
 TTS_LANGUAGE=en
 MAX_CHUNK_WORDS=200
+SINGLE_SHOT_MAX_WORDS=4000
+SINGLE_SHOT_SEGMENT_WORDS=3000
+SINGLE_SHOT_OVERLAP_MS=500
 DEVICE=cpu
 STORAGE_BACKEND=local
 N8N_CALLBACK_URL=http://localhost:5678/webhook/tts-callback
@@ -248,6 +251,9 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | `VOICE_SAMPLE_REF_TEXT` | *(empty)* | Transcription of the reference audio. When set, uses ICL mode (higher-quality cloning). When empty, uses x-vector-only mode (no transcription needed — default). |
 | `TTS_LANGUAGE` | `en` | BCP-47 language code |
 | `MAX_CHUNK_WORDS` | `200` | Max words per synthesis chunk |
+| `SINGLE_SHOT_MAX_WORDS` | `4000` | Max words to synthesize in single pass |
+| `SINGLE_SHOT_SEGMENT_WORDS` | `3000` | Words per segment for long content |
+| `SINGLE_SHOT_OVERLAP_MS` | `500` | Overlap crossfade in milliseconds |
 | `DEVICE` | `cpu` | PyTorch device: `cpu` or `cuda` |
 | `MAX_WORKERS` | `4` | Thread pool size for parallel synthesis (CPU mode) |
 | `HARDWARE_TIER` | `auto` | Hardware tier: auto/cpu/low/mid/high |
@@ -393,7 +399,8 @@ docker exec -it tts-service python -c "import torch; print('OK')"
 ### Out of memory errors
 
 If CPU crashes with OOM:
-- Reduce `MAX_CHUNK_WORDS` to 150
+- Use single-shot synthesis: `SINGLE_SHOT_MAX_WORDS=4000` (more memory efficient)
+- Reduce `MAX_CHUNK_WORDS` to 150 (if not using single-shot mode)
 - Increase system swap space
 - Use GPU mode if available
 
@@ -403,6 +410,7 @@ If CPU crashes with OOM:
 - Set `VOICE_SAMPLE_REF_TEXT` to the transcription of your reference audio — enables ICL mode (significantly better voice cloning than x-vector-only)
 - Use `HARDWARE_TIER=high_vram` if your GPU supports it — bf16 precision, larger LLM, quality re-synthesis
 - Ensure language matches reference voice
+- **Enable single-shot synthesis** for studio-quality seamless audio: `SINGLE_SHOT_MAX_WORDS=4000`
 
 ### Jobs lost after restart
 

@@ -22,6 +22,9 @@
 
 """Tests for audio concatenation - smoke tests."""
 
+import tempfile
+from pathlib import Path
+
 import numpy as np
 from pydub import AudioSegment
 
@@ -77,3 +80,72 @@ class TestConcatenateImports:
         from app.domains.synthesis.concatenate import concatenate_audio_auto
 
         assert callable(concatenate_audio_auto)
+
+
+class TestOverlapCrossfade:
+    """Tests for overlap crossfade functionality."""
+
+    def test_concatenate_audio_with_overlap_importable(self):
+        """Overlap crossfade function should be importable."""
+        from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
+
+        assert callable(concatenate_audio_with_overlap)
+
+    def test_concatenate_audio_with_overlap_single_file(self):
+        """Single file should just be copied."""
+        from app.domains.synthesis.concatenate import (
+            concatenate_audio_with_overlap,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            test_wav = f.name
+
+        try:
+            samples = np.random.randint(-1000, 1000, 24000, dtype=np.int16)
+            seg = AudioSegment(samples.tobytes(), frame_rate=48000, sample_width=2, channels=1)
+            seg.export(test_wav, format='wav')
+
+            output = tempfile.mktemp(suffix='.wav')
+            result = concatenate_audio_with_overlap([test_wav], output)
+
+            assert Path(result).exists()
+            assert Path(result).stat().st_size > 0
+        finally:
+            Path(test_wav).unlink(missing_ok=True)
+            if 'output' in locals():
+                Path(output).unlink(missing_ok=True)
+
+    def test_concatenate_audio_with_overlap_two_files(self):
+        """Two files should be crossfaded with overlap."""
+        from app.domains.synthesis.concatenate import (
+            concatenate_audio_with_overlap,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            test_wav1 = f.name
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            test_wav2 = f.name
+
+        try:
+            samples1 = np.sin(np.linspace(0, 2 * np.pi, 48000)).astype(np.int16)
+            seg1 = AudioSegment(samples1.tobytes(), frame_rate=48000, sample_width=2, channels=1)
+            samples2 = np.sin(np.linspace(0, 4 * np.pi, 48000)).astype(np.int16)
+            seg2 = AudioSegment(samples2.tobytes(), frame_rate=48000, sample_width=2, channels=1)
+            seg1.export(test_wav1, format='wav')
+            seg2.export(test_wav2, format='wav')
+
+            output = tempfile.mktemp(suffix='.wav')
+            result = concatenate_audio_with_overlap(
+                [test_wav1, test_wav2],
+                output,
+                overlap_ms=500,
+            )
+
+            assert Path(result).exists()
+            result_seg = AudioSegment.from_wav(result)
+            assert result_seg.duration_seconds >= 1.0
+        finally:
+            Path(test_wav1).unlink(missing_ok=True)
+            Path(test_wav2).unlink(missing_ok=True)
+            if 'output' in locals():
+                Path(output).unlink(missing_ok=True)

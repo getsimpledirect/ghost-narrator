@@ -111,3 +111,36 @@ def test_prepare_text_no_markers_returns_zero_pauses():
         assert chunk_file.exists()
         cleanup_chunk_files(job_dir, 'test-job-3')
         assert not job_dir.exists()
+
+
+class TestSingleShotSynthesis:
+    def test_synthesize_single_shot_function_exists(self):
+        """Single-shot synthesis function should be importable."""
+        from app.domains.synthesis.service import synthesize_single_shot
+
+        assert callable(synthesize_single_shot)
+
+    def test_synthesize_single_shot_empty_text_raises(self):
+        """Single-shot should raise error for empty text."""
+        from app.domains.synthesis.service import synthesize_single_shot
+        from app.core.exceptions import SynthesisError
+
+        with pytest.raises(SynthesisError) as exc_info:
+            synthesize_single_shot('', '/tmp/test.wav')
+        assert 'empty' in str(exc_info.value).lower()
+
+    def test_synthesize_single_shot_whitespace_only_raises(self):
+        """Single-shot should raise error for whitespace-only text."""
+        from app.domains.synthesis.service import synthesize_single_shot
+        from app.core.exceptions import SynthesisError
+
+        with pytest.raises(SynthesisError) as exc_info:
+            synthesize_single_shot('   ', '/tmp/test.wav')
+        assert 'empty' in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_synthesize_single_shot_async_importable(self):
+        """Async wrapper should be importable."""
+        from app.domains.synthesis.service import synthesize_single_shot_async
+
+        assert callable(synthesize_single_shot_async)
