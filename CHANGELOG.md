@@ -3,6 +3,11 @@
 
 ## v2.5.0 (2026-04-13)
 
+### Bug Fixes
+
+- **narration**: Add validation retry limits and proper result validation
+  ([`c0681bc`](https://github.com/getsimpledirect/ghost-narrator/commit/c0681bc801a19faf98d5d7d3fc9b214a16a612dc))
+
 
 ## v2.4.5 (2026-04-13)
 
