@@ -87,7 +87,14 @@ class NarrationValidator:
         r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
     )
     # Minimum acceptable word count ratio (narration / source)
-    MIN_WORD_RATIO = 0.55
+    # Lowered from 0.55 to 0.20 to allow natural compression while still catching
+    # significant content drops. The LLM paraphrases and condenses - that's expected.
+    MIN_WORD_RATIO = 0.20
+
+    # Allow up to 30% of entities to be missing before failing validation.
+    # This prevents all-or-nothing checks that cause retry loops.
+    # The LLM naturally paraphrases numbers, dates, and proper nouns.
+    MAX_ENTITY_MISSING_RATE = 0.30
 
     @classmethod
     def _to_spoken_forms(cls, entity: str) -> list[str]:
@@ -249,29 +256,48 @@ class NarrationValidator:
             if not any(f.lower() in narration_lower for f in self._to_spoken_forms(e))
         ]
 
-        # Word count ratio check
+        # Apply tolerance: allow up to MAX_ENTITY_MISSING_RATE missing entities
+        entity_count = len(entities)
+        missing_count = len(missing)
+        entity_fail = (
+            entity_count > 0 and (missing_count / entity_count) > self.MAX_ENTITY_MISSING_RATE
+        )
+
+        # Word count ratio check (with new tolerance)
         source_words = len(source.split())
         narration_words = len(narration_for_check.split())
         ratio = narration_words / max(source_words, 1)
+        ratio_fail = ratio < self.MIN_WORD_RATIO
 
-        if ratio < self.MIN_WORD_RATIO:
+        if ratio_fail:
             missing.append(
                 f'[WORD COUNT RATIO: {ratio:.0%} — narration is only '
                 f'{narration_words} words vs {source_words} source words. '
                 f'Likely significant content was dropped.]'
             )
 
+        passed = not entity_fail and not ratio_fail
+
         return ValidationResult(
-            passed=len(missing) == 0,
+            passed=passed,
             missing_entities=missing,
             word_ratio=ratio,
         )
 
     def build_retry_prompt(self, result: ValidationResult, original_chunk: str) -> str:
-        missing_list = '\n'.join(f'- {e}' for e in result.missing_entities)
+        # Only include top 5 most critical missing items to prevent overwhelming the LLM
+        # Filter out the word ratio message as it's not actionable
+        critical_items = [e for e in result.missing_entities if not e.startswith('[WORD COUNT')][:5]
+
+        if not critical_items:
+            return (
+                f'Please provide a more complete narration of the following text:\n\n'
+                f'{original_chunk}'
+            )
+
+        missing_list = '\n'.join(f'- {e}' for e in critical_items)
         return (
-            f'Your previous output was missing the following information:\n'
+            f'Your previous output was missing some key information: '
             f'{missing_list}\n\n'
-            f'Please redo the narration conversion of the following text, '
-            f'ensuring every item above is included:\n\n{original_chunk}'
+            f'Please provide a more complete narration of:\n\n{original_chunk}'
         )
