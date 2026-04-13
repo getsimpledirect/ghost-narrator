@@ -44,9 +44,11 @@ _MD_SECTION_HEADER_RE: Final = re.compile(r'^(?:##|###)\s+(.+)$', re.MULTILINE)
 _MD_FRONTMATTER_RE: Final = re.compile(r'^---\s*\n.*?\n---\s*\n', re.DOTALL)
 
 # Markdown syntax strippers
+_MD_IMAGE_RE: Final = re.compile(r'!\[[^\]]*\]\([^)]+\)')
 _MD_BOLD_ITALIC_RE: Final = re.compile(r'(\*\*|__|\*|_)(.*?)\1')
 _MD_LINK_RE: Final = re.compile(r'\[([^\]]+)\]\([^)]+\)')
 _MD_HEADER_RE: Final = re.compile(r'^#+\s+', re.MULTILINE)
+_MD_BLOCKQUOTE_RE: Final = re.compile(r'^>\s+', re.MULTILINE)
 
 # Dollar amounts with SI abbreviations: $1.2B, $450M, $3T, $200K
 _DOLLAR_ABBREV_RE: Final = re.compile(r'\$(\d+(?:\.\d+)?)(B|M|T|K)\b', re.IGNORECASE)
@@ -187,6 +189,9 @@ def normalize_for_narration(text: str) -> str:
     # Strip Markdown frontmatter
     text = _MD_FRONTMATTER_RE.sub('', text)
 
+    # Strip Markdown images completely
+    text = _MD_IMAGE_RE.sub('', text)
+
     # Strip Markdown links: [text](url) -> text
     text = _MD_LINK_RE.sub(r'\1', text)
 
@@ -195,6 +200,9 @@ def normalize_for_narration(text: str) -> str:
 
     # Strip Markdown headers: ## Header -> Header
     text = _MD_HEADER_RE.sub('', text)
+
+    # Strip Markdown blockquotes: > text -> text
+    text = _MD_BLOCKQUOTE_RE.sub('', text)
 
     # Strip HTML tags (replace block-level tags with space, inline tags with empty)
     text = _HTML_TAG_RE.sub('', text)

@@ -126,12 +126,14 @@ def test_extract_section_map_markdown_headers():
 
 
 def test_normalize_strips_markdown_syntax():
-    md = '---\ntitle: "Test"\n---\n# Header\nThis is **bold** and *italic* with a [link](http://example.com).'
+    md = '---\ntitle: "Test"\n---\n# Header\n> Blockquote\nThis is **bold** and *italic* with a [link](http://example.com) and an ![image](http://example.com/img.png).'
     result = normalize_for_narration(md)
     assert '---' not in result
     assert 'title: "Test"' not in result
     assert '#' not in result
+    assert '>' not in result
     assert '**' not in result
     assert '*' not in result
     assert 'http://example.com' not in result
-    assert 'This is bold and italic with a link.' in result
+    assert 'image' not in result
+    assert 'This is bold and italic with a link and an .' in result
