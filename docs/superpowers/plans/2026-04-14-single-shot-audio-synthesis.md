@@ -16,6 +16,11 @@
 - **Modify:** `tts-service/app/domains/synthesis/service.py` — Add single-shot synthesis function
 - **Modify:** `tts-service/app/domains/job/tts_job.py` — Add single-shot branch in pipeline
 - **Modify:** `tts-service/app/domains/synthesis/concatenate.py` — Add overlap crossfade for segments
+- **Modify:** `tts-service/app/utils/text.py` — Update DEFAULT_MAX_CHUNK_WORDS for fallback
+- **Modify:** `tts-service/README.md` — Update MAX_CHUNK_WORDS documentation
+- **Modify:** `tts-service/run-docker.sh` — Add SINGLE_SHOT_* env vars
+- **Modify:** `tts-service/run-docker.ps1` — Add SINGLE_SHOT_* env vars
+- **Modify:** `tts-service/QUICKSTART.md` — Update env var documentation
 - **Test:** `tts-service/tests/domains/synthesis/test_synthesis_service.py` — Add single-shot tests
 - **Test:** `tts-service/tests/domains/synthesis/test_concatenate.py` — Add overlap crossfade tests
 
@@ -645,6 +650,155 @@ If tests fail, fix and commit.
 | 5 | test_synthesis_service.py | Add single-shot tests |
 | 6 | test_concatenate.py | Add overlap crossfade tests |
 | 7 | All | Run full test suite |
+
+---
+
+### Task 8: Update DEFAULT_MAX_CHUNK_WORDS in text.py
+
+**Files:**
+- Modify: `tts-service/app/utils/text.py:40`
+
+- [ ] **Step 1: Update DEFAULT_MAX_CHUNK_WORDS**
+
+The DEFAULT_MAX_CHUNK_WORDS is used as fallback when hardware config is not available. Since we're now doing single-shot synthesis, increase this to allow larger chunks:
+
+```python
+# Default maximum words per chunk (larger chunks for single-shot fallback)
+DEFAULT_MAX_CHUNK_WORDS: Final[int] = 400  # Was 200 - aligned with SINGLE_SHOT_MAX_WORDS
+```
+
+- [ ] **Step 2: Run linter**
+
+```bash
+ruff check tts-service/app/utils/text.py
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add tts-service/app/utils/text.py
+git commit -m "chore(text): increase DEFAULT_MAX_CHUNK_WORDS to 400 for single-shot fallback"
+```
+
+---
+
+### Task 9: Update Documentation (README)
+
+**Files:**
+- Modify: `tts-service/README.md:105,250,396`
+
+- [ ] **Step 1: Update MAX_CHUNK_WORDS documentation**
+
+Update the env var documentation to reflect the new defaults and add SINGLE_SHOT_* vars:
+
+Around line 105 - add to docker run example:
+```
+-e SINGLE_SHOT_MAX_WORDS=4000 \
+-e SINGLE_SHOT_SEGMENT_WORDS=3000 \
+-e SINGLE_SHOT_OVERLAP_MS=500 \
+```
+
+Around line 250 - add to environment variables table:
+
+| `SINGLE_SHOT_MAX_WORDS` | `4000` | Max words to synthesize in single pass |
+| `SINGLE_SHOT_SEGMENT_WORDS` | `3000` | Words per segment for long content |
+| `SINGLE_SHOT_OVERLAP_MS` | `500` | Overlap crossfade in milliseconds |
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add tts-service/README.md
+git commit -m "docs: add single-shot environment variables to README"
+```
+
+---
+
+### Task 10: Update Docker Scripts
+
+**Files:**
+- Modify: `tts-service/run-docker.sh:78,250,257`
+- Modify: `tts-service/run-docker.ps1:64,239,246`
+
+- [ ] **Step 1: Update run-docker.sh**
+
+Add to help text (around line 78):
+```bash
+echo "  SINGLE_SHOT_MAX_WORDS    Max words for single-pass synthesis (default: 4000)"
+echo "  SINGLE_SHOT_SEGMENT_WORDS Words per segment for long content (default: 3000)"
+echo "  SINGLE_SHOT_OVERLAP_MS    Overlap crossfade ms between segments (default: 500)"
+```
+
+Add env vars to docker run (around line 257):
+```bash
+"-e" "SINGLE_SHOT_MAX_WORDS=$SINGLE_SHOT_MAX_WORDS" \
+"-e" "SINGLE_SHOT_SEGMENT_WORDS=$SINGLE_SHOT_SEGMENT_WORDS" \
+"-e" "SINGLE_SHOT_OVERLAP_MS=$SINGLE_SHOT_OVERLAP_MS" \
+```
+
+- [ ] **Step 2: Update run-docker.ps1**
+
+Add to help text (around line 64):
+```powershell
+Write-Host "  SINGLE_SHOT_MAX_WORDS    Max words for single-pass synthesis (default: 4000)"
+Write-Host "  SINGLE_SHOT_SEGMENT_WORDS Words per segment for long content (default: 3000)"
+Write-Host "  SINGLE_SHOT_OVERLAP_MS    Overlap crossfade ms between segments (default: 500)"
+```
+
+Add env vars to docker run (around line 246):
+```powershell
+"-e", "SINGLE_SHOT_MAX_WORDS=$SINGLE_SHOT_MAX_WORDS",
+"-e", "SINGLE_SHOT_SEGMENT_WORDS=$SINGLE_SHOT_SEGMENT_WORDS",
+"-e", "SINGLE_SHOT_OVERLAP_MS=$SINGLE_SHOT_OVERLAP_MS",
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add tts-service/run-docker.sh tts-service/run-docker.ps1
+git commit -m "chore(docker): add single-shot env vars to docker scripts"
+```
+
+---
+
+### Task 11: Update QUICKSTART.md
+
+**Files:**
+- Modify: `tts-service/QUICKSTART.md:132`
+
+- [ ] **Step 1: Add SINGLE_SHOT env vars**
+
+Add after MAX_CHUNK_WORDS export:
+
+```bash
+export SINGLE_SHOT_MAX_WORDS="4000"      # Max words for single-pass synthesis
+export SINGLE_SHOT_SEGMENT_WORDS="3000"  # Words per segment for long content
+export SINGLE_SHOT_OVERLAP_MS="500"     # Overlap crossfade between segments
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add tts-service/QUICKSTART.md
+git commit -m "docs: add single-shot env vars to QUICKSTART"
+```
+
+---
+
+## Final Summary
+
+| Task | Files | Change |
+|------|-------|--------|
+| 1 | config.py | Add SINGLE_SHOT_MAX_WORDS, SINGLE_SHOT_SEGMENT_WORDS, SINGLE_SHOT_OVERLAP_MS |
+| 2 | service.py | Add synthesize_single_shot() and synthesize_single_shot_async() |
+| 3 | concatenate.py | Add concatenate_audio_with_overlap() for segment merging |
+| 4 | tts_job.py | Integrate single-shot branch into pipeline with segment handling |
+| 5 | test_synthesis_service.py | Add single-shot tests |
+| 6 | test_concatenate.py | Add overlap crossfade tests |
+| 7 | All | Run full test suite |
+| 8 | text.py | Update DEFAULT_MAX_CHUNK_WORDS to 400 |
+| 9 | README.md | Add SINGLE_SHOT env var documentation |
+| 10 | run-docker.sh, run-docker.ps1 | Add SINGLE_SHOT env vars |
+| 11 | QUICKSTART.md | Add SINGLE_SHOT env var documentation |
 
 ---
 
