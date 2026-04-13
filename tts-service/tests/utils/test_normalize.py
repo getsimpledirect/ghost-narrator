@@ -116,3 +116,22 @@ def test_extract_section_map_strips_tags_from_header():
     result = extract_section_map(html)
     assert 'Revenue Growth' in result
     assert '<strong>' not in result
+
+
+def test_extract_section_map_markdown_headers():
+    md = '## Introduction\nText\n### The VC Math\nMore text.'
+    result = extract_section_map(md)
+    assert 'Introduction' in result
+    assert 'The VC Math' in result
+
+
+def test_normalize_strips_markdown_syntax():
+    md = '---\ntitle: "Test"\n---\n# Header\nThis is **bold** and *italic* with a [link](http://example.com).'
+    result = normalize_for_narration(md)
+    assert '---' not in result
+    assert 'title: "Test"' not in result
+    assert '#' not in result
+    assert '**' not in result
+    assert '*' not in result
+    assert 'http://example.com' not in result
+    assert 'This is bold and italic with a link.' in result

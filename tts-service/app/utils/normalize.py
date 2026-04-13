@@ -37,6 +37,17 @@ _HTML_TAG_RE: Final = re.compile(r'<[^>]+>')
 # H2/H3 header extractor — used to build section map before HTML is stripped
 _SECTION_HEADER_RE: Final = re.compile(r'<h[23][^>]*>(.*?)</h[23]>', re.IGNORECASE | re.DOTALL)
 
+# Markdown H2/H3 header extractor
+_MD_SECTION_HEADER_RE: Final = re.compile(r'^(?:##|###)\s+(.+)$', re.MULTILINE)
+
+# Markdown frontmatter stripper
+_MD_FRONTMATTER_RE: Final = re.compile(r'^---\s*\n.*?\n---\s*\n', re.DOTALL)
+
+# Markdown syntax strippers
+_MD_BOLD_ITALIC_RE: Final = re.compile(r'(\*\*|__|\*|_)(.*?)\1')
+_MD_LINK_RE: Final = re.compile(r'\[([^\]]+)\]\([^)]+\)')
+_MD_HEADER_RE: Final = re.compile(r'^#+\s+', re.MULTILINE)
+
 # Dollar amounts with SI abbreviations: $1.2B, $450M, $3T, $200K
 _DOLLAR_ABBREV_RE: Final = re.compile(r'\$(\d+(?:\.\d+)?)(B|M|T|K)\b', re.IGNORECASE)
 
@@ -122,17 +133,17 @@ _MULTI_NEWLINE_RE: Final = re.compile(r'\n{3,}')
 
 
 def extract_section_map(html_text: str) -> str:
-    """Extract H2/H3 section headers from HTML to build a compact section map.
+    """Extract H2/H3 section headers from HTML or Markdown to build a compact section map.
 
     Called BEFORE normalize_for_narration strips HTML tags, so this receives
-    the raw HTML. Returns empty string if no headers found.
+    the raw HTML/Markdown. Returns empty string if no headers found.
 
     Example:
         '<h2>Introduction</h2><h2>The VC Math</h2>'
         → 'Sections: Introduction | The VC Math'
 
     Args:
-        html_text: Raw HTML article text.
+        html_text: Raw HTML or Markdown article text.
 
     Returns:
         Section map string, or empty string if no H2/H3 headers present.
@@ -142,6 +153,15 @@ def extract_section_map(html_text: str) -> str:
         for m in _SECTION_HEADER_RE.finditer(html_text)
         if _HTML_TAG_RE.sub('', m.group(1)).strip()
     ]
+
+    # Also look for Markdown headers if no HTML headers found
+    if not headers:
+        headers = [
+            m.group(1).strip()
+            for m in _MD_SECTION_HEADER_RE.finditer(html_text)
+            if m.group(1).strip()
+        ]
+
     if not headers:
         return ''
     return 'Sections: ' + ' | '.join(headers)
@@ -164,6 +184,18 @@ def normalize_for_narration(text: str) -> str:
     Returns:
         Cleaned text suitable for LLM narration.
     """
+    # Strip Markdown frontmatter
+    text = _MD_FRONTMATTER_RE.sub('', text)
+
+    # Strip Markdown links: [text](url) -> text
+    text = _MD_LINK_RE.sub(r'\1', text)
+
+    # Strip Markdown bold/italic: **text** -> text
+    text = _MD_BOLD_ITALIC_RE.sub(r'\2', text)
+
+    # Strip Markdown headers: ## Header -> Header
+    text = _MD_HEADER_RE.sub('', text)
+
     # Strip HTML tags (replace block-level tags with space, inline tags with empty)
     text = _HTML_TAG_RE.sub('', text)
     # Unescape HTML entities (&amp; → &, &lt; → <, &nbsp; → space, etc.)

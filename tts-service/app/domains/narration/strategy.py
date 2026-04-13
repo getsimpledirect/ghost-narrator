@@ -382,6 +382,11 @@ class SingleShotStrategy(NarrationStrategy):
         self._base_system_prompt = get_system_prompt(tier)
 
     async def narrate(self, text: str) -> str:
+        from app.utils.normalize import extract_section_map, normalize_for_narration
+
+        section_map = extract_section_map(text)
+        text = normalize_for_narration(text)
+
         word_count = len(text.split())
         if word_count > self._fallback_threshold:
             logger.info(
@@ -395,8 +400,10 @@ class SingleShotStrategy(NarrationStrategy):
                 model=self._model,
             )
             return await fallback.narrate(text)
+
+        system_prompt = get_system_prompt(self._tier, section_map=section_map)
         messages = [
-            {'role': 'system', 'content': self._base_system_prompt},
+            {'role': 'system', 'content': system_prompt},
             {'role': 'user', 'content': text},
         ]
         result = await _call_llm_with_retry(self._client, messages, self._model)
