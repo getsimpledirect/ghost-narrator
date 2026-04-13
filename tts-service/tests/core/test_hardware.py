@@ -217,3 +217,16 @@ def test_low_vram_tts_max_new_tokens_is_3000():
 
     cfg = _TIER_CONFIGS[HardwareTier.LOW_VRAM]
     assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
+
+
+def test_all_tiers_use_temperature_055():
+    """All hardware tiers must use tts_temperature=0.55 for consistent pitch across chunks."""
+    from app.core.hardware import _TIER_CONFIGS
+
+    for tier, config in _TIER_CONFIGS.items():
+        assert config.tts_temperature == 0.55, (
+            f'{tier.value}: tts_temperature is {config.tts_temperature}, expected 0.55'
+        )
+        assert config.tts_temperature_sub_talker == 0.55, (
+            f'{tier.value}: tts_temperature_sub_talker is {config.tts_temperature_sub_talker}, expected 0.55'
+        )
