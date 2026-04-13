@@ -11,7 +11,7 @@ authors = [
 
 dependencies = [
     "torch>=2.4.1",
-    "torchaudio>=2.4.1",
+    "torchaudio>=2.11.0",
     "transformers>=4.45.2",
     "fastapi>=0.135.3",
     "uvicorn[standard]>=0.42.0",
