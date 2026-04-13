@@ -58,10 +58,6 @@ from app.config import (
     OUTPUT_DIR,
 )
 from app.domains.narration.factory import get_narration_strategy
-from app.domains.synthesis.normalize import (
-    normalize_audio as normalize_chunk_to_target_lufs,
-    DEFAULT_TARGET_LUFS,
-)
 from app.domains.synthesis.concatenate import concatenate_audio_auto as concatenate_wavs_auto
 from app.domains.synthesis.quality import validate_audio_quality, apply_final_mastering
 from app.domains.synthesis.quality_check import (

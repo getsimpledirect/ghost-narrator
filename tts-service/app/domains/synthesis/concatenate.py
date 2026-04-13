@@ -45,10 +45,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BITRATE: Final[str] = MP3_BITRATE
 STREAMING_THRESHOLD: Final[int] = STREAMING_THRESHOLD_MS
-CROSSFADE_MS: Final[int] = 200  # Increased from 60ms for smoother transitions
+CROSSFADE_MS: Final[int] = 300  # Increased for smoother transitions (studio quality)
 SILENCE_THRESHOLD_DB: Final[int] = -50  # was -35; more aggressive trailing trim
 MIN_SILENCE_MS: Final[int] = 100
-TRAILING_SOFT_CAP_MS: Final[int] = 150  # Changed: soft cap instead of hard 60ms
+TRAILING_SOFT_CAP_MS: Final[int] = 200  # Soft cap for natural ending
 
 
 def _trim_silence(segment: AudioSegment) -> AudioSegment:

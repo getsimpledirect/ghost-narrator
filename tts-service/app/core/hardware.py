@@ -83,16 +83,16 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         llm_model='qwen3:1.7b',
         narration_strategy='chunked',
         narration_chunk_words=500,
-        tts_chunk_words=175,
+        tts_chunk_words=200,  # Increased for smoother flow
         synthesis_workers=4,
         mp3_bitrate='192k',
-        sample_rate=44100,
+        sample_rate=48000,  # Higher fidelity
         target_lufs=-16.0,
-        tts_temperature=0.55,
+        tts_temperature=0.4,  # Lower for consistent voice
         tts_repetition_penalty=1.05,
         tts_top_k=50,
         tts_top_p=0.92,
-        tts_temperature_sub_talker=0.55,
+        tts_temperature_sub_talker=0.4,  # Lower for consistent voice
         tts_top_k_sub_talker=50,
         tts_do_sample_sub_talker=True,
         tts_max_new_tokens=3000,
@@ -105,16 +105,16 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         llm_model='qwen3:4b',
         narration_strategy='chunked',
         narration_chunk_words=1000,
-        tts_chunk_words=175,
+        tts_chunk_words=200,  # Increased for smoother flow
         synthesis_workers=1,
         mp3_bitrate='192k',
-        sample_rate=44100,
+        sample_rate=48000,  # Higher fidelity
         target_lufs=-16.0,
-        tts_temperature=0.55,
+        tts_temperature=0.4,  # Lower for consistent voice
         tts_repetition_penalty=1.05,
         tts_top_k=50,
         tts_top_p=0.92,
-        tts_temperature_sub_talker=0.55,
+        tts_temperature_sub_talker=0.4,  # Lower for consistent voice
         tts_top_k_sub_talker=50,
         tts_do_sample_sub_talker=True,
         tts_max_new_tokens=3000,  # 175 words ≈ 969 tokens; 3000 = 3.1× headroom
@@ -127,16 +127,16 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         llm_model='qwen3:8b',
         narration_strategy='single_shot',
         narration_chunk_words=2500,
-        tts_chunk_words=225,
+        tts_chunk_words=250,  # Increased for smoother flow
         synthesis_workers=1,
-        mp3_bitrate='192k',
-        sample_rate=44100,
+        mp3_bitrate='256k',  # Higher bitrate for studio quality
+        sample_rate=48000,  # Higher fidelity
         target_lufs=-16.0,
-        tts_temperature=0.55,
+        tts_temperature=0.4,  # Lower for consistent voice
         tts_repetition_penalty=1.05,
         tts_top_k=50,
         tts_top_p=0.92,
-        tts_temperature_sub_talker=0.55,
+        tts_temperature_sub_talker=0.4,  # Lower for consistent voice
         tts_top_k_sub_talker=50,
         tts_do_sample_sub_talker=True,
         tts_max_new_tokens=3000,
@@ -149,23 +149,20 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         llm_model='qwen3:8b',  # sufficient for format-conversion narration at half the VRAM cost
         narration_strategy='chunked',  # chunked enables pipelined narrate+synthesize
         narration_chunk_words=2500,  # large chunks, pipelining hides latency
-        tts_chunk_words=250,  # fewer chunk boundaries = fewer prosodic resets
+        tts_chunk_words=300,  # Larger chunks = fewer boundaries = smoother flow
         synthesis_workers=1,  # GPU synthesis is serial — gpu semaphore + _synthesis_lock
-        mp3_bitrate='256k',
-        sample_rate=48000,
-        target_lufs=-14.0,
-        # Lower temperature + nucleus sampling: stable prosody for voice cloning.
-        # temperature=0.9/top_p=1.0 caused audible pitch/speed variation between
-        # synthesis calls; 0.72/0.92 sharpens the distribution without going
-        # deterministic.
-        tts_temperature=0.55,
+        mp3_bitrate='320k',  # Studio quality
+        sample_rate=48000,  # Studio quality
+        target_lufs=-14.0,  # Slightly louder for podcasts
+        # Lower temperature for consistent voice across chunks
+        tts_temperature=0.4,  # Was 0.55
         tts_repetition_penalty=1.05,
         tts_top_k=50,
         tts_top_p=0.92,
-        tts_temperature_sub_talker=0.55,
+        tts_temperature_sub_talker=0.4,  # Lower for consistent voice
         tts_top_k_sub_talker=50,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=3000,  # 250 words ≈ 1384 tokens; 3000 = 2.2× headroom
+        tts_max_new_tokens=4000,  # More headroom for larger chunks
     ),
 }
 

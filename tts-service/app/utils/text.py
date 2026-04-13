@@ -40,8 +40,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_CHUNK_WORDS: Final[int] = 200
 
 # Pause durations injected by LLM markers during narration
-PAUSE_MS: Final[int] = 450  # [PAUSE]       — sentence/minor topic boundary
-LONG_PAUSE_MS: Final[int] = 750  # [LONG_PAUSE]  — paragraph/major topic boundary
+PAUSE_MS: Final[int] = (
+    500  # [PAUSE] — sentence/minor topic boundary (slightly longer for natural speech)
+)
+LONG_PAUSE_MS: Final[int] = 1000  # [LONG_PAUSE] — paragraph/major topic boundary (more pronounced)
 
 _PAUSE_MARKER_RE: Final[re.Pattern[str]] = re.compile(r'\[(LONG_PAUSE|PAUSE)\]', re.IGNORECASE)
 

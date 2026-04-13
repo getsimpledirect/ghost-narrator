@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TARGET_LUFS: Final[float] = TARGET_LUFS
 DEFAULT_TRUE_PEAK: Final[float] = -1.0
-DEFAULT_LRA: Final[float] = 8.0
+DEFAULT_LRA: Final[float] = 7.0  # Reduced for more consistent loudness
 
 
 def _parse_loudnorm_stats(stderr: str) -> Optional[Dict[str, float]]:

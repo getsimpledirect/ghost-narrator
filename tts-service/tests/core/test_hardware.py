@@ -40,7 +40,7 @@ def test_cpu_only_when_cuda_unavailable():
     assert config.synthesis_workers == 4
     assert config.llm_model == 'qwen3:1.7b'
     assert config.mp3_bitrate == '192k'
-    assert config.sample_rate == 44100
+    assert config.sample_rate == 48000  # Studio quality for all tiers
     assert config.target_lufs == -16.0
 
 
@@ -186,17 +186,17 @@ def test_high_vram_llm_model_is_qwen3_8b():
     assert cfg.llm_model == 'qwen3:8b', f'Expected qwen3:8b, got {cfg.llm_model!r}'
 
 
-def test_high_vram_tts_max_new_tokens_is_3000():
-    """HIGH_VRAM max_new_tokens must be 3000.
+def test_high_vram_tts_max_new_tokens_is_4000():
+    """HIGH_VRAM max_new_tokens must be 4000 for larger 300-word chunks.
 
-    250 words at 130 WPM ≈ 1,384 codec tokens at 12 Hz.
-    3000 = 2.2× headroom — sufficient for natural variation,
-    prevents runaway loops that previously ran to 8000 tokens.
+    300 words at 130 WPT ≈ 1,684 codec tokens at 12 Hz.
+    4000 = 2.4× headroom — sufficient for natural variation,
+    prevents runaway loops while supporting larger chunk sizes.
     """
     from app.core.hardware import _TIER_CONFIGS
 
     cfg = _TIER_CONFIGS[HardwareTier.HIGH_VRAM]
-    assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
+    assert cfg.tts_max_new_tokens == 4000, f'Expected 4000, got {cfg.tts_max_new_tokens}'
 
 
 def test_mid_vram_tts_max_new_tokens_is_3000():
@@ -219,14 +219,18 @@ def test_low_vram_tts_max_new_tokens_is_3000():
     assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
 
 
-def test_all_tiers_use_temperature_055():
-    """All hardware tiers must use tts_temperature=0.55 for consistent pitch across chunks."""
+def test_all_tiers_use_temperature_04():
+    """All hardware tiers must use tts_temperature=0.4 for consistent pitch across chunks.
+
+    Lower temperature (0.4 vs 0.55) produces more consistent voice characteristics
+    across chunks, critical for studio-quality audio without pitch/speed variation.
+    """
     from app.core.hardware import _TIER_CONFIGS
 
     for tier, config in _TIER_CONFIGS.items():
-        assert config.tts_temperature == 0.55, (
-            f'{tier.value}: tts_temperature is {config.tts_temperature}, expected 0.55'
+        assert config.tts_temperature == 0.4, (
+            f'{tier.value}: tts_temperature is {config.tts_temperature}, expected 0.4'
         )
-        assert config.tts_temperature_sub_talker == 0.55, (
-            f'{tier.value}: tts_temperature_sub_talker is {config.tts_temperature_sub_talker}, expected 0.55'
+        assert config.tts_temperature_sub_talker == 0.4, (
+            f'{tier.value}: tts_temperature_sub_talker is {config.tts_temperature_sub_talker}, expected 0.4'
         )
