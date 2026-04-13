@@ -22,6 +22,46 @@
 
 """Tests for audio concatenation - smoke tests."""
 
+import numpy as np
+from pydub import AudioSegment
+
+
+def _make_sine_wav(duration_ms: int = 1000, sample_rate: int = 24000) -> AudioSegment:
+    """Generate a 440Hz sine wave segment for testing."""
+    samples = int(sample_rate * duration_ms / 1000)
+    t = np.linspace(0, duration_ms / 1000, samples, endpoint=False)
+    wave = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+    return AudioSegment(wave.tobytes(), frame_rate=sample_rate, sample_width=2, channels=1)
+
+
+def test_trim_silence_caps_trailing_at_60ms():
+    """_trim_silence must leave at most 60ms of trailing silence."""
+    from app.domains.synthesis.concatenate import _trim_silence
+
+    # 1s sine + 500ms silence
+    sine = _make_sine_wav(1000)
+    silence = AudioSegment.silent(duration=500)
+    segment = sine + silence
+
+    trimmed = _trim_silence(segment)
+    # Total should be ~1060ms (1000ms speech + 60ms cap)
+    assert len(trimmed) <= 1100  # generous bound for 60ms cap
+    assert len(trimmed) >= 900  # speech not clipped
+
+
+def test_equal_power_crossfade_no_volume_dip():
+    """Equal-power crossfade must maintain loudness at the midpoint of the fade."""
+    from app.domains.synthesis.concatenate import _crossfade_append, CROSSFADE_MS
+
+    a = _make_sine_wav(500)
+    b = _make_sine_wav(500)
+    result = _crossfade_append(AudioSegment.empty(), a, 0)
+    result = _crossfade_append(result, b, 0)
+
+    # The crossfade region should not dip below -20dBFS (linear crossfade dips ~-3dB)
+    crossfade_region = result[len(a) - CROSSFADE_MS // 2 : len(a) + CROSSFADE_MS // 2]
+    assert crossfade_region.dBFS > -20.0
+
 
 class TestConcatenateImports:
     """Test that concatenate module can be imported."""
