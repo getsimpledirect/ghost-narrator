@@ -103,6 +103,18 @@ try:
 except ValueError:
     MAX_CHUNK_WORDS: Final[int] = 400  # Default to 400
 
+# Single-shot synthesis settings
+# When content is below this word count, synthesize in a single pass
+# for studio-quality seamless audio (no chunk boundaries).
+SINGLE_SHOT_MAX_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_MAX_WORDS', '4000'))
+
+# For content above SINGLE_SHOT_MAX_WORDS, split into segments
+# Each segment is synthesized in single-shot mode, then concatenated.
+SINGLE_SHOT_SEGMENT_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_SEGMENT_WORDS', '3000'))
+
+# Overlap between segments for crossfade (in milliseconds)
+SINGLE_SHOT_OVERLAP_MS: Final[int] = int(os.environ.get('SINGLE_SHOT_OVERLAP_MS', '500'))
+
 # Webhook settings
 N8N_CALLBACK_URL: Final[str] = os.environ.get('N8N_CALLBACK_URL', '')
 
