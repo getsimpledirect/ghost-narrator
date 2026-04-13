@@ -390,23 +390,20 @@ async def run_tts_job(
                     if not chunk_wav_paths:
                         raise RuntimeError('No audio chunks were synthesized')
 
-                    # Step 3b: Quality check and re-synthesis (HIGH_VRAM only)
-                    from app.core.hardware import ENGINE_CONFIG, HardwareTier
-
-                    if ENGINE_CONFIG.tier == HardwareTier.HIGH_VRAM:
-                        await _check_status()
-                        logger.info(
-                            f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...'
-                        )
-                        chunk_wav_paths = await _quality_check_and_resynthesize(
-                            chunk_wav_paths,
-                            all_chunks,
-                            job_id,
-                            engine,
-                            loop,
-                            executor,
-                            generation_kwargs,
-                        )
+                    # Step 3b: Quality check and re-synthesis
+                    await _check_status()
+                    logger.info(
+                        f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...'
+                    )
+                    chunk_wav_paths = await _quality_check_and_resynthesize(
+                        chunk_wav_paths,
+                        all_chunks,
+                        job_id,
+                        engine,
+                        loop,
+                        executor,
+                        generation_kwargs,
+                    )
 
                     # Step 4: Normalize chunks to -23 LUFS (skip very short chunks —
                     # single-pass loudnorm is inaccurate under ~10s, and final mastering

@@ -396,3 +396,18 @@ async def test_run_tts_job_exceeds_max_duration(mock_job_store, mock_tts_engine)
         # GPU semaphore must be released — the next job can acquire it immediately
         sem = get_gpu_semaphore()
         assert sem._value == 1  # semaphore is available
+
+
+def test_quality_check_not_gated_on_high_vram():
+    """Verify quality_check_and_resynthesize is called unconditionally."""
+    import pathlib
+
+    src = pathlib.Path('app/domains/job/tts_job.py').read_text(encoding='utf-8')
+    lines = src.split('\n')
+    for i, line in enumerate(lines):
+        if 'await _quality_check_and_resynthesize' in line:
+            preceding = '\n'.join(lines[max(0, i - 10) : i])
+            assert 'HIGH_VRAM' not in preceding, (
+                'quality_check is still gated on HIGH_VRAM - remove the hardware tier guard'
+            )
+            break
