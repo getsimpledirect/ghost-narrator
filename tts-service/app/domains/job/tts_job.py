@@ -32,6 +32,7 @@ and notifications.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import shutil
@@ -453,9 +454,13 @@ async def run_tts_job(
                     # Step 4: Concatenate WAVs with dynamic gaps into raw WAV
                     await _check_status()
                     try:
+                        _concat_fn = functools.partial(
+                            concatenate_wavs_auto,
+                            explicit_pause_durations=chunk_pause_durations,
+                        )
                         await loop.run_in_executor(
                             executor,
-                            concatenate_wavs_auto,
+                            _concat_fn,
                             normalized_wav_paths,
                             raw_wav,
                             all_chunks,  # Pass chunk texts for dynamic pause detection

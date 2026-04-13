@@ -122,6 +122,7 @@ def concatenate_audio(
     chunk_texts: Optional[List[str]] = None,
     bitrate: str = DEFAULT_BITRATE,
     pause_ms: int = 450,
+    explicit_pause_durations: Optional[List[int]] = None,
 ) -> str:
     """
     Join all chunk WAVs into a single file with context-aware pauses.
@@ -132,6 +133,8 @@ def concatenate_audio(
         chunk_texts: Original text of each chunk (for dynamic pause detection).
         bitrate: Output MP3 bitrate.
         pause_ms: Default pause duration in milliseconds.
+        explicit_pause_durations: Per-boundary pause durations (ms) from LLM;
+            overrides heuristic when non-zero.
 
     Returns:
         The path to the created file.
@@ -158,7 +161,15 @@ def concatenate_audio(
             if i == 0:
                 combined = segment
             else:
-                if chunk_texts and i - 1 < len(chunk_texts):
+                # Pause selection: explicit → heuristic → default
+                explicit = (
+                    explicit_pause_durations[i - 1]
+                    if explicit_pause_durations and i - 1 < len(explicit_pause_durations)
+                    else 0
+                )
+                if explicit > 0:
+                    pause = explicit
+                elif chunk_texts and i - 1 < len(chunk_texts):
                     next_text = chunk_texts[i] if i < len(chunk_texts) else None
                     pause = _get_pause(chunk_texts[i - 1], next_text)
                 else:
@@ -195,6 +206,7 @@ def concatenate_audio_streaming(
     chunk_texts: Optional[List[str]] = None,
     bitrate: str = DEFAULT_BITRATE,
     threshold_ms: int = STREAMING_THRESHOLD,
+    explicit_pause_durations: Optional[List[int]] = None,
 ) -> str:
     """
     Join all chunk WAVs into a single file with streaming to reduce memory.
@@ -205,6 +217,8 @@ def concatenate_audio_streaming(
         chunk_texts: Original text of each chunk (for dynamic pause detection).
         bitrate: Output MP3 bitrate.
         threshold_ms: Memory threshold in milliseconds before flushing to disk.
+        explicit_pause_durations: Per-boundary pause durations (ms) from LLM;
+            overrides heuristic when non-zero.
 
     Returns:
         The path to the created file.
@@ -226,7 +240,15 @@ def concatenate_audio_streaming(
         combined = _trim_silence(AudioSegment.from_wav(wav_paths[0]))
 
         for i, wav_path in enumerate(wav_paths[1:], start=1):
-            if chunk_texts and i - 1 < len(chunk_texts):
+            # Pause selection: explicit → heuristic → default
+            explicit = (
+                explicit_pause_durations[i - 1]
+                if explicit_pause_durations and i - 1 < len(explicit_pause_durations)
+                else 0
+            )
+            if explicit > 0:
+                pause = explicit
+            elif chunk_texts and i - 1 < len(chunk_texts):
                 next_text = chunk_texts[i] if i < len(chunk_texts) else None
                 pause = _get_pause(chunk_texts[i - 1], next_text)
             else:
@@ -274,6 +296,7 @@ def concatenate_audio_auto(
     chunk_texts: Optional[List[str]] = None,
     bitrate: str = DEFAULT_BITRATE,
     streaming_threshold_chunks: int = 10,
+    explicit_pause_durations: Optional[List[int]] = None,
 ) -> str:
     """
     Automatically choose the best concatenation strategy based on input size.
@@ -284,6 +307,8 @@ def concatenate_audio_auto(
         chunk_texts: Original text of each chunk.
         bitrate: Output MP3 bitrate.
         streaming_threshold_chunks: Number of chunks above which to use streaming.
+        explicit_pause_durations: Per-boundary pause durations (ms) from LLM;
+            overrides heuristic when non-zero.
 
     Returns:
         The path to the created file.
@@ -301,7 +326,14 @@ def concatenate_audio_auto(
             output_path,
             chunk_texts,
             bitrate,
+            explicit_pause_durations=explicit_pause_durations,
         )
     else:
         logger.debug(f'Using standard concatenation for {len(wav_paths)} chunks')
-        return concatenate_audio(wav_paths, output_path, chunk_texts, bitrate)
+        return concatenate_audio(
+            wav_paths,
+            output_path,
+            chunk_texts,
+            bitrate,
+            explicit_pause_durations=explicit_pause_durations,
+        )
