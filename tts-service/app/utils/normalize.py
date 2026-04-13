@@ -70,6 +70,15 @@ _ABBREVIATIONS: Final[dict[str, str]] = {
     'est.': 'established',
 }
 
+_SUFFIX_MAP: Final[dict[str, str]] = {
+    'B': 'billion',
+    'M': 'million',
+    'T': 'trillion',
+    'K': 'thousand',
+}
+
+_ABBREV_RE: Final = re.compile('(' + '|'.join(re.escape(k) for k in _ABBREVIATIONS) + r')(?=\s|$)')
+
 # Acronym registry: maps exact-match whole-word tokens to TTS-friendly forms.
 # Spelled-out acronyms use hyphens so TTS reads each letter individually.
 # Pronounceable acronyms (NASA, NATO) are left as-is — TTS handles them correctly.
@@ -161,8 +170,6 @@ def normalize_for_narration(text: str) -> str:
     text = html.unescape(text)
 
     # Expand dollar + SI suffix: $1.2B → 1.2 billion dollars
-    _SUFFIX_MAP = {'B': 'billion', 'M': 'million', 'T': 'trillion', 'K': 'thousand'}
-
     def _expand_dollar(m: re.Match) -> str:
         num = m.group(1)
         suffix = _SUFFIX_MAP[m.group(2).upper()]
@@ -179,8 +186,7 @@ def normalize_for_narration(text: str) -> str:
     text = _ISO_DATE_RE.sub(_expand_date, text)
 
     # Expand written abbreviations (word-boundary safe)
-    for abbr, expansion in _ABBREVIATIONS.items():
-        text = re.sub(re.escape(abbr) + r'(?=\s|$)', expansion, text)
+    text = _ABBREV_RE.sub(lambda m: _ABBREVIATIONS[m.group(1)], text)
 
     # Expand tech/business acronyms to TTS-friendly forms
     text = _ACRONYM_RE.sub(lambda m: _ACRONYM_REGISTRY[m.group(1)], text)
