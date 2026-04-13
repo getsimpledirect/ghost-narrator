@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v2.6.1 (2026-04-13)
+
+### Bug Fixes
+
+- **code-quality**: Improve error handling, edge cases, and remove dead code
+  ([`61919c9`](https://github.com/getsimpledirect/ghost-narrator/commit/61919c9e2fcc653e71a51036e08bdf2aa4b28112))
+
+Error Handling: - Add proper logging to silent exception handlers in validator.py - Add exception
+  context logging in connection_pool.py - Add bounds check for LLM response.choices in strategy.py -
+  Fix bare except: clauses to use logger.debug
+
+Edge Cases: - Add guard for empty crossfade arrays in concatenate.py - Fix redundant .lower() call
+  in storage/__init__.py (already lowercased in config)
+
+Dead Code: - Clean up unreachable code in retry.py (comment improvement)
+
+Tests: - Update test_hardware.py for 320k MP3 bitrate and 48000 sample rate - Update
+  test_mastering.py to test for loudnorm instead of removed highpass/eq - Remove obsolete
+  normalize_chunk_to_target_lufs patches from tts_job tests
+
+
 ## v2.6.0 (2026-04-13)
 
 ### Features
