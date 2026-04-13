@@ -514,15 +514,18 @@ The TTS service implements a sophisticated multi-stage pipeline:
 
 **Stage 1: Text Preparation**
 - Cleans narration output (strips markdown, smart quotes, expands abbreviations)
-- Splits into chunks at sentence/clause boundaries (MAX_CHUNK_WORDS=200)
-- Preserves context and flow between chunks
+- Determines synthesis strategy based on content length:
+  - **≤ SINGLE_SHOT_MAX_WORDS (4000)**: Single-pass synthesis - entire text in one TTS call
+  - **> SINGLE_SHOT_MAX_WORDS**: Segment-based - splits into segments of SINGLE_SHOT_SEGMENT_WORDS (3000) words each
+- For chunk-based fallback: splits at sentence/clause boundaries (MAX_CHUNK_WORDS=200)
 
-**Stage 2: Parallel/Sequential Synthesis**
+**Stage 2: Synthesis**
+- **Single-Shot Mode** (≤4000 words): Entire text synthesized in one pass - no boundaries, consistent voice
+- **Segment Mode** (>4000 words): Each segment synthesized in single-shot mode, concatenated with equal-power crossfade (SINGLE_SHOT_OVERLAP_MS=500ms)
+- **Chunk-Based Fallback**: Original independent chunk synthesis for backward compatibility
 - **CPU Mode**: Parallel synthesis using ThreadPoolExecutor (MAX_WORKERS=4 default)
 - **GPU Mode**: Sequential synthesis (optimal for CUDA memory management)
 - **HIGH_VRAM**: bf16 precision, serial synthesis (GPU slot serialized by `get_gpu_semaphore()` + `_synthesis_lock`)
-- Each chunk synthesized independently using Qwen3-TTS
-- Voice reference pre-cached at startup (skips per-job load)
 
 **Stage 3: Quality Check (HIGH_VRAM)**
 - Checks each chunk for excessive silence, clipping, or low energy
@@ -1255,11 +1258,13 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 - Default URL: `http://ollama:11434/v1` (bundled Ollama on Docker network)
 - To use a different endpoint: set `LLM_BASE_URL` in `.env`
 
-**Audio quality is poor:**
+**Audio quality is poor (pitch/jumps/volume changes):**
+- Enable single-shot synthesis: set `SINGLE_SHOT_MAX_WORDS=4000` in `.env`
+- This synthesizes entire chapters in one pass, eliminating chunk boundaries
+- For very long content (>4000 words), it splits into segments with overlap crossfade
 - Check reference WAV format: `ffprobe tts-service/voices/default/reference.wav`
 - Expected: Audio: pcm_s16le, 22050 Hz, mono, s16, 352 kb/s
 - Ensure 45+ seconds of clear speech with no background noise
-- Reduce `MAX_CHUNK_WORDS` to 150 for better pronunciation
 
 **Storage upload fails:**
 - Verify `STORAGE_BACKEND` is set correctly in `.env`
@@ -1286,7 +1291,8 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 - Check `REDIS_URL` environment variable
 
 **Out of memory errors:**
-- Reduce `MAX_CHUNK_WORDS` from 200 to 150
+- Reduce `MAX_CHUNK_WORDS` from 200 to 150 (if not using single-shot mode)
+- Use single-shot synthesis: `SINGLE_SHOT_MAX_WORDS=4000` (handles memory more efficiently)
 - Reduce `MAX_WORKERS` if using many parallel workers
 - Streaming concatenation automatically activates for large files (>10 chunks)
 - Monitor memory usage: `docker stats tts-service`

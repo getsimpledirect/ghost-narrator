@@ -152,6 +152,9 @@ Publish an article. Ghost Narrator handles the rest.
 | `S3_BUCKET_NAME` | S3 bucket for audio | *(local if unset)* |
 | `MAX_WORKERS` | Parallel workers (CPU mode) | `4` |
 | `MAX_CHUNK_WORDS` | Words per TTS chunk | `200` |
+| `SINGLE_SHOT_MAX_WORDS` | Max words for single-pass synthesis | `4000` |
+| `SINGLE_SHOT_SEGMENT_WORDS` | Words per segment for long content | `3000` |
+| `SINGLE_SHOT_OVERLAP_MS` | Overlap crossfade between segments (ms) | `500` |
 | `GHOST_SITE2_URL` | Second Ghost site | *(single site)* |
 
 See [`.env.example`](.env.example) for the full list.

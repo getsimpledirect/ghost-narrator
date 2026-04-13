@@ -399,7 +399,8 @@ docker exec -it tts-service python -c "import torch; print('OK')"
 ### Out of memory errors
 
 If CPU crashes with OOM:
-- Reduce `MAX_CHUNK_WORDS` to 150
+- Use single-shot synthesis: `SINGLE_SHOT_MAX_WORDS=4000` (more memory efficient)
+- Reduce `MAX_CHUNK_WORDS` to 150 (if not using single-shot mode)
 - Increase system swap space
 - Use GPU mode if available
 
@@ -409,6 +410,7 @@ If CPU crashes with OOM:
 - Set `VOICE_SAMPLE_REF_TEXT` to the transcription of your reference audio — enables ICL mode (significantly better voice cloning than x-vector-only)
 - Use `HARDWARE_TIER=high_vram` if your GPU supports it — bf16 precision, larger LLM, quality re-synthesis
 - Ensure language matches reference voice
+- **Enable single-shot synthesis** for studio-quality seamless audio: `SINGLE_SHOT_MAX_WORDS=4000`
 
 ### Jobs lost after restart
 
