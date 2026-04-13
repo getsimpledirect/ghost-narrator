@@ -90,16 +90,18 @@ AUDIO_SAMPLE_RATE: Final[int] = int(os.environ.get('AUDIO_SAMPLE_RATE', str(_ec.
 TARGET_LUFS: Final[float] = float(os.environ.get('TARGET_LUFS', str(_ec.target_lufs)))
 
 # TTS chunk words (from ENGINE_CONFIG)
+# Increased from 200 to 400 - larger chunks provide more context for the LLM
+# which improves entity preservation and reduces validation failures
 try:
     MAX_CHUNK_WORDS: Final[int] = max(
         10,
         min(
-            int(os.environ.get('MAX_CHUNK_WORDS', str(_ec.tts_chunk_words))),
+            int(os.environ.get('MAX_CHUNK_WORDS', str(_ec.tts_chunk_words or 400))),
             1000,
         ),
     )
 except ValueError:
-    MAX_CHUNK_WORDS: Final[int] = _ec.tts_chunk_words
+    MAX_CHUNK_WORDS: Final[int] = 400  # Default to 400
 
 # Webhook settings
 N8N_CALLBACK_URL: Final[str] = os.environ.get('N8N_CALLBACK_URL', '')

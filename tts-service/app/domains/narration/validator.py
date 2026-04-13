@@ -92,6 +92,14 @@ class NarrationValidator:
     # catching genuine content loss.
     MIN_WORD_RATIO = 0.20
 
+    # Warning threshold - log when ratio is below this but above MIN_WORD_RATIO
+    # This provides visibility into potential content issues without blocking.
+    WARNING_WORD_RATIO = 0.30
+
+    # Critical threshold - hard fail below this (no retries)
+    # Anything below this likely means major content was lost.
+    CRITICAL_WORD_RATIO = 0.15
+
     # Entity validation is now SECONDARY and non-blocking.
     # It serves as a warning/logging mechanism, not a pass/fail criteria.
     # This prevents the all-or-nothing failure mode while still providing
@@ -267,13 +275,20 @@ class NarrationValidator:
         source_words = len(source.split())
         narration_words = len(narration_for_check.split())
         ratio = narration_words / max(source_words, 1)
+
+        # Three-tier threshold system:
+        # - >= 20%: Pass
+        # - 15-19%: Fail (retry allowed)
+        # - < 15%: Critical fail (no retries - likely data loss)
         ratio_fail = ratio < self.MIN_WORD_RATIO
+        ratio_critical = ratio < self.CRITICAL_WORD_RATIO
 
         if ratio_fail:
+            severity = 'CRITICAL' if ratio_critical else 'WARNING'
             missing.append(
-                f'[WORD COUNT RATIO: {ratio:.0%} — narration is only '
+                f'[WORD COUNT RATIO: {severity} {ratio:.0%} — narration is only '
                 f'{narration_words} words vs {source_words} source words. '
-                f'Likely significant content was dropped.]'
+                f'{"Major content loss - do not retry" if ratio_critical else "Consider retrying"}]'
             )
 
         # Only word ratio determines pass/fail - entities are for logging only
