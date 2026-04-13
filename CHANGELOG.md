@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.5.1 (2026-04-13)
+
+### Bug Fixes
+
+- **tts-service**: Compile underlying PyTorch module instead of wrapper class
+  ([`3406d21`](https://github.com/getsimpledirect/ghost-narrator/commit/3406d21733b1a30ece39394646a31d655539e65c))
+
+Fixes a non-fatal warning where torch.compile() failed because it was attempting to compile the
+  Qwen3TTSModel wrapper class instead of the underlying PyTorch nn.Module. This ensures the 2-4x
+  inference speedup is actually applied on CUDA hardware.
+
+
 ## v2.5.0 (2026-04-13)
 
 ### Bug Fixes
