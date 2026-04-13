@@ -109,6 +109,12 @@ def _crossfade_append(
         combined += segment
         return combined
 
+    # Ensure segment matches combined's frame rate and channels
+    if segment.channels != combined.channels:
+        segment = segment.set_channels(combined.channels)
+    if segment.frame_rate != combined.frame_rate:
+        segment = segment.set_frame_rate(combined.frame_rate)
+
     # Extract the crossfade regions as float32 numpy arrays
     tail = np.array(combined[-n:].get_array_of_samples(), dtype=np.float32)
     head = np.array(segment[:n].get_array_of_samples(), dtype=np.float32)
