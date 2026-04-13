@@ -1,6 +1,9 @@
 # CHANGELOG
 
 
+## v2.5.0 (2026-04-13)
+
+
 ## v2.4.5 (2026-04-13)
 
 ### Bug Fixes
@@ -27,6 +30,20 @@ Two fixes applied:
 3. On Ollama endpoints, _call_llm now passes extra_body={'think': False} to prevent Qwen3 from
   generating thinking tokens entirely, eliminating the generation overhead rather than just
   discarding the output.
+
+### Features
+
+- Modify ghost-narrator storage to accept custom storage_path parameter
+  ([`a8f06a8`](https://github.com/getsimpledirect/ghost-narrator/commit/a8f06a80d2fcb5c412ca8dba5be9037c946e8d96))
+
+Update all storage backends (GCS, Local, S3) to accept and use an optional storage_path parameter in
+  the upload method, allowing clients to specify exact storage paths for audio files.
+
+Changes: 1. StorageBackend base class: added optional storage_path parameter to upload method 2.
+  GCSStorageBackend: uses provided storage_path when available, ensures .mp3 extension 3.
+  LocalStorageBackend: uses provided storage_path for local file destination 4. S3StorageBackend:
+  uses provided storage_path as S3 object key 5. TTS job runner: passes gcs_object_path from API
+  request to storage backend
 
 
 ## v2.4.4 (2026-04-12)
