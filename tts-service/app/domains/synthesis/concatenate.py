@@ -119,6 +119,16 @@ def _crossfade_append(
     tail = np.array(combined[-n:].get_array_of_samples(), dtype=np.float32)
     head = np.array(segment[:n].get_array_of_samples(), dtype=np.float32)
 
+    # Defensive: ensure both arrays have the same length (truncate to min)
+    min_len = min(len(tail), len(head))
+    if len(tail) != len(head):
+        logger.warning(
+            f'Mismatched crossfade array lengths: tail={len(tail)}, head={len(head)}. '
+            f'Truncating to {min_len}. combined_sr={combined.frame_rate}, segment_sr={segment.frame_rate}'
+        )
+        tail = tail[:min_len]
+        head = head[:min_len]
+
     # Stereo: arrays are interleaved [L, R, L, R, ...] — preserve shape
     if combined.channels == 2:
         fade_len = len(tail) // 2
