@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v2.5.2 (2026-04-13)
+
+### Bug Fixes
+
+- **audio**: Ensure segment matches combined channels and frame rate before crossfade
+  ([#73](https://github.com/getsimpledirect/ghost-narrator/pull/73),
+  [`5fd3db2`](https://github.com/getsimpledirect/ghost-narrator/commit/5fd3db2d1b1f501d752dffbf2e797ee9a185927e))
+
+
 ## v2.5.1 (2026-04-13)
 
 ### Bug Fixes
