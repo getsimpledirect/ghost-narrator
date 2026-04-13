@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 # Default maximum words per chunk (40-60 words = 8-12 second audio segments)
 DEFAULT_MAX_CHUNK_WORDS: Final[int] = 200
 
+# Pause durations injected by LLM markers during narration
+PAUSE_MS: Final[int] = 450  # [PAUSE]       — sentence/minor topic boundary
+LONG_PAUSE_MS: Final[int] = 750  # [LONG_PAUSE]  — paragraph/major topic boundary
+
+_PAUSE_MARKER_RE: Final[re.Pattern[str]] = re.compile(r'\[(LONG_PAUSE|PAUSE)\]', re.IGNORECASE)
+
 # ─── TTS Text Preprocessing ───────────────────────────────────────────────────
 
 # Common abbreviations that trip up TTS models when not expanded
@@ -116,6 +122,10 @@ def clean_text_for_tts(text: str) -> str:
     # survive the markdown pass and get synthesized as garbled speech
     text = _THINK_RE.sub('', text)
 
+    # Strip [PAUSE]/[LONG_PAUSE] markers — these are assembly directives extracted
+    # by parse_pause_markers(); TTS must never receive them as text to speak.
+    text = _PAUSE_MARKER_RE.sub('', text)
+
     # Replace smart quotes and special characters
     for char, replacement in _SPECIAL_CHARS.items():
         text = text.replace(char, replacement)
@@ -144,6 +154,44 @@ def clean_text_for_tts(text: str) -> str:
     text = text.strip()
 
     return text
+
+
+def parse_pause_markers(text: str) -> list[tuple[str, int]]:
+    """Split text at [PAUSE]/[LONG_PAUSE] markers into (segment, pause_after_ms) pairs.
+
+    Each tuple is (text_to_synthesize, ms_of_silence_to_insert_after).
+    The last segment always has pause_after_ms=0 (no trailing silence).
+
+    Example:
+        'Hello. [PAUSE] World. [LONG_PAUSE] Goodbye.'
+        → [('Hello.', 450), ('World.', 750), ('Goodbye.', 0)]
+
+    Args:
+        text: Narration text that may contain [PAUSE] or [LONG_PAUSE] markers.
+
+    Returns:
+        List of (text_segment, pause_ms) pairs. At least one element.
+    """
+    parts = _PAUSE_MARKER_RE.split(text)
+    # split returns: [text, marker_name, text, marker_name, text, ...]
+    # e.g. 'A [PAUSE] B [LONG_PAUSE] C' → ['A ', 'PAUSE', ' B ', 'LONG_PAUSE', ' C']
+    segments: list[tuple[str, int]] = []
+    i = 0
+    while i < len(parts):
+        segment_text = parts[i].strip()
+        # Next element (if exists) is the captured group — the marker name
+        if i + 1 < len(parts):
+            marker_name = parts[i + 1].upper()
+            pause_ms = LONG_PAUSE_MS if marker_name == 'LONG_PAUSE' else PAUSE_MS
+            if segment_text:
+                segments.append((segment_text, pause_ms))
+            i += 2
+        else:
+            if segment_text:
+                segments.append((segment_text, 0))
+            i += 1
+
+    return segments if segments else [(text.strip() or text, 0)]
 
 
 # Transition words that suggest a new topic/paragraph boundary.
