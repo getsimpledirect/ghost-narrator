@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.6.2 (2026-04-13)
+
+### Bug Fixes
+
+- **narration**: Relax validation to prevent retry loops
+  ([`ebfdd39`](https://github.com/getsimpledirect/ghost-narrator/commit/ebfdd39009d56a57e8486a04e6847f51cf1d3026))
+
+- Lower MIN_WORD_RATIO from 0.55 to 0.20 (allow natural compression) - Add MAX_ENTITY_MISSING_RATE =
+  0.30 (allow up to 30% missing entities) - Simplify retry prompt to top 5 critical items only -
+  Previous strict all-or-nothing validation caused validation loops
+
+
 ## v2.6.1 (2026-04-13)
 
 ### Bug Fixes
