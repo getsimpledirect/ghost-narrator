@@ -236,14 +236,14 @@ def concatenate_audio_with_overlap(
 
         if combined.channels == 2:
             faded_audio = AudioSegment(
-                faded.reshape(-1, 2),
+                faded.reshape(-1, 2).tobytes(),
                 frame_rate=combined.frame_rate,
                 sample_width=2,
                 channels=2,
             )
         else:
             faded_audio = AudioSegment(
-                faded,
+                faded.tobytes(),
                 frame_rate=combined.frame_rate,
                 sample_width=2,
                 channels=1,
