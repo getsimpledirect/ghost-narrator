@@ -237,3 +237,112 @@ async def test_single_shot_falls_back_to_chunked_when_over_threshold():
     await strategy.narrate(source)
     # Chunked fallback -> multiple calls
     assert client.chat.completions.create.call_count > 1
+
+
+@pytest.mark.asyncio
+async def test_chunked_strategy_no_extra_llm_call_for_section_map():
+    """ChunkedStrategy must NOT make an extra LLM call for an article brief.
+
+    Section context comes from HTML header extraction - zero extra LLM calls.
+    Two chunks -> exactly 2 LLM calls total.
+    """
+    responses = [
+        'First chunk narrated output with enough words to pass validation check.',
+        'Second chunk narrated output with enough words to pass validation.',
+    ]
+    client = AsyncMock()
+    choices = [MagicMock() for _ in responses]
+    for choice, resp in zip(choices, responses):
+        choice.message.content = resp
+    client.chat.completions.create.side_effect = [MagicMock(choices=[c]) for c in choices]
+    strategy = ChunkedStrategy(
+        llm_client=client,
+        chunk_words=5,
+        tier=HardwareTier.CPU_ONLY,
+    )
+    source = 'alfa bravo charlie delta echo\n\nfoxtrot golf hotel india juliet'
+    await strategy.narrate(source)
+    # No brief call - exactly 1 LLM call per chunk
+    assert client.chat.completions.create.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_chunk_position_in_user_content():
+    """Each chunk's user message must contain a [SECTION X of Y] position marker."""
+    responses = [
+        'First chunk narrated output with enough words to pass validation check.',
+        'Second chunk narrated output with enough words to pass validation.',
+    ]
+    client = AsyncMock()
+    choices = [MagicMock() for _ in responses]
+    for choice, resp in zip(choices, responses):
+        choice.message.content = resp
+    client.chat.completions.create.side_effect = [MagicMock(choices=[c]) for c in choices]
+    strategy = ChunkedStrategy(
+        llm_client=client,
+        chunk_words=5,
+        tier=HardwareTier.CPU_ONLY,
+    )
+    source = 'alfa bravo charlie delta echo\n\nfoxtrot golf hotel india juliet'
+    await strategy.narrate(source)
+    # First call (chunk 0) has [SECTION 1 of 2]
+    first_call_messages = client.chat.completions.create.call_args_list[0][1]['messages']
+    user_content = next(m['content'] for m in first_call_messages if m['role'] == 'user')
+    assert '[SECTION 1 of 2]' in user_content
+
+
+@pytest.mark.asyncio
+async def test_section_map_from_html_appears_in_system_prompt():
+    """When HTML headers are present, their text must appear in the system prompt."""
+    responses = [
+        'Narrated output with enough words to pass validation check.',
+    ]
+    client = AsyncMock()
+    choices = [MagicMock() for _ in responses]
+    for choice, resp in zip(choices, responses):
+        choice.message.content = resp
+    client.chat.completions.create.side_effect = [MagicMock(choices=[c]) for c in choices]
+    strategy = ChunkedStrategy(
+        llm_client=client,
+        chunk_words=200,
+        tier=HardwareTier.CPU_ONLY,
+    )
+    # HTML with H2 headers - extract_section_map should find 'Introduction' and 'Conclusion'
+    source = '<h2>Introduction</h2><p>alfa bravo charlie delta echo foxtrot</p><h2>Conclusion</h2><p>golf hotel india juliet kilo lima</p>'
+    await strategy.narrate(source)
+    first_call_messages = client.chat.completions.create.call_args_list[0][1]['messages']
+    system_content = next(m['content'] for m in first_call_messages if m['role'] == 'system')
+    assert 'Introduction' in system_content
+    assert 'Conclusion' in system_content
+
+
+def test_system_prompt_includes_pause_marker_instruction():
+    """System prompt must instruct the LLM to use [PAUSE] and [LONG_PAUSE] markers."""
+    from app.domains.narration.prompt import get_system_prompt
+    from app.core.hardware import HardwareTier
+
+    for tier in HardwareTier:
+        prompt = get_system_prompt(tier)
+        assert '[PAUSE]' in prompt, f'[PAUSE] instruction missing for {tier}'
+        assert '[LONG_PAUSE]' in prompt, f'[LONG_PAUSE] instruction missing for {tier}'
+
+
+def test_system_prompt_includes_active_voice_instruction():
+    """System prompt must instruct active voice and no hedging."""
+    from app.domains.narration.prompt import get_system_prompt
+    from app.core.hardware import HardwareTier
+
+    prompt = get_system_prompt(HardwareTier.MID_VRAM)
+    assert 'active voice' in prompt.lower()
+    assert 'hedge' in prompt.lower() or 'it seems' in prompt.lower()
+
+
+def test_system_prompt_with_section_map():
+    """get_system_prompt must embed section map text when provided."""
+    from app.domains.narration.prompt import get_system_prompt
+    from app.core.hardware import HardwareTier
+
+    prompt = get_system_prompt(HardwareTier.CPU_ONLY, section_map='Intro, Deep Dive, Conclusion')
+    assert 'Intro' in prompt
+    assert 'Deep Dive' in prompt
+    assert 'Conclusion' in prompt
