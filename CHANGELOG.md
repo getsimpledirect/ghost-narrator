@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v2.7.1 (2026-04-13)
+
+### Bug Fixes
+
+- **narration**: Balance validation thresholds to 60% compression max
+  ([`8a18033`](https://github.com/getsimpledirect/ghost-narrator/commit/8a18033209aeafc965d27c64979312f6a33a6f20))
+
+- MIN_WORD_RATIO: 0.20 → 0.40 (60% max compression, 40% preserved) - WARNING_WORD_RATIO: 0.30 → 0.50
+  (50% triggers warning, not retry) - CRITICAL_WORD_RATIO: 0.15 → 0.25 (skip only extreme cases)
+
+
 ## v2.7.0 (2026-04-13)
 
 ### Features
