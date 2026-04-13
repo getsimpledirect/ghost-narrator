@@ -103,6 +103,9 @@ Create a `.env` file:
 VOICE_SAMPLE_PATH=./voices/default/reference.wav
 TTS_LANGUAGE=en
 MAX_CHUNK_WORDS=200
+SINGLE_SHOT_MAX_WORDS=4000
+SINGLE_SHOT_SEGMENT_WORDS=3000
+SINGLE_SHOT_OVERLAP_MS=500
 DEVICE=cpu
 STORAGE_BACKEND=local
 N8N_CALLBACK_URL=http://localhost:5678/webhook/tts-callback
@@ -248,6 +251,9 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | `VOICE_SAMPLE_REF_TEXT` | *(empty)* | Transcription of the reference audio. When set, uses ICL mode (higher-quality cloning). When empty, uses x-vector-only mode (no transcription needed — default). |
 | `TTS_LANGUAGE` | `en` | BCP-47 language code |
 | `MAX_CHUNK_WORDS` | `200` | Max words per synthesis chunk |
+| `SINGLE_SHOT_MAX_WORDS` | `4000` | Max words to synthesize in single pass |
+| `SINGLE_SHOT_SEGMENT_WORDS` | `3000` | Words per segment for long content |
+| `SINGLE_SHOT_OVERLAP_MS` | `500` | Overlap crossfade in milliseconds |
 | `DEVICE` | `cpu` | PyTorch device: `cpu` or `cuda` |
 | `MAX_WORKERS` | `4` | Thread pool size for parallel synthesis (CPU mode) |
 | `HARDWARE_TIER` | `auto` | Hardware tier: auto/cpu/low/mid/high |
