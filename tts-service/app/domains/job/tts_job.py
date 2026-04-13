@@ -362,7 +362,9 @@ async def run_tts_job(
                                     logger.warning(
                                         f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
                                     )
-                                    narrated_text = text
+                                    from app.utils.normalize import normalize_for_narration
+
+                                    narrated_text = normalize_for_narration(text)
                                     narration_skipped = True
                                 all_chunks, total_words, chunk_pause_durations = (
                                     prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
@@ -376,8 +378,11 @@ async def run_tts_job(
                                 )
                         else:
                             # No narration available — synthesize raw text directly
+                            from app.utils.normalize import normalize_for_narration
+
+                            normalized_text = normalize_for_narration(text)
                             all_chunks, total_words, chunk_pause_durations = (
-                                prepare_text_for_synthesis(text, MAX_CHUNK_WORDS)
+                                prepare_text_for_synthesis(normalized_text, MAX_CHUNK_WORDS)
                             )
                             chunk_wav_paths = await synthesize_chunks_auto(
                                 chunks=all_chunks,
