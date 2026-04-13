@@ -86,7 +86,7 @@ def retry_with_backoff(
 
                     await asyncio.sleep(delay)
 
-            # This should never be reached, but just in case
+            # If we reach here, all attempts failed - raise the last exception
             if last_exception:
                 raise last_exception
 

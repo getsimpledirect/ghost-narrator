@@ -33,6 +33,7 @@ from typing import AsyncIterator
 
 from app.core.hardware import HardwareTier
 from app.core.retry import retry_with_backoff
+from app.core.exceptions import NarrationError
 from app.config import LLM_TIMEOUT, LLM_COMPLETENESS_TIMEOUT, LLM_BASE_URL
 from app.domains.narration.prompt import (
     get_system_prompt,
@@ -174,6 +175,8 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
         timeout=timeout,
         **kwargs,
     )
+    if not response.choices:
+        raise NarrationError('LLM returned empty response with no choices')
     return _strip_llm_artifacts(response.choices[0].message.content)
 
 

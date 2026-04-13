@@ -55,8 +55,8 @@ class TestMasteringFunctions:
         assert callable(normalize_audio)
 
 
-def test_master_audio_filter_chain_includes_highpass_and_deesser():
-    """master_audio must apply highpass=f=80 and equalizer de-esser in filter chain."""
+def test_master_audio_filter_chain_includes_limiter():
+    """master_audio must apply loudness normalization with limiter for natural sound."""
     import subprocess
     from unittest.mock import patch, MagicMock
 
@@ -78,7 +78,6 @@ def test_master_audio_filter_chain_includes_highpass_and_deesser():
     af_commands = [' '.join(cmd) for cmd in captured_commands if '-af' in cmd]
     assert af_commands, 'No -af filter chain found in subprocess calls'
 
-    # Both passes should include high-pass and de-esser
+    # Filter chain should include loudness normalization (no highpass/eq - preserve natural tone)
     for af_cmd in af_commands:
-        assert 'highpass=f=80' in af_cmd, f'highpass filter missing from: {af_cmd}'
-        assert 'equalizer=f=6500' in af_cmd, f'de-esser equalizer missing from: {af_cmd}'
+        assert 'loudnorm' in af_cmd, f'loudnorm filter missing from: {af_cmd}'

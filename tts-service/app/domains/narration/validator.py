@@ -24,8 +24,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 # Pause markers inserted by the LLM for audio assembly — strip before entity check
 # so they don't inflate or deflate word count ratios or interfere with matching.
@@ -113,7 +116,8 @@ class NarrationValidator:
             try:
                 w = _nw.num2words(n).replace(',', '')
                 return [w, w.replace('-', ' ')]
-            except Exception:
+            except Exception as e:
+                logger.warning(f'num2words conversion failed for {n}: {e}')
                 return []
 
         def _year_forms(n: int) -> list[str]:
@@ -121,8 +125,8 @@ class NarrationValidator:
             try:
                 w = _nw.num2words(n).replace(',', '')
                 ys.extend([w, w.replace('-', ' ')])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f'num2words conversion failed for year {n}: {e}')
             if 2000 <= n <= 2099:
                 suffix = n % 100
                 try:
@@ -133,8 +137,8 @@ class NarrationValidator:
                         ys.extend(
                             [f'twenty {sw}', f'twenty-{sw}', f'twenty {sw.replace("-", " ")}']
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f'num2words conversion failed for year suffix {suffix}: {e}')
             return ys
 
         # Percentage: "3.2%" → "three point two percent"

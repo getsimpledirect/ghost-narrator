@@ -133,6 +133,11 @@ def _crossfade_append(
         tail = tail[:min_len]
         head = head[:min_len]
 
+    # Guard against empty arrays after trimming
+    if len(tail) == 0:
+        logger.warning('Tail segment empty after trimming, skipping crossfade')
+        return combined + segment
+
     # Stereo: arrays are interleaved [L, R, L, R, ...] — preserve shape
     if combined.channels == 2:
         fade_len = len(tail) // 2

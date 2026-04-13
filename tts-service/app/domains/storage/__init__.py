@@ -58,7 +58,7 @@ def upload_to_gcs(local_path: str, gcs_object_path: str, content_type: str = 'au
 
 def is_gcs_enabled() -> bool:
     """Backward compatibility - check if GCS backend is selected."""
-    return STORAGE_BACKEND.lower() == 'gcs'
+    return STORAGE_BACKEND == 'gcs'
 
 
 def build_storage_path(prefix: str, site_slug: str, job_id: str, extension: str = 'mp3') -> str:

@@ -109,7 +109,7 @@ def test_high_vram_when_24gb():
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-1.7B-Base'
     assert config.llm_model == 'qwen3:8b'
     assert config.synthesis_workers == 1
-    assert config.mp3_bitrate == '256k'
+    assert config.mp3_bitrate == '320k'
     assert config.sample_rate == 48000
     assert config.target_lufs == -14.0
 

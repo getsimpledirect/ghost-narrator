@@ -119,10 +119,6 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto') as mock_concat,
-        patch(
-            'app.domains.job.tts_job.normalize_chunk_to_target_lufs',
-            side_effect=lambda p, _, **kw: p,
-        ),
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
         patch(
@@ -232,10 +228,6 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto'),
-        patch(
-            'app.domains.job.tts_job.normalize_chunk_to_target_lufs',
-            side_effect=lambda p, _, **kw: p,
-        ),
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
         patch('app.domains.job.tts_job.get_storage_backend', return_value=failing_backend),
@@ -310,10 +302,6 @@ async def test_run_tts_job_transitions_through_queued_status(
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto'),
-        patch(
-            'app.domains.job.tts_job.normalize_chunk_to_target_lufs',
-            side_effect=lambda p, _, **kw: p,
-        ),
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
         patch(

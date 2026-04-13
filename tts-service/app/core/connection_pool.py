@@ -131,13 +131,14 @@ class ConnectionPool:
                         await self._close_connection(conn)
                         async with self._lock:
                             self._created -= 1
-        except Exception:
+        except Exception as e:
             # Connection failed - remove from pool
+            logger.error(f'Connection execution failed: {e}')
             if conn is not None:
                 try:
                     await self._close_connection(conn)
-                except Exception:
-                    pass
+                except Exception as close_e:
+                    logger.warning(f'Failed to close connection: {close_e}')
                 async with self._lock:
                     self._created -= 1
             raise
