@@ -50,11 +50,22 @@ class LocalStorageBackend(StorageBackend):
         self._server_ip = server_ip or config.get('server_ip', DEFAULT_SERVER_IP)
         self._port = port or config.get('port', 8020)
 
-    async def upload(self, local_path: Path, job_id: str, site_slug: str) -> str:
-        dest = self._output_dir / f'{job_id}.mp3'
+    async def upload(
+        self, local_path: Path, job_id: str, site_slug: str, storage_path: str = None
+    ) -> str:
+        # Use provided storage_path if available, otherwise use default
+        if storage_path:
+            # Remove leading/trailing slashes and ensure .mp3 extension
+            filename = storage_path.strip('/')
+            if not filename.endswith('.mp3'):
+                filename += '.mp3'
+            dest = self._output_dir / filename
+        else:
+            dest = self._output_dir / f'{job_id}.mp3'
+
         if local_path != dest:
             shutil.copy2(local_path, dest)
-        return f'local://{job_id}.mp3'
+        return f'local://{dest.name}'
 
     def make_public_url(self, audio_uri: str) -> str:
         job_id = audio_uri.removeprefix('local://').removesuffix('.mp3')

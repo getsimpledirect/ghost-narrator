@@ -29,8 +29,18 @@ from pathlib import Path
 
 class StorageBackend(ABC):
     @abstractmethod
-    async def upload(self, local_path: Path, job_id: str, site_slug: str) -> str:
-        """Upload audio file. Returns audio_uri string (e.g. 'local://', 'gs://', 's3://')."""
+    async def upload(
+        self, local_path: Path, job_id: str, site_slug: str, storage_path: str = None
+    ) -> str:
+        """Upload audio file. Returns audio_uri string (e.g. 'local://', 'gs://', 's3://').
+
+        Args:
+            local_path: Local path to the audio file to upload
+            job_id: Unique job identifier
+            site_slug: Site identifier for organization
+            storage_path: Optional full storage path to use (e.g., 'audio/static/books/lean-startup/chapter-1.mp3')
+                         If not provided, backend-specific default path will be used.
+        """
 
     @abstractmethod
     def make_public_url(self, audio_uri: str) -> str:

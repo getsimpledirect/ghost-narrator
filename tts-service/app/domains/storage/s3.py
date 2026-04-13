@@ -61,8 +61,18 @@ class S3StorageBackend(StorageBackend):
             )
         return self._client
 
-    async def upload(self, local_path: Path, job_id: str, site_slug: str) -> str:
-        key = f'{S3_AUDIO_PREFIX}/{site_slug}/{job_id}.mp3'
+    async def upload(
+        self, local_path: Path, job_id: str, site_slug: str, storage_path: str = None
+    ) -> str:
+        # Use provided storage_path if available, otherwise use default
+        if storage_path:
+            # Remove leading/trailing slashes and ensure .mp3 extension
+            key = storage_path.strip('/')
+            if not key.endswith('.mp3'):
+                key += '.mp3'
+        else:
+            key = f'{S3_AUDIO_PREFIX}/{site_slug}/{job_id}.mp3'
+
         uri = f's3://{self._bucket}/{key}'
         client = self._get_client()
         for attempt in range(1, MAX_RETRIES + 1):

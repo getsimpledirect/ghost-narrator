@@ -527,6 +527,7 @@ async def run_tts_job(
                     Path(final_mp3),
                     job_id,
                     site_slug,
+                    storage_path=gcs_object_path,
                 )
         except Exception as exc:
             logger.error(f'[{job_id}] Storage upload failed (non-fatal): {exc}')
