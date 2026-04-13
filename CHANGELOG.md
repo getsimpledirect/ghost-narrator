@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v2.4.5 (2026-04-13)
+
+### Bug Fixes
+
+- **narration**: Strip Qwen3 think tokens and remove chunk overlap duplication
+  ([`32b7dee`](https://github.com/getsimpledirect/ghost-narrator/commit/32b7dee20406cf104c901239673a49e20c4fff59))
+
+Qwen3 models emit <think>...</think> reasoning blocks before their actual response. These were
+  passing straight through _call_llm into the validator and TTS engine, producing garbled audio
+  noise and inflating synthesis time in proportion to thinking token length.
+
+Two fixes applied:
+
+1. _strip_llm_artifacts() strips <think>...</think> blocks, common LLM preamble lines ('Here is the
+  narration:'), and trailing meta-commentary from all LLM responses at the source.
+  clean_text_for_tts() applies a safety-net pass for any path that bypasses narration.
+
+2. _split_into_chunks() was called with overlap_paragraphs=1 (default), prepending the last
+  paragraph of chunk N into chunk N+1. The LLM narrated the full chunk text including the overlap,
+  so the overlapping paragraph was spoken twice in the final audio. Removed the overlap — the
+  existing continuity instruction (previous_output_tail / previous_source_tail) already handles
+  cross-chunk flow correctly.
+
+3. On Ollama endpoints, _call_llm now passes extra_body={'think': False} to prevent Qwen3 from
+  generating thinking tokens entirely, eliminating the generation overhead rather than just
+  discarding the output.
+
+
 ## v2.4.4 (2026-04-12)
 
 ### Bug Fixes
