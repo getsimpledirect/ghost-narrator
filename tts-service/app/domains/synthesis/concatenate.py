@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Final, List, Optional
@@ -167,6 +168,93 @@ def _crossfade_append(
     )
 
     return combined[:-n] + xfade_segment + segment[n:]
+
+
+def concatenate_audio_with_overlap(
+    wav_paths: list[str],
+    output_path: str,
+    overlap_ms: int = 500,
+    silence_threshold_db: int = -50,
+) -> str:
+    """
+    Concatenate audio files using overlap crossfade for seamless transitions.
+
+    This is used for joining single-shot segments. The overlap region is
+    crossfaded to eliminate any boundary artifacts.
+
+    Args:
+        wav_paths: List of WAV file paths to concatenate.
+        output_path: Path for the output WAV file.
+        overlap_ms: Overlap duration in milliseconds for crossfade.
+        silence_threshold_db: Silence detection threshold in dBFS.
+
+    Returns:
+        Path to the concatenated WAV file.
+
+    Raises:
+        AudioProcessingError: If concatenation fails.
+    """
+    if not wav_paths:
+        raise AudioProcessingError('No WAV files provided for concatenation')
+
+    if len(wav_paths) == 1:
+        shutil.copy2(wav_paths[0], output_path)
+        return output_path
+
+    segments = []
+    for path_str in wav_paths:
+        path = Path(path_str)
+        if not path.exists():
+            raise AudioProcessingError(f'WAV file not found: {path_str}')
+        if path.stat().st_size == 0:
+            raise AudioProcessingError(f'WAV file is empty: {path_str}')
+        seg = AudioSegment.from_wav(path_str)
+        seg = seg.set_frame_rate(48000).set_channels(2).set_sample_width(2)
+        segments.append(seg)
+
+    combined = segments[0]
+    for i, segment in enumerate(segments[1:], start=1):
+        if len(combined) * combined.frame_rate / 1000 < overlap_ms / 1000:
+            combined += segment
+            continue
+
+        combined_overlap = combined[-overlap_ms:]
+        segment_overlap = segment[:overlap_ms]
+
+        combined_tail = np.array(combined_overlap.get_array_of_samples(), dtype=np.float32)
+        segment_head = np.array(segment_overlap.get_array_of_samples(), dtype=np.float32)
+
+        min_len = min(len(combined_tail), len(segment_head))
+        combined_tail = combined_tail[:min_len]
+        segment_head = segment_head[:min_len]
+
+        fade_out = np.linspace(1.0, 0.0, min_len)
+        fade_in = np.linspace(0.0, 1.0, min_len)
+
+        faded = combined_tail * fade_out + segment_head * fade_in
+        faded = np.clip(faded, -32768, 32767).astype(np.int16)
+
+        if combined.channels == 2:
+            faded_audio = AudioSegment(
+                faded.reshape(-1, 2),
+                frame_rate=combined.frame_rate,
+                sample_width=2,
+                channels=2,
+            )
+        else:
+            faded_audio = AudioSegment(
+                faded,
+                frame_rate=combined.frame_rate,
+                sample_width=2,
+                channels=1,
+            )
+
+        pre_overlap = combined[:-overlap_ms]
+        post_overlap = segment[overlap_ms:]
+        combined = pre_overlap + faded_audio + post_overlap
+
+    combined.export(output_path, format='wav')
+    return output_path
 
 
 def _validate_wav_files(wav_paths: List[str]) -> None:
