@@ -1,6 +1,73 @@
 # CHANGELOG
 
 
+## v2.8.0 (2026-04-13)
+
+### Bug Fixes
+
+- **concatenate**: Use equal-power crossfade in concatenate_audio_with_overlap
+  ([`1f4e0a3`](https://github.com/getsimpledirect/ghost-narrator/commit/1f4e0a33b27b98cd5477aa62219e13f6e0186e07))
+
+- **tts**: Add edge case handling for empty narrated text
+  ([`830e0a7`](https://github.com/getsimpledirect/ghost-narrator/commit/830e0a774cdb39763d227e2ccc18461c77e9bad5))
+
+### Chores
+
+- Remove superpowers plans and specs from repo
+  ([`369427d`](https://github.com/getsimpledirect/ghost-narrator/commit/369427d5d3b19b635664c8012eba0be6dccc5024))
+
+- **docker**: Add single-shot env vars to docker scripts
+  ([`116190c`](https://github.com/getsimpledirect/ghost-narrator/commit/116190c6547145114b6da425e5af2f33ab89e0f9))
+
+- **text**: Increase DEFAULT_MAX_CHUNK_WORDS to 400 for single-shot fallback
+  ([`da3e36b`](https://github.com/getsimpledirect/ghost-narrator/commit/da3e36bc0cd5b9c396ab54ba128bf87bc294cae3))
+
+### Documentation
+
+- Add single-shot audio synthesis implementation plan
+  ([`1a196c2`](https://github.com/getsimpledirect/ghost-narrator/commit/1a196c2c5d22a366ee81e1d9c00e7f1500f237d9))
+
+- Add single-shot env vars to QUICKSTART
+  ([`b7588bd`](https://github.com/getsimpledirect/ghost-narrator/commit/b7588bdae26ed343e2aab5a60f42b4890d10ae1f))
+
+- Add single-shot environment variables to README
+  ([`9c769ea`](https://github.com/getsimpledirect/ghost-narrator/commit/9c769ead2436d969d1c057216135032ac8d1b097))
+
+- Update all docs with single-shot synthesis configuration
+  ([`0b2e781`](https://github.com/getsimpledirect/ghost-narrator/commit/0b2e78192b908a34bf5398d4522d24a9b9e0e634))
+
+- Update plan with all affected files
+  ([`5e245ab`](https://github.com/getsimpledirect/ghost-narrator/commit/5e245ab042ec081798547657fe68fb58f09a8f43))
+
+### Features
+
+- **concatenate**: Add overlap crossfade for single-shot segments
+  ([`76187f9`](https://github.com/getsimpledirect/ghost-narrator/commit/76187f9ee65d77bc0b97e668bc872be36d62290e))
+
+- **config**: Add single-shot synthesis settings
+  ([`8df0a0a`](https://github.com/getsimpledirect/ghost-narrator/commit/8df0a0a9df354d29ef6e4d8989b4837b325c04d0))
+
+- **synthesis**: Add single-shot synthesis function
+  ([`1441495`](https://github.com/getsimpledirect/ghost-narrator/commit/1441495c08f153aacff45dcd9b30a4e5fdf2ffcf))
+
+- **tts**: Integrate single-shot synthesis into job pipeline
+  ([`6d04126`](https://github.com/getsimpledirect/ghost-narrator/commit/6d04126e9eae0549c92bca5d6cca0b2225beb139))
+
+### Testing
+
+- **concatenate**: Add overlap crossfade tests
+  ([`a21b679`](https://github.com/getsimpledirect/ghost-narrator/commit/a21b679e29209faa10ba2cd97d4fc080c51b4be4))
+
+Also fix pydub AudioSegment creation in concatenate_audio_with_overlap to properly convert numpy
+  array to bytes before passing to constructor.
+
+- **job**: Fix run_tts_job tests with missing mocks for narration strategy
+  ([`5288cb4`](https://github.com/getsimpledirect/ghost-narrator/commit/5288cb46d9ba5edca0fa84de1afae2f8e07d648b))
+
+- **synthesis**: Add single-shot synthesis tests
+  ([`4b619be`](https://github.com/getsimpledirect/ghost-narrator/commit/4b619be987bb64b52fe4e18fff6a82fad2fa531f))
+
+
 ## v2.7.1 (2026-04-13)
 
 ### Bug Fixes
