@@ -27,6 +27,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+# Pause markers inserted by the LLM for audio assembly — strip before entity check
+# so they don't inflate or deflate word count ratios or interfere with matching.
+_PAUSE_MARKER_RE = re.compile(r'\[(?:LONG_PAUSE|PAUSE)\]', re.IGNORECASE)
+
 
 @dataclass
 class ValidationResult:
@@ -228,9 +232,13 @@ class NarrationValidator:
         if not source.strip():
             return ValidationResult(passed=True)
 
+        # Strip pause markers before entity and word-count checks — markers are
+        # assembly directives, not narration content.
+        narration_for_check = _PAUSE_MARKER_RE.sub('', narration)
+
         # Entity check — each entity is matched against all its acceptable spoken forms.
         entities = self._extract_entities(source)
-        narration_lower = narration.lower()
+        narration_lower = narration_for_check.lower()
         missing = [
             e
             for e in entities
@@ -239,7 +247,7 @@ class NarrationValidator:
 
         # Word count ratio check
         source_words = len(source.split())
-        narration_words = len(narration.split())
+        narration_words = len(narration_for_check.split())
         ratio = narration_words / max(source_words, 1)
 
         if ratio < self.MIN_WORD_RATIO:

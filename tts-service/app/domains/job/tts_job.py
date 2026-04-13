@@ -32,6 +32,7 @@ and notifications.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import shutil
@@ -264,6 +265,7 @@ async def run_tts_job(
 
                     chunk_wav_paths: list[str] = []
                     all_chunks: list[str] = []
+                    chunk_pause_durations: list[int] = []
                     total_words = 0
                     chunk_index = 0
                     narration_skipped = False
@@ -301,10 +303,11 @@ async def run_tts_job(
                                         if segment is None:
                                             break
                                         await _check_status()
-                                        tts_chunks, seg_words = prepare_text_for_synthesis(
-                                            segment, MAX_CHUNK_WORDS
+                                        tts_chunks, seg_words, seg_pauses = (
+                                            prepare_text_for_synthesis(segment, MAX_CHUNK_WORDS)
                                         )
                                         all_chunks.extend(tts_chunks)
+                                        chunk_pause_durations.extend(seg_pauses)
                                         total_words += seg_words
                                         paths = await synthesize_chunks_auto(
                                             chunks=tts_chunks,
@@ -359,10 +362,12 @@ async def run_tts_job(
                                     logger.warning(
                                         f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
                                     )
-                                    narrated_text = text
+                                    from app.utils.normalize import normalize_for_narration
+
+                                    narrated_text = normalize_for_narration(text)
                                     narration_skipped = True
-                                all_chunks, total_words = prepare_text_for_synthesis(
-                                    narrated_text, MAX_CHUNK_WORDS
+                                all_chunks, total_words, chunk_pause_durations = (
+                                    prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
                                 )
                                 chunk_wav_paths = await synthesize_chunks_auto(
                                     chunks=all_chunks,
@@ -373,8 +378,11 @@ async def run_tts_job(
                                 )
                         else:
                             # No narration available — synthesize raw text directly
-                            all_chunks, total_words = prepare_text_for_synthesis(
-                                text, MAX_CHUNK_WORDS
+                            from app.utils.normalize import normalize_for_narration
+
+                            normalized_text = normalize_for_narration(text)
+                            all_chunks, total_words, chunk_pause_durations = (
+                                prepare_text_for_synthesis(normalized_text, MAX_CHUNK_WORDS)
                             )
                             chunk_wav_paths = await synthesize_chunks_auto(
                                 chunks=all_chunks,
@@ -387,23 +395,20 @@ async def run_tts_job(
                     if not chunk_wav_paths:
                         raise RuntimeError('No audio chunks were synthesized')
 
-                    # Step 3b: Quality check and re-synthesis (HIGH_VRAM only)
-                    from app.core.hardware import ENGINE_CONFIG, HardwareTier
-
-                    if ENGINE_CONFIG.tier == HardwareTier.HIGH_VRAM:
-                        await _check_status()
-                        logger.info(
-                            f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...'
-                        )
-                        chunk_wav_paths = await _quality_check_and_resynthesize(
-                            chunk_wav_paths,
-                            all_chunks,
-                            job_id,
-                            engine,
-                            loop,
-                            executor,
-                            generation_kwargs,
-                        )
+                    # Step 3b: Quality check and re-synthesis
+                    await _check_status()
+                    logger.info(
+                        f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...'
+                    )
+                    chunk_wav_paths = await _quality_check_and_resynthesize(
+                        chunk_wav_paths,
+                        all_chunks,
+                        job_id,
+                        engine,
+                        loop,
+                        executor,
+                        generation_kwargs,
+                    )
 
                     # Step 4: Normalize chunks to -23 LUFS (skip very short chunks —
                     # single-pass loudnorm is inaccurate under ~10s, and final mastering
@@ -451,9 +456,13 @@ async def run_tts_job(
                     # Step 4: Concatenate WAVs with dynamic gaps into raw WAV
                     await _check_status()
                     try:
+                        _concat_fn = functools.partial(
+                            concatenate_wavs_auto,
+                            explicit_pause_durations=chunk_pause_durations,
+                        )
                         await loop.run_in_executor(
                             executor,
-                            concatenate_wavs_auto,
+                            _concat_fn,
                             normalized_wav_paths,
                             raw_wav,
                             all_chunks,  # Pass chunk texts for dynamic pause detection

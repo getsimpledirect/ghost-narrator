@@ -79,6 +79,24 @@ class TTSEngine:
                     device_map=DEVICE,
                     dtype=dtype,
                 )
+
+                # Wrap model with torch.compile() on CUDA for 2-4× inference speedup.
+                # First call incurs a 30-60s compilation penalty; subsequent calls are fast.
+                # Skip on CPU/non-CUDA — torch.compile() has no benefit there and may error.
+                try:
+                    if hasattr(torch, 'compile') and torch.cuda.is_available():
+                        logger.info(
+                            'Compiling TTS model with torch.compile() '
+                            '(first-call penalty ~30-60s, subsequent calls 2-4× faster)...'
+                        )
+                        self._model = torch.compile(self._model)
+                        logger.info('torch.compile() complete')
+                except Exception as compile_exc:
+                    logger.warning(
+                        'torch.compile() failed (non-fatal) — using eager mode: %s',
+                        compile_exc,
+                    )
+
                 # Pre-compute and cache the default voice clone prompt
                 from app.config import VOICE_SAMPLE_PATH
 

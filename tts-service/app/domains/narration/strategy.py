@@ -213,15 +213,23 @@ class ChunkedStrategy(NarrationStrategy):
         self._chunk_words = chunk_words
         self._tier = tier
         self._model = model
-        self._system_prompt = get_system_prompt(tier)
+        self._base_system_prompt = get_system_prompt(tier)
 
     async def _narrate_chunk(
-        self, chunk: str, previous_output_tail: str, previous_source_tail: str = ''
+        self,
+        chunk: str,
+        chunk_index: int,
+        total_chunks: int,
+        previous_output_tail: str,
+        previous_source_tail: str = '',
+        system_prompt: str = '',
     ) -> str:
+        effective_prompt = system_prompt or self._base_system_prompt
+        position_ctx = f'\n[SECTION {chunk_index + 1} of {total_chunks}]'
         continuity = get_continuity_instruction(previous_output_tail, previous_source_tail)
         messages = [
-            {'role': 'system', 'content': self._system_prompt},
-            {'role': 'user', 'content': chunk + continuity},
+            {'role': 'system', 'content': effective_prompt},
+            {'role': 'user', 'content': chunk + position_ctx + continuity},
         ]
         # Use retry wrapper for network resilience
         result = await _call_llm_with_retry(self._client, messages, self._model)
@@ -276,7 +284,7 @@ class ChunkedStrategy(NarrationStrategy):
                 )
                 # Re-narrate with explicit missing items
                 fix_messages = [
-                    {'role': 'system', 'content': self._system_prompt},
+                    {'role': 'system', 'content': self._base_system_prompt},
                     {
                         'role': 'user',
                         'content': (
@@ -295,16 +303,29 @@ class ChunkedStrategy(NarrationStrategy):
         return narration
 
     async def narrate(self, text: str) -> str:
-        # overlap_paragraphs=0: continuity_instruction already provides cross-chunk
-        # context via previous_output_tail/previous_source_tail. Paragraph overlap
-        # causes each overlapping paragraph to be narrated twice, producing
-        # duplicate content and noisy audio between chunks.
+        from app.utils.normalize import extract_section_map, normalize_for_narration
+
+        # Extract H2/H3 section titles BEFORE normalize strips HTML tags
+        section_map = extract_section_map(text)
+        text = normalize_for_narration(text)
+
+        # Build system prompt with section context (deterministic, no extra LLM call)
+        system_prompt = get_system_prompt(self._tier, section_map=section_map)
+
         chunks = _split_into_chunks(text, self._chunk_words, overlap_paragraphs=0)
+        total_chunks = len(chunks)
         outputs: list[str] = []
         previous_output_tail = ''
         previous_source_tail = ''
-        for chunk in chunks:
-            output = await self._narrate_chunk(chunk, previous_output_tail, previous_source_tail)
+        for i, chunk in enumerate(chunks):
+            output = await self._narrate_chunk(
+                chunk,
+                i,
+                total_chunks,
+                previous_output_tail,
+                previous_source_tail,
+                system_prompt=system_prompt,
+            )
             outputs.append(output)
             previous_output_tail = _tail_sentences(output)
             previous_source_tail = _tail_sentences(chunk)
@@ -319,18 +340,26 @@ class ChunkedStrategy(NarrationStrategy):
         return full_narration
 
     async def narrate_iter(self, text: str) -> AsyncIterator[str]:
-        """Yield each narrated chunk as it completes for pipelining with TTS.
+        from app.utils.normalize import extract_section_map, normalize_for_narration
 
-        Note: LLM completeness check is skipped in iter mode since chunks
-        are consumed immediately by TTS. Full narrate() should be used when
-        completeness checking is needed.
-        """
-        # overlap_paragraphs=0: see narrate() for rationale.
+        section_map = extract_section_map(text)
+        text = normalize_for_narration(text)
+
+        system_prompt = get_system_prompt(self._tier, section_map=section_map)
+
         chunks = _split_into_chunks(text, self._chunk_words, overlap_paragraphs=0)
+        total_chunks = len(chunks)
         previous_output_tail = ''
         previous_source_tail = ''
-        for chunk in chunks:
-            output = await self._narrate_chunk(chunk, previous_output_tail, previous_source_tail)
+        for i, chunk in enumerate(chunks):
+            output = await self._narrate_chunk(
+                chunk,
+                i,
+                total_chunks,
+                previous_output_tail,
+                previous_source_tail,
+                system_prompt=system_prompt,
+            )
             previous_output_tail = _tail_sentences(output)
             previous_source_tail = _tail_sentences(chunk)
             yield output
@@ -350,9 +379,14 @@ class SingleShotStrategy(NarrationStrategy):
         self._fallback_chunk_words = fallback_chunk_words
         self._tier = tier
         self._model = model
-        self._system_prompt = get_system_prompt(tier)
+        self._base_system_prompt = get_system_prompt(tier)
 
     async def narrate(self, text: str) -> str:
+        from app.utils.normalize import extract_section_map, normalize_for_narration
+
+        section_map = extract_section_map(text)
+        text = normalize_for_narration(text)
+
         word_count = len(text.split())
         if word_count > self._fallback_threshold:
             logger.info(
@@ -366,8 +400,10 @@ class SingleShotStrategy(NarrationStrategy):
                 model=self._model,
             )
             return await fallback.narrate(text)
+
+        system_prompt = get_system_prompt(self._tier, section_map=section_map)
         messages = [
-            {'role': 'system', 'content': self._system_prompt},
+            {'role': 'system', 'content': system_prompt},
             {'role': 'user', 'content': text},
         ]
         result = await _call_llm_with_retry(self._client, messages, self._model)

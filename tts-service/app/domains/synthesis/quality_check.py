@@ -118,7 +118,7 @@ async def _resynthesize_chunk(
         # parameters often reproduces the same artifact; more variance breaks
         # the model out of the bad local optimum.
         retry_kwargs = dict(generation_kwargs or {})
-        orig_temp = retry_kwargs.get('temperature', 0.72)
+        orig_temp = retry_kwargs.get('temperature', 0.55)
         retry_kwargs['temperature'] = min(orig_temp + 0.1, 0.85)
 
         # run_in_executor only accepts positional args; use partial to bind

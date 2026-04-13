@@ -120,6 +120,8 @@ def master_audio(
                 '-af',
                 (
                     'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
+                    'highpass=f=80,'
+                    'equalizer=f=6500:width_type=o:width=2:g=-3,'
                     f'{_COMPRESSOR},'
                     f'loudnorm=I={target_lufs}:TP={true_peak}:LRA={lra}:print_format=json'
                 ),
@@ -155,6 +157,8 @@ def master_audio(
                 '-af',
                 (
                     'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
+                    'highpass=f=80,'
+                    'equalizer=f=6500:width_type=o:width=2:g=-3,'
                     f'{_COMPRESSOR},'
                     f'{loudnorm_filter},'
                     'alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled'

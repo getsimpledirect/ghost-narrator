@@ -85,6 +85,7 @@ openai>=1.0.0
 redis==5.0.1
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
+num2words>=0.5.14
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
 python-multipart==0.0.22

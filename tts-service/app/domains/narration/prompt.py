@@ -61,6 +61,14 @@ AUDIO ADAPTATION RULES (apply without removing content):
   the speaker before hearing the words
 - Write in a clear, engaging podcast narrator voice
 - Do not add information that is not in the source
+- Use active voice. Rewrite passive constructions as active: "profits were
+  reported by the company" → "the company reported profits"
+- Never use hedging language: never say "it seems", "appears to", "one might
+  say", "arguably", "could be seen as". State facts directly as the article states them.
+- Insert [PAUSE] where a natural breath or minor topic shift occurs — at the
+  end of a sentence before a related new thought. Insert [LONG_PAUSE] at the
+  end of a paragraph or before a major topic shift. These markers are converted
+  to silence during audio production — do not use any other syntax for pauses.
 
 DO NOT INCLUDE IN OUTPUT:
 - URLs or hyperlinks — replace with "at their website" or "via the link in the show notes"
@@ -69,7 +77,8 @@ DO NOT INCLUDE IN OUTPUT:
 - Markdown syntax, HTML tags, or code blocks
 - Footnote markers or reference numbers (e.g. [1], *, †)
 
-OUTPUT: Return only the narration text. No preamble, no metadata, no explanations."""
+OUTPUT: Return only the narration text with [PAUSE]/[LONG_PAUSE] markers where
+appropriate. No preamble, no metadata, no explanations."""
 
 _PACING_ADDON = """
 - Add natural pacing: use sentence rhythm and paragraph breaks for breathing room
@@ -79,16 +88,28 @@ _PACING_ADDON = """
 - Use transitional phrases between sections for narrative flow"""
 
 
-def get_system_prompt(tier: HardwareTier) -> str:
-    """Return the system prompt appropriate for the given hardware tier.
+def get_system_prompt(tier: HardwareTier, section_map: str = '') -> str:
+    """Return the system prompt for the given hardware tier.
 
-    MID_VRAM and HIGH_VRAM both use qwen3:8b-q4, so they get the full prompt
-    with pacing instructions. CPU_ONLY and LOW_VRAM use smaller models and
-    get the simpler base prompt.
+    Args:
+        tier: Hardware tier — determines which model quality prompt to use.
+        section_map: Optional comma-joined list of article section titles extracted
+            from HTML H2/H3 headers. When provided, prepended as structural context
+            so the LLM understands the article's shape across chunks.
+            Extracted deterministically — no extra LLM call required.
     """
-    if tier in (HardwareTier.MID_VRAM, HardwareTier.HIGH_VRAM):
-        return _BASE_PROMPT + _PACING_ADDON
-    return _BASE_PROMPT
+    base = (
+        _BASE_PROMPT + _PACING_ADDON
+        if tier in (HardwareTier.MID_VRAM, HardwareTier.HIGH_VRAM)
+        else _BASE_PROMPT
+    )
+
+    if section_map:
+        return (
+            base
+            + f'\n\nARTICLE SECTIONS (for structural context — do not repeat in output):\n{section_map}'
+        )
+    return base
 
 
 def get_continuity_instruction(previous_output_tail: str, previous_source_tail: str = '') -> str:

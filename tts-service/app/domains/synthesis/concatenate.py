@@ -35,6 +35,7 @@ import tempfile
 from pathlib import Path
 from typing import Final, List, Optional
 
+import numpy as np
 from pydub import AudioSegment
 
 from app.config import MP3_BITRATE, STREAMING_THRESHOLD_MS
@@ -45,12 +46,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_BITRATE: Final[str] = MP3_BITRATE
 STREAMING_THRESHOLD: Final[int] = STREAMING_THRESHOLD_MS
 CROSSFADE_MS: Final[int] = 60
-SILENCE_THRESHOLD_DB: Final[int] = -35
+SILENCE_THRESHOLD_DB: Final[int] = -50  # was -35; more aggressive trailing trim
 MIN_SILENCE_MS: Final[int] = 100
+TRAILING_HARD_CAP_MS: Final[int] = 60  # New: exact trailing silence after trim
 
 
 def _trim_silence(segment: AudioSegment) -> AudioSegment:
-    """Trim leading and trailing silence from an audio segment."""
+    """Trim leading and trailing silence, capping trailing at 60ms.
+
+    Uses -50dBFS threshold (was -35) for more aggressive silence detection.
+    After trimming to the last speech sample, appends exactly 60ms of silence
+    so [PAUSE]/[LONG_PAUSE] markers can add semantic gaps without fighting
+    leftover TTS padding.
+    """
     leading = 0
     chunk_size = 10
     for i in range(0, len(segment), chunk_size):
@@ -75,7 +83,9 @@ def _trim_silence(segment: AudioSegment) -> AudioSegment:
     if len(segment) - trailing > MIN_SILENCE_MS:
         segment = segment[:trailing]
 
-    return segment
+    # Hard cap: always end with exactly TRAILING_HARD_CAP_MS of silence.
+    # Prevents TTS padding from accumulating into audible gaps between chunks.
+    return segment + AudioSegment.silent(duration=TRAILING_HARD_CAP_MS)
 
 
 def _crossfade_append(
@@ -83,18 +93,55 @@ def _crossfade_append(
     segment: AudioSegment,
     pause_ms: int,
 ) -> AudioSegment:
-    """Append a segment with crossfade at the boundary."""
+    """Append a segment with equal-power crossfade — maintains constant perceived loudness.
+
+    Linear crossfade (pydub default) creates a ~3dB volume dip at the midpoint
+    because both signals are at 50% simultaneously (0.5² + 0.5² = 0.5, -3dB).
+    Equal-power uses sin/cos curves so the power sum stays constant (sin²+cos²=1).
+    """
     if len(combined) == 0:
         return segment
 
     combined += AudioSegment.silent(duration=pause_ms)
 
-    if len(combined) > CROSSFADE_MS and len(segment) > CROSSFADE_MS:
-        combined = combined.append(segment, crossfade=CROSSFADE_MS)
-    else:
+    n = CROSSFADE_MS
+    if len(combined) < n or len(segment) < n:
         combined += segment
+        return combined
 
-    return combined
+    # Extract the crossfade regions as float32 numpy arrays
+    tail = np.array(combined[-n:].get_array_of_samples(), dtype=np.float32)
+    head = np.array(segment[:n].get_array_of_samples(), dtype=np.float32)
+
+    # Stereo: arrays are interleaved [L, R, L, R, ...] — preserve shape
+    if combined.channels == 2:
+        fade_len = len(tail) // 2
+        t = np.linspace(0.0, np.pi / 2, fade_len)
+        fade_out = np.cos(t)
+        fade_in = np.sin(t)
+        # Apply per-channel via reshape
+        tail_stereo = tail.reshape(-1, 2)
+        head_stereo = head.reshape(-1, 2)
+        mixed = (
+            (tail_stereo * fade_out[:, None] + head_stereo * fade_in[:, None])
+            .reshape(-1)
+            .clip(-32768, 32767)
+            .astype(np.int16)
+        )
+    else:
+        t = np.linspace(0.0, np.pi / 2, len(tail))
+        fade_out = np.cos(t)
+        fade_in = np.sin(t)
+        mixed = (tail * fade_out + head * fade_in).clip(-32768, 32767).astype(np.int16)
+
+    xfade_segment = AudioSegment(
+        mixed.tobytes(),
+        frame_rate=combined.frame_rate,
+        sample_width=combined.sample_width,
+        channels=combined.channels,
+    )
+
+    return combined[:-n] + xfade_segment + segment[n:]
 
 
 def _validate_wav_files(wav_paths: List[str]) -> None:
@@ -122,6 +169,7 @@ def concatenate_audio(
     chunk_texts: Optional[List[str]] = None,
     bitrate: str = DEFAULT_BITRATE,
     pause_ms: int = 450,
+    explicit_pause_durations: Optional[List[int]] = None,
 ) -> str:
     """
     Join all chunk WAVs into a single file with context-aware pauses.
@@ -132,6 +180,8 @@ def concatenate_audio(
         chunk_texts: Original text of each chunk (for dynamic pause detection).
         bitrate: Output MP3 bitrate.
         pause_ms: Default pause duration in milliseconds.
+        explicit_pause_durations: Per-boundary pause durations (ms) from LLM;
+            overrides heuristic when non-zero.
 
     Returns:
         The path to the created file.
@@ -158,7 +208,15 @@ def concatenate_audio(
             if i == 0:
                 combined = segment
             else:
-                if chunk_texts and i - 1 < len(chunk_texts):
+                # Pause selection: explicit → heuristic → default
+                explicit = (
+                    explicit_pause_durations[i - 1]
+                    if explicit_pause_durations and i - 1 < len(explicit_pause_durations)
+                    else 0
+                )
+                if explicit > 0:
+                    pause = explicit
+                elif chunk_texts and i - 1 < len(chunk_texts):
                     next_text = chunk_texts[i] if i < len(chunk_texts) else None
                     pause = _get_pause(chunk_texts[i - 1], next_text)
                 else:
@@ -195,6 +253,7 @@ def concatenate_audio_streaming(
     chunk_texts: Optional[List[str]] = None,
     bitrate: str = DEFAULT_BITRATE,
     threshold_ms: int = STREAMING_THRESHOLD,
+    explicit_pause_durations: Optional[List[int]] = None,
 ) -> str:
     """
     Join all chunk WAVs into a single file with streaming to reduce memory.
@@ -205,6 +264,8 @@ def concatenate_audio_streaming(
         chunk_texts: Original text of each chunk (for dynamic pause detection).
         bitrate: Output MP3 bitrate.
         threshold_ms: Memory threshold in milliseconds before flushing to disk.
+        explicit_pause_durations: Per-boundary pause durations (ms) from LLM;
+            overrides heuristic when non-zero.
 
     Returns:
         The path to the created file.
@@ -226,7 +287,15 @@ def concatenate_audio_streaming(
         combined = _trim_silence(AudioSegment.from_wav(wav_paths[0]))
 
         for i, wav_path in enumerate(wav_paths[1:], start=1):
-            if chunk_texts and i - 1 < len(chunk_texts):
+            # Pause selection: explicit → heuristic → default
+            explicit = (
+                explicit_pause_durations[i - 1]
+                if explicit_pause_durations and i - 1 < len(explicit_pause_durations)
+                else 0
+            )
+            if explicit > 0:
+                pause = explicit
+            elif chunk_texts and i - 1 < len(chunk_texts):
                 next_text = chunk_texts[i] if i < len(chunk_texts) else None
                 pause = _get_pause(chunk_texts[i - 1], next_text)
             else:
@@ -274,6 +343,7 @@ def concatenate_audio_auto(
     chunk_texts: Optional[List[str]] = None,
     bitrate: str = DEFAULT_BITRATE,
     streaming_threshold_chunks: int = 10,
+    explicit_pause_durations: Optional[List[int]] = None,
 ) -> str:
     """
     Automatically choose the best concatenation strategy based on input size.
@@ -284,6 +354,8 @@ def concatenate_audio_auto(
         chunk_texts: Original text of each chunk.
         bitrate: Output MP3 bitrate.
         streaming_threshold_chunks: Number of chunks above which to use streaming.
+        explicit_pause_durations: Per-boundary pause durations (ms) from LLM;
+            overrides heuristic when non-zero.
 
     Returns:
         The path to the created file.
@@ -301,7 +373,14 @@ def concatenate_audio_auto(
             output_path,
             chunk_texts,
             bitrate,
+            explicit_pause_durations=explicit_pause_durations,
         )
     else:
         logger.debug(f'Using standard concatenation for {len(wav_paths)} chunks')
-        return concatenate_audio(wav_paths, output_path, chunk_texts, bitrate)
+        return concatenate_audio(
+            wav_paths,
+            output_path,
+            chunk_texts,
+            bitrate,
+            explicit_pause_durations=explicit_pause_durations,
+        )
