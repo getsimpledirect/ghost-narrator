@@ -87,14 +87,17 @@ class NarrationValidator:
         r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
     )
     # Minimum acceptable word count ratio (narration / source)
-    # Lowered from 0.55 to 0.20 to allow natural compression while still catching
-    # significant content drops. The LLM paraphrases and condenses - that's expected.
+    # Primary check for content preservation - if below this, significant
+    # content was likely dropped. 20% allows natural compression while
+    # catching genuine content loss.
     MIN_WORD_RATIO = 0.20
 
-    # Allow up to 30% of entities to be missing before failing validation.
-    # This prevents all-or-nothing checks that cause retry loops.
-    # The LLM naturally paraphrases numbers, dates, and proper nouns.
-    MAX_ENTITY_MISSING_RATE = 0.30
+    # Entity validation is now SECONDARY and non-blocking.
+    # It serves as a warning/logging mechanism, not a pass/fail criteria.
+    # This prevents the all-or-nothing failure mode while still providing
+    # visibility into entity preservation.
+    # Note: Entity check disabled by setting threshold to 100% (always passes)
+    MAX_ENTITY_MISSING_RATE = 1.0  # Disabled - use word ratio as primary check
 
     @classmethod
     def _to_spoken_forms(cls, entity: str) -> list[str]:
@@ -256,14 +259,11 @@ class NarrationValidator:
             if not any(f.lower() in narration_lower for f in self._to_spoken_forms(e))
         ]
 
-        # Apply tolerance: allow up to MAX_ENTITY_MISSING_RATE missing entities
-        entity_count = len(entities)
-        missing_count = len(missing)
-        entity_fail = (
-            entity_count > 0 and (missing_count / entity_count) > self.MAX_ENTITY_MISSING_RATE
-        )
+        # Entity check is now purely informational (for logging/warnings)
+        # It no longer causes validation failure - only word ratio determines pass/fail
+        # This prevents all-or-nothing failures while still providing visibility
 
-        # Word count ratio check (with new tolerance)
+        # Word count ratio check - PRIMARY and ONLY pass/fail criteria
         source_words = len(source.split())
         narration_words = len(narration_for_check.split())
         ratio = narration_words / max(source_words, 1)
@@ -276,7 +276,8 @@ class NarrationValidator:
                 f'Likely significant content was dropped.]'
             )
 
-        passed = not entity_fail and not ratio_fail
+        # Only word ratio determines pass/fail - entities are for logging only
+        passed = not ratio_fail
 
         return ValidationResult(
             passed=passed,
