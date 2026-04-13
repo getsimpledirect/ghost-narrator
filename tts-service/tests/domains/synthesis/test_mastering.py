@@ -53,3 +53,32 @@ class TestMasteringFunctions:
         from app.domains.synthesis.normalize import normalize_audio
 
         assert callable(normalize_audio)
+
+
+def test_master_audio_filter_chain_includes_highpass_and_deesser():
+    """master_audio must apply highpass=f=80 and equalizer de-esser in filter chain."""
+    import subprocess
+    from unittest.mock import patch, MagicMock
+
+    captured_commands = []
+
+    def _fake_run(cmd, **kwargs):
+        captured_commands.append(cmd)
+        result = MagicMock()
+        result.returncode = 0
+        result.stderr = '{"input_i": -23.0, "input_tp": -1.5, "input_lra": 7.0, "input_thresh": -33.0, "target_offset": 0.0}'
+        return result
+
+    from app.domains.synthesis import mastering
+
+    with patch('subprocess.run', side_effect=_fake_run):
+        mastering.master_audio('/fake/input.wav', '/fake/output.mp3')
+
+    # Find the command containing the filter chain
+    af_commands = [' '.join(cmd) for cmd in captured_commands if '-af' in cmd]
+    assert af_commands, 'No -af filter chain found in subprocess calls'
+
+    # Both passes should include high-pass and de-esser
+    for af_cmd in af_commands:
+        assert 'highpass=f=80' in af_cmd, f'highpass filter missing from: {af_cmd}'
+        assert 'equalizer=f=6500' in af_cmd, f'de-esser equalizer missing from: {af_cmd}'
