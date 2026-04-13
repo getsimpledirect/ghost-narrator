@@ -409,17 +409,23 @@ async def run_tts_job(
                         # (all_chunks contains the narrated text)
                         full_narrated_text = ' '.join(all_chunks)
 
-                        # Synthesize in single shot
-                        single_shot_wav = str(job_dir / 'single_shot.wav')
-                        chunk_wav_paths = [
-                            await synthesize_single_shot_async(
-                                text=full_narrated_text,
-                                output_path=single_shot_wav,
-                                job_id=job_id,
-                                generation_kwargs=generation_kwargs,
+                        # Edge case: if narrated text is empty, fall back to chunk-based
+                        if not full_narrated_text or not full_narrated_text.strip():
+                            logger.warning(
+                                f'[{job_id}] Narrated text is empty, falling back to chunk-based synthesis'
                             )
-                        ]
-                        logger.info(f'[{job_id}] Single-shot synthesis complete')
+                        else:
+                            # Synthesize in single shot
+                            single_shot_wav = str(job_dir / 'single_shot.wav')
+                            chunk_wav_paths = [
+                                await synthesize_single_shot_async(
+                                    text=full_narrated_text,
+                                    output_path=single_shot_wav,
+                                    job_id=job_id,
+                                    generation_kwargs=generation_kwargs,
+                                )
+                            ]
+                            logger.info(f'[{job_id}] Single-shot synthesis complete')
                     elif total_words > SINGLE_SHOT_MAX_WORDS:
                         # For longer content, use segment-based single-shot
                         num_segments = (
@@ -429,35 +435,58 @@ async def run_tts_job(
                             f'[{job_id}] Using segment-based single-shot ({num_segments} segments)'
                         )
 
-                        segment_wavs = []
-                        for seg_idx in range(num_segments):
-                            start_word = seg_idx * SINGLE_SHOT_SEGMENT_WORDS
-                            end_word = min((seg_idx + 1) * SINGLE_SHOT_SEGMENT_WORDS, total_words)
-                            segment_text = ' '.join(all_chunks).split()[start_word:end_word]
-                            segment_text = ' '.join(segment_text)
-
-                            segment_wav = str(job_dir / f'segment_{seg_idx:04d}.wav')
-                            segment_path = await synthesize_single_shot_async(
-                                text=segment_text,
-                                output_path=segment_wav,
-                                job_id=job_id,
-                                generation_kwargs=generation_kwargs,
+                        # Edge case: get full text once
+                        full_narrated_text = ' '.join(all_chunks)
+                        if not full_narrated_text or not full_narrated_text.strip():
+                            logger.warning(
+                                f'[{job_id}] Narrated text is empty, falling back to chunk-based synthesis'
                             )
-                            segment_wavs.append(segment_path)
-                            logger.info(f'[{job_id}] Segment {seg_idx + 1}/{num_segments} complete')
+                        else:
+                            all_words = full_narrated_text.split()
+                            segment_wavs = []
+                            for seg_idx in range(num_segments):
+                                start_word = seg_idx * SINGLE_SHOT_SEGMENT_WORDS
+                                end_word = min(
+                                    (seg_idx + 1) * SINGLE_SHOT_SEGMENT_WORDS, total_words
+                                )
+                                segment_words = all_words[start_word:end_word]
 
-                        # Concatenate segments with overlap crossfade
-                        merged_wav = await loop.run_in_executor(
-                            executor,
-                            functools.partial(
-                                concatenate_audio_with_overlap,
-                                overlap_ms=SINGLE_SHOT_OVERLAP_MS,
-                            ),
-                            segment_wavs,
-                            str(job_dir / 'merged.wav'),
-                        )
-                        chunk_wav_paths = [merged_wav]
-                        logger.info(f'[{job_id}] Segment concatenation complete')
+                                # Skip empty segments
+                                if not segment_words:
+                                    continue
+
+                                segment_text = ' '.join(segment_words)
+
+                                segment_wav = str(job_dir / f'segment_{seg_idx:04d}.wav')
+                                segment_path = await synthesize_single_shot_async(
+                                    text=segment_text,
+                                    output_path=segment_wav,
+                                    job_id=job_id,
+                                    generation_kwargs=generation_kwargs,
+                                )
+                                segment_wavs.append(segment_path)
+                                logger.info(
+                                    f'[{job_id}] Segment {seg_idx + 1}/{num_segments} complete'
+                                )
+
+                            # Handle edge case: no segments were created
+                            if not segment_wavs:
+                                logger.warning(
+                                    f'[{job_id}] No segments created, falling back to chunk-based synthesis'
+                                )
+                            else:
+                                # Concatenate segments with overlap crossfade
+                                merged_wav = await loop.run_in_executor(
+                                    executor,
+                                    functools.partial(
+                                        concatenate_audio_with_overlap,
+                                        overlap_ms=SINGLE_SHOT_OVERLAP_MS,
+                                    ),
+                                    segment_wavs,
+                                    str(job_dir / 'merged.wav'),
+                                )
+                                chunk_wav_paths = [merged_wav]
+                                logger.info(f'[{job_id}] Segment concatenation complete')
                     # else: use original chunk-based synthesis (already in chunk_wav_paths)
 
                     # Step 3b: Quality check and re-synthesis
