@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v2.7.0 (2026-04-13)
+
+### Features
+
+- **narration**: Combine all three optimization options
+  ([`39eca90`](https://github.com/getsimpledirect/ghost-narrator/commit/39eca9020cc9d0aa5ce5b1dececbdb4204a05740))
+
+Option A - Hybrid threshold: - MIN_WORD_RATIO = 0.20 (pass) - WARNING_WORD_RATIO = 0.30 (log
+  warning) - CRITICAL_WORD_RATIO = 0.15 (no retries)
+
+Option B - Larger chunks: - MAX_CHUNK_WORDS: 200 → 400 (more context = better preservation)
+
+Option C - Document-level validation is now implicit: - Per-chunk validation uses 20% threshold - At
+  15% critical threshold, retries stop automatically
+
+This combination addresses the root cause: larger chunks provide more context, reducing LLM
+  compression and validation failures.
+
+
 ## v2.6.3 (2026-04-13)
 
 ### Bug Fixes
