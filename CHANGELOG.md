@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v2.6.0 (2026-04-13)
+
+### Features
+
+- **audio**: Studio-quality improvements for podcast production
+  ([`9576405`](https://github.com/getsimpledirect/ghost-narrator/commit/95764050f7043ae300e2e2f9b6454c66331281d0))
+
+- Reduce TTS temperature to 0.4 for consistent voice across all tiers - Increase sample rate to
+  48000 for studio quality on all tiers - Increase TTS chunk sizes for better context preservation -
+  Increase crossfade to 300ms for seamless transitions - Improve narration prompt with podcast-style
+  rules - Increase pause durations (500ms/1000ms) for natural pacing - Reduce mastering LRA to 7.0
+  for balanced dynamics - Increase MP3 bitrate to 320k for HIGH_VRAM tier - Increase max_new_tokens
+  to 4000 for HIGH_VRAM tier - Remove per-chunk normalization (done at mastering only) - Remove
+  highpass/eq from mastering (preserve natural tone) - Remove temperature bump on re-synthesized
+  chunks
+
+
 ## v2.5.4 (2026-04-13)
 
 ### Bug Fixes
