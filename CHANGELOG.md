@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.5.4 (2026-04-13)
+
+### Bug Fixes
+
+- **audio**: Improve audio quality by addressing root causes
+  ([`3a4c710`](https://github.com/getsimpledirect/ghost-narrator/commit/3a4c7106466316f65a6bf409caab30e9d84568b4))
+
+- Increase crossfade from 60ms to 200ms for smoother transitions - Use soft cap for trailing silence
+  instead of hard 60ms - Skip per-chunk normalization to avoid inconsistent loudness - Remove
+  temperature bump on re-synthesis (causes voice inconsistency) - Remove highpass and equalizer from
+  mastering (causes harshness) - Use gentler compression in mastering chain
+
+
 ## v2.5.3 (2026-04-13)
 
 ### Bug Fixes
