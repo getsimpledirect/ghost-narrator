@@ -226,15 +226,29 @@ class ChunkedStrategy(NarrationStrategy):
         # Use retry wrapper for network resilience
         result = await _call_llm_with_retry(self._client, messages, self._model)
         validation = _validator.validate(chunk, result)
-        if not validation.passed:
+        retry_count = 0
+        max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
+        while not validation.passed and retry_count < max_retries:
             logger.warning(
-                'Validation failed for chunk — retrying. Missing: %s',
+                'Validation failed for chunk — retrying (%d/%d). Missing: %s',
+                retry_count + 1,
+                max_retries,
                 validation.missing_entities,
             )
             retry_prompt = _validator.build_retry_prompt(validation, chunk)
             messages.append({'role': 'assistant', 'content': result})
             messages.append({'role': 'user', 'content': retry_prompt})
             result = await _call_llm(self._client, messages, self._model)
+            # Validate the retry result
+            validation = _validator.validate(chunk, result)
+            retry_count += 1
+
+        if not validation.passed:
+            logger.error(
+                'Validation failed for chunk after %d retries. Missing: %s',
+                retry_count,
+                validation.missing_entities,
+            )
         return result
 
     async def _llm_completeness_check(self, source: str, narration: str) -> str:
@@ -358,10 +372,27 @@ class SingleShotStrategy(NarrationStrategy):
         ]
         result = await _call_llm_with_retry(self._client, messages, self._model)
         validation = _validator.validate(text, result)
-        if not validation.passed:
-            logger.warning('Validation failed — retrying. Missing: %s', validation.missing_entities)
+        retry_count = 0
+        max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
+        while not validation.passed and retry_count < max_retries:
+            logger.warning(
+                'Validation failed — retrying (%d/%d). Missing: %s',
+                retry_count + 1,
+                max_retries,
+                validation.missing_entities,
+            )
             retry_prompt = _validator.build_retry_prompt(validation, text)
             messages.append({'role': 'assistant', 'content': result})
             messages.append({'role': 'user', 'content': retry_prompt})
             result = await _call_llm(self._client, messages, self._model)
+            # Validate the retry result
+            validation = _validator.validate(text, result)
+            retry_count += 1
+
+        if not validation.passed:
+            logger.error(
+                'Validation failed after %d retries. Missing: %s',
+                retry_count,
+                validation.missing_entities,
+            )
         return result
