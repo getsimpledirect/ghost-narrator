@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.5.3 (2026-04-13)
+
+### Bug Fixes
+
+- **audio**: Defensively truncate crossfade arrays to matching lengths
+  ([`d1bc8c4`](https://github.com/getsimpledirect/ghost-narrator/commit/d1bc8c4c1b6e4dd1a89dc69c906e651d52b35245))
+
+
 ## v2.5.2 (2026-04-13)
 
 ### Bug Fixes
