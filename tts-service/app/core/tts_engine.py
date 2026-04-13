@@ -89,7 +89,11 @@ class TTSEngine:
                             'Compiling TTS model with torch.compile() '
                             '(first-call penalty ~30-60s, subsequent calls 2-4× faster)...'
                         )
-                        self._model = torch.compile(self._model)
+                        # Only compile the underlying PyTorch module, not the wrapper class
+                        if hasattr(self._model, 'model'):
+                            self._model.model = torch.compile(self._model.model)
+                        else:
+                            self._model = torch.compile(self._model)
                         logger.info('torch.compile() complete')
                 except Exception as compile_exc:
                     logger.warning(
