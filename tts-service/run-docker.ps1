@@ -63,6 +63,9 @@ if ($Help) {
     Write-Host "  TTS_LANGUAGE      Language code (default: en)"
     Write-Host "  MAX_CHUNK_WORDS   Max words per chunk (default: 200)"
     Write-Host "  MAX_WORKERS       Thread pool size for parallel synthesis (default: 4)"
+    Write-Host "  SINGLE_SHOT_MAX_WORDS    Max words for single-pass synthesis (default: 4000)"
+    Write-Host "  SINGLE_SHOT_SEGMENT_WORDS Words per segment for long content (default: 3000)"
+    Write-Host "  SINGLE_SHOT_OVERLAP_MS    Overlap crossfade ms between segments (default: 500)"
     Write-Host ""
     Write-Host "Examples:"
     Write-Host "  # Run in background"
@@ -240,12 +243,19 @@ $MAX_WORDS = if ($env:MAX_CHUNK_WORDS) { $env:MAX_CHUNK_WORDS } else { '200' }
 $DEVICE_TYPE = if ($env:TTS_DEVICE) { $env:TTS_DEVICE } else { 'cpu' }
 $WORKERS = if ($env:MAX_WORKERS) { $env:MAX_WORKERS } else { '4' }
 
+$SINGLE_SHOT_MAX_WORDS = if ($env:SINGLE_SHOT_MAX_WORDS) { $env:SINGLE_SHOT_MAX_WORDS } else { '4000' }
+$SINGLE_SHOT_SEGMENT_WORDS = if ($env:SINGLE_SHOT_SEGMENT_WORDS) { $env:SINGLE_SHOT_SEGMENT_WORDS } else { '3000' }
+$SINGLE_SHOT_OVERLAP_MS = if ($env:SINGLE_SHOT_OVERLAP_MS) { $env:SINGLE_SHOT_OVERLAP_MS } else { '500' }
+
 $envVars = @(
     "-e", "VOICE_SAMPLE_PATH=/app/voices/reference.wav",
     "-e", "TTS_LANGUAGE=$TTS_LANG",
     "-e", "MAX_CHUNK_WORDS=$MAX_WORDS",
     "-e", "DEVICE=$DEVICE_TYPE",
-    "-e", "MAX_WORKERS=$WORKERS"
+    "-e", "MAX_WORKERS=$WORKERS",
+    "-e", "SINGLE_SHOT_MAX_WORDS=$SINGLE_SHOT_MAX_WORDS",
+    "-e", "SINGLE_SHOT_SEGMENT_WORDS=$SINGLE_SHOT_SEGMENT_WORDS",
+    "-e", "SINGLE_SHOT_OVERLAP_MS=$SINGLE_SHOT_OVERLAP_MS"
 )
 
 
