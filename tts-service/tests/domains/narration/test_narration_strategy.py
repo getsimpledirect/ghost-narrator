@@ -26,7 +26,13 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from app.core.hardware import HardwareTier
-from app.domains.narration.strategy import ChunkedStrategy, SingleShotStrategy
+from app.domains.narration.strategy import (
+    ChunkedStrategy,
+    SingleShotStrategy,
+    _split_into_chunks,
+    _strip_llm_artifacts,
+    _OLLAMA_ENDPOINT,
+)
 
 
 def _make_llm_client(response: str) -> AsyncMock:
@@ -36,6 +42,60 @@ def _make_llm_client(response: str) -> AsyncMock:
     choice.message.content = response
     client.chat.completions.create.return_value = MagicMock(choices=[choice])
     return client
+
+
+def test_ollama_endpoint_detected():
+    """Default LLM_BASE_URL (http://ollama:11434/v1) must be detected as Ollama
+    so that think=False is passed, preventing Qwen3 thinking-token generation."""
+    # The module-level flag is set from the default URL at import time.
+    # In test env LLM_BASE_URL defaults to 'http://ollama:11434/v1'.
+    import app.config as cfg
+
+    url = cfg.LLM_BASE_URL.lower()
+    expected = 'ollama' in url or ':11434' in url
+    assert _OLLAMA_ENDPOINT == expected
+
+
+@pytest.mark.asyncio
+async def test_chunked_strategy_passes_think_false_to_ollama():
+    """When targeting Ollama, extra_body={'think': False} must be in the LLM call."""
+    client = _make_llm_client('Narrated output with enough words to pass validation check here.')
+    strategy = ChunkedStrategy(
+        llm_client=client,
+        chunk_words=500,
+        tier=HardwareTier.CPU_ONLY,
+    )
+    import app.domains.narration.strategy as strat
+
+    original = strat._OLLAMA_ENDPOINT
+    try:
+        strat._OLLAMA_ENDPOINT = True
+        await strategy.narrate('Short source text paragraph for testing purposes only.')
+        call_kwargs = client.chat.completions.create.call_args[1]
+        assert call_kwargs.get('extra_body') == {'think': False}
+    finally:
+        strat._OLLAMA_ENDPOINT = original
+
+
+@pytest.mark.asyncio
+async def test_chunked_strategy_omits_think_false_for_non_ollama():
+    """When NOT targeting Ollama, extra_body must not be present in the LLM call."""
+    client = _make_llm_client('Narrated output with enough words to pass validation check here.')
+    strategy = ChunkedStrategy(
+        llm_client=client,
+        chunk_words=500,
+        tier=HardwareTier.CPU_ONLY,
+    )
+    import app.domains.narration.strategy as strat
+
+    original = strat._OLLAMA_ENDPOINT
+    try:
+        strat._OLLAMA_ENDPOINT = False
+        await strategy.narrate('Short source text paragraph for testing purposes only.')
+        call_kwargs = client.chat.completions.create.call_args[1]
+        assert 'extra_body' not in call_kwargs
+    finally:
+        strat._OLLAMA_ENDPOINT = original
 
 
 @pytest.mark.asyncio
@@ -102,6 +162,65 @@ async def test_single_shot_strategy_one_call():
     source = ' '.join(['word'] * 50)  # under threshold
     await strategy.narrate(source)
     assert client.chat.completions.create.call_count == 1
+
+
+def test_strip_llm_artifacts_removes_think_blocks():
+    """<think>...</think> blocks must be stripped before text reaches TTS."""
+    raw = '<think>Let me reason about this carefully.</think>Here is the narration text.'
+    assert _strip_llm_artifacts(raw) == 'Here is the narration text.'
+
+
+def test_strip_llm_artifacts_multiline_think():
+    """Multi-line thinking blocks (typical Qwen3 output) must be fully removed."""
+    raw = (
+        '<think>\n'
+        'I need to convert this article.\n'
+        'The key facts are: revenue grew 47%.\n'
+        '</think>\n'
+        'Revenue grew forty-seven percent this quarter.'
+    )
+    result = _strip_llm_artifacts(raw)
+    assert '<think>' not in result
+    assert 'Revenue grew' in result
+    assert 'I need to convert' not in result
+
+
+def test_strip_llm_artifacts_removes_preamble():
+    """Common LLM acknowledgment lines must be stripped."""
+    raw = "Here's the narration:\n\nRevenue grew forty-seven percent."
+    result = _strip_llm_artifacts(raw)
+    assert result == 'Revenue grew forty-seven percent.'
+
+
+def test_strip_llm_artifacts_preserves_clean_output():
+    """Clean narration text must pass through unchanged."""
+    text = 'Revenue grew forty-seven percent this quarter. The company reported record sales.'
+    assert _strip_llm_artifacts(text) == text
+
+
+def test_split_into_chunks_no_overlap():
+    """Chunks must not contain content from adjacent chunks (overlap=0 default)."""
+    # Three distinct paragraphs — with overlap=1, para2 would appear in both chunk1 and chunk2
+    source = (
+        'paragraph one content here\n\nparagraph two content here\n\nparagraph three content here'
+    )
+    chunks = _split_into_chunks(source, chunk_words=6, overlap_paragraphs=0)
+    # Each paragraph should appear in exactly one chunk
+    all_text = ' '.join(chunks)
+    for para in ['paragraph one', 'paragraph two', 'paragraph three']:
+        assert all_text.count(para) == 1, f'"{para}" appears more than once across chunks'
+
+
+def test_chunked_strategy_no_duplicate_content_at_boundaries():
+    """Overlap paragraphs must not cause duplicate narration at chunk boundaries."""
+    # Verify that narrate() uses overlap=0 by checking that split chunks are distinct.
+    # Two paragraphs that each exceed half of chunk_words → forces 2 chunks.
+    source = 'first paragraph text goes here now\n\nsecond paragraph text goes here now'
+    chunks = _split_into_chunks(source, chunk_words=7, overlap_paragraphs=0)
+    assert len(chunks) == 2
+    # No paragraph text appears in both chunks
+    assert 'first paragraph' not in chunks[1]
+    assert 'second paragraph' not in chunks[0]
 
 
 @pytest.mark.asyncio

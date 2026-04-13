@@ -33,7 +33,7 @@ from typing import AsyncIterator
 
 from app.core.hardware import HardwareTier
 from app.core.retry import retry_with_backoff
-from app.config import LLM_TIMEOUT, LLM_COMPLETENESS_TIMEOUT
+from app.config import LLM_TIMEOUT, LLM_COMPLETENESS_TIMEOUT, LLM_BASE_URL
 from app.domains.narration.prompt import (
     get_system_prompt,
     get_continuity_instruction,
@@ -41,9 +41,45 @@ from app.domains.narration.prompt import (
 )
 from app.domains.narration.validator import NarrationValidator
 
+# Matches Qwen3 (and similar reasoning-model) thinking blocks.
+# Must be stripped before narration reaches the validator or TTS engine —
+# thinking tokens synthesized as speech produce garbled audio noise and
+# dramatically inflate generation time.
+_THINK_RE = re.compile(
+    r'<think(?:ing)?>.*?</think(?:ing)?>',
+    re.DOTALL | re.IGNORECASE,
+)
+
+# Conservative preamble patterns: short acknowledgment lines the LLM inserts
+# before the narration text despite the "no preamble" instruction.
+# Only matches if the line ends with common meta-terminator punctuation + newline.
+_LLM_PREAMBLE_RE = re.compile(
+    r'^(?:'
+    r"(?:here(?:'s|\s+is)?|sure,?|okay,?|of\s+course,?|certainly,?|"
+    r'absolutely,?|alright,?|got\s+it,?)'
+    r'[^\n]{0,150}\n\n?'
+    r')',
+    re.IGNORECASE,
+)
+
+# Trailing meta-commentary the LLM sometimes appends after the narration.
+_LLM_POSTAMBLE_RE = re.compile(
+    r'\n+(?:(?:i\s+hope|let\s+me\s+know|feel\s+free|note\s+that|'
+    r'this\s+(?:covers|maintains|preserves|narration|version))'
+    r'[^\n]{0,250})$',
+    re.IGNORECASE,
+)
+
 logger = logging.getLogger(__name__)
 
 _validator = NarrationValidator()
+
+# True when the configured LLM endpoint is Ollama.
+# Ollama's OpenAI-compatible API accepts a non-standard `think` field that
+# prevents Qwen3 from generating <think> blocks entirely.  Other providers
+# (OpenAI, Anthropic, etc.) validate the request body strictly and return 400
+# on unknown fields, so we must not send it there.
+_OLLAMA_ENDPOINT: bool = 'ollama' in LLM_BASE_URL.lower() or ':11434' in LLM_BASE_URL
 
 
 def _split_into_chunks(text: str, chunk_words: int, overlap_paragraphs: int = 1) -> list[str]:
@@ -92,6 +128,23 @@ def _split_into_chunks(text: str, chunk_words: int, overlap_paragraphs: int = 1)
     return chunks
 
 
+def _strip_llm_artifacts(text: str) -> str:
+    """Strip Qwen3 thinking tokens and common LLM preamble/postamble.
+
+    Qwen3 models emit <think>...</think> blocks before their actual response.
+    These must be removed before text reaches the narration validator or TTS
+    engine — otherwise thinking tokens are synthesized as garbled audio and
+    inflate generation time significantly.
+
+    Preamble/postamble stripping is conservative: only unambiguous meta-lines
+    are removed to avoid clipping real narration content.
+    """
+    text = _THINK_RE.sub('', text)
+    text = _LLM_PREAMBLE_RE.sub('', text)
+    text = _LLM_POSTAMBLE_RE.sub('', text)
+    return text.strip()
+
+
 _SENTENCE_SPLIT_RE = re.compile(r'(?<=[.?!]) +')
 
 
@@ -106,13 +159,22 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
     if timeout is None:
         timeout = LLM_TIMEOUT
 
+    # On Ollama endpoints, pass think=False to prevent Qwen3 from generating
+    # <think> blocks entirely.  Stripping post-hoc is a safety net, but the
+    # model still spends inference time generating tokens we discard — disabling
+    # at source eliminates that overhead (can save 10-60s per chunk on Qwen3-8b).
+    kwargs: dict = {}
+    if _OLLAMA_ENDPOINT:
+        kwargs['extra_body'] = {'think': False}
+
     response = await client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=0.3,
         timeout=timeout,
+        **kwargs,
     )
-    return response.choices[0].message.content.strip()
+    return _strip_llm_artifacts(response.choices[0].message.content)
 
 
 # Retry wrapper for LLM calls - handles transient failures.
@@ -219,7 +281,11 @@ class ChunkedStrategy(NarrationStrategy):
         return narration
 
     async def narrate(self, text: str) -> str:
-        chunks = _split_into_chunks(text, self._chunk_words)
+        # overlap_paragraphs=0: continuity_instruction already provides cross-chunk
+        # context via previous_output_tail/previous_source_tail. Paragraph overlap
+        # causes each overlapping paragraph to be narrated twice, producing
+        # duplicate content and noisy audio between chunks.
+        chunks = _split_into_chunks(text, self._chunk_words, overlap_paragraphs=0)
         outputs: list[str] = []
         previous_output_tail = ''
         previous_source_tail = ''
@@ -245,7 +311,8 @@ class ChunkedStrategy(NarrationStrategy):
         are consumed immediately by TTS. Full narrate() should be used when
         completeness checking is needed.
         """
-        chunks = _split_into_chunks(text, self._chunk_words)
+        # overlap_paragraphs=0: see narrate() for rationale.
+        chunks = _split_into_chunks(text, self._chunk_words, overlap_paragraphs=0)
         previous_output_tail = ''
         previous_source_tail = ''
         for chunk in chunks:

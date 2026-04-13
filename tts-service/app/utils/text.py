@@ -64,6 +64,13 @@ _ABBREVIATIONS: Final[dict[str, str]] = {
     'Co.': 'Company',
 }
 
+# Safety-net: strip any <think>...</think> blocks that survived the narration layer.
+# Primary stripping happens in strategy._strip_llm_artifacts; this catches any
+# path that bypasses narration (raw-text fallback) or future model changes.
+_THINK_RE: Final[re.Pattern[str]] = re.compile(
+    r'<think(?:ing)?>.*?</think(?:ing)?>',
+    re.DOTALL | re.IGNORECASE,
+)
 # Regex for remaining markdown artifacts
 _MARKDOWN_RE: Final[re.Pattern[str]] = re.compile(r'[#*_~>`]+')
 # Multiple consecutive punctuation (e.g., "...", "!!", "??")
@@ -105,6 +112,10 @@ def clean_text_for_tts(text: str) -> str:
     Returns:
         Cleaned text ready for TTS chunking.
     """
+    # Strip thinking tokens before any other processing — otherwise tag fragments
+    # survive the markdown pass and get synthesized as garbled speech
+    text = _THINK_RE.sub('', text)
+
     # Replace smart quotes and special characters
     for char, replacement in _SPECIAL_CHARS.items():
         text = text.replace(char, replacement)
