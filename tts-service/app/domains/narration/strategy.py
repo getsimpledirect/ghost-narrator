@@ -56,12 +56,13 @@ _THINK_RE = re.compile(
 # Also catches meta-commentary framing like "The journey described in the text..."
 _LLM_PREAMBLE_RE = re.compile(
     r'^(?:here(?:\'s|\s+is)?|sure,?|okay,?|of\s+course,?|certainly,?|'
-    r'absolutely,?|alright,?|got\s+it,?)[^\n]{0,150}\n\n?|(?:'
-    r'the\s+(?:journey|story|text|passage|article|chapter|section|content)'
-    r'\s+(?:described|presented|outlined|covered|explained|told|discussed|detailed|examined|analyzed)\b|'
-    r'in\s+this\s+(?:text|passage|article|chapter|section)\b|'
-    r'this\s+(?:text|passage|article|chapter|section)\s+(?:describes|explains|presents|outlines|covers|discusses|details)\b|'
-    r'the\s+following\b)',
+    r'absolutely,?|alright,?|got\s+it,?)[^\n]{0,150}\n\n?'
+    r'|'
+    r'^the\s+(?:journey|story|text|passage|article)\s+described\b.*'
+    r'|'
+    r'^this\s+(?:passage|article)\s+(?:explores|examines)\b.*'
+    r'|'
+    r'^in\s+this\s+(?:article|chapter|section)\b.*',
     re.IGNORECASE | re.MULTILINE,
 )
 

@@ -34,6 +34,30 @@ logger = logging.getLogger(__name__)
 # so they don't inflate or deflate word count ratios or interfere with matching.
 _PAUSE_MARKER_RE = re.compile(r'\[(?:LONG_PAUSE|PAUSE)\]', re.IGNORECASE)
 
+# Meta-commentary patterns: phrases indicating LLM is summarizing/paraphrasing rather
+# than narrating the actual source content. These patterns check the FIRST sentence
+# of the narration to detect when the LLM has started with meta-commentary instead
+# of the source content.
+# Only matches when followed by specific meta-commentary verbs/phrases, not legitimate content.
+_META_COMMENTARY_FIRST_SENTENCE_RE = re.compile(
+    r'^[^.?!]*'
+    r'(?:'
+    # Pattern 1: "The journey/story/text/passage described in the text..."
+    r'the\s+(?:journey|story|text|passage|content|article|piece|selection)'
+    r'\s+(?:described|presented|outlined|detailed|discussed|covered)'
+    r'|'
+    # Pattern 2: "This passage/text/article..." followed by meta verbs (NOT chapter/section)
+    r'this\s+(?:passage|text|article|piece|selection)\s+(?:explores|examines|describes|outlines|covers|details|presents|discusses|introduces)'
+    r'|'
+    # Pattern 3: "In this text/passage/article..." followed by meta verbs (NOT chapter/section)
+    r'in\s+this\s+(?:text|passage|article|piece|selection)\s+(?:we|you|let\s+us)\s+(?:explore|examine|look|discuss|consider|analyze)'
+    r'|'
+    # Pattern 4: "The following is a narration/narration of..."
+    r'the\s+following\s+is\s+(?:a\s+)?(?:narration|recitation|reading)'
+    r')',
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class ValidationResult:
@@ -253,6 +277,18 @@ class NarrationValidator:
     def validate(self, source: str, narration: str) -> ValidationResult:
         if not source.strip():
             return ValidationResult(passed=True)
+
+        # Check for meta-commentary at the start of narration
+        # If the first sentence matches meta-commentary patterns, fail validation
+        narration_stripped = narration.strip()
+        if _META_COMMENTARY_FIRST_SENTENCE_RE.match(narration_stripped):
+            return ValidationResult(
+                passed=False,
+                missing_entities=[
+                    '[META-COMMENTARY DETECTED: narration starts with summary instead of source content]'
+                ],
+                word_ratio=0.0,
+            )
 
         # Strip pause markers before entity and word-count checks — markers are
         # assembly directives, not narration content.

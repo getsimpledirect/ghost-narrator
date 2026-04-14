@@ -172,3 +172,35 @@ def test_pause_markers_do_not_inflate_word_count():
     assert result.passed
     # Confirm word ratio is calculated without pause markers
     assert result.word_ratio >= 1.0  # 3 words / 3 minimum
+
+
+def test_validate_first_sentence_meta_commentary():
+    """Narration starting with meta-commentary should be flagged."""
+    v = NarrationValidator()
+    # Use longer source/narration to ensure word ratio passes (>= 40%)
+    source = "I'm sitting in a Toronto coffee shop, looking at my bank statements. I've built $10M+ in value across businesses."
+    narration = 'The journey described in the text begins in a Toronto coffee shop, looking at bank statements.'
+    result = v.validate(source, narration)
+    # Word ratio: 16/19 = 84% > 40% = passes word ratio
+    # But should have meta-commentary flagged
+    assert any('META-COMMENTARY' in m for m in result.missing_entities)
+
+
+def test_validate_first_sentence_valid():
+    """Narration starting with source content should not be flagged."""
+    v = NarrationValidator()
+    source = "I'm sitting in a Toronto coffee shop, looking at my bank statements. I've built $10M+ in value."
+    narration = "I'm sitting in a Toronto coffee shop, looking at my bank statements."
+    result = v.validate(source, narration)
+    # Should not have meta-commentary flagged
+    assert not any('META-COMMENTARY' in m for m in result.missing_entities)
+
+
+def test_validate_first_sentence_short_source_skipped():
+    """Very short sources (<5 words first sentence) should skip first-sentence check."""
+    v = NarrationValidator()
+    source = 'Hello world.'  # Only 2 words in first sentence
+    narration = 'Goodbye world.'
+    result = v.validate(source, narration)
+    # Should not flag meta-commentary for short content
+    assert not any('META-COMMENTARY' in m for m in result.missing_entities)
