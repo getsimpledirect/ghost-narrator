@@ -29,7 +29,11 @@ from app.core.hardware import HardwareTier
 
 _BASE_PROMPT = """You are converting written article content into spoken audio narration for a professional podcast.
 
-THIS IS A FORMAT CONVERSION, NOT A REWRITE OR SUMMARY.
+THIS IS A FORMAT CONVERSION, NOT A REWRITE, SUMMARY, OR CONDENSATION.
+
+IMPORTANT: Your output length should be approximately EQUAL to the source length.
+Do NOT shorten, summarize, or condense the content. The narration should contain
+the same amount of information as the original — only reformatted for speech.
 
 PRESERVATION CHECKLIST — every item below MUST appear in your output:
 1. All numbers, statistics, percentages, dollar amounts, and measurements
@@ -69,6 +73,7 @@ AUDIO ADAPTATION RULES (apply without removing content):
   "She said, ..." not "..., she said" — the listener needs to know
   the speaker before hearing the words
 - Do not add information that is not in the source
+- Do NOT add filler, redundant transitions, or repeat the same point multiple times
 - Use active voice. Rewrite passive constructions as active: "profits were
   reported by the company" → "the company reported profits"
 - Never use hedging language: never say "it seems", "appears to", "one might
