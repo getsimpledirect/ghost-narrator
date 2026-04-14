@@ -346,3 +346,32 @@ def test_system_prompt_with_section_map():
     assert 'Intro' in prompt
     assert 'Deep Dive' in prompt
     assert 'Conclusion' in prompt
+
+
+def test_strip_llm_artifacts_removes_meta_commentary():
+    """Meta-commentary patterns must be stripped."""
+    from app.domains.narration.strategy import _strip_llm_artifacts
+
+    # Test: "The journey described in the text" pattern
+    raw = 'The journey described in the text begins with someone sitting in a Toronto coffee shop.'
+    result = _strip_llm_artifacts(raw)
+    assert result.strip() == ''
+
+    # Test: "This passage explores" pattern
+    raw2 = 'This passage explores the concept of consulting.'
+    result2 = _strip_llm_artifacts(raw2)
+    assert result2.strip() == ''
+
+    # Test: "In this article" pattern
+    raw3 = 'In this article we look at the key findings.'
+    result3 = _strip_llm_artifacts(raw3)
+    assert result3.strip() == ''
+
+
+def test_strip_llm_artifacts_preserves_normal_content():
+    """Normal content without meta-commentary should pass through."""
+    from app.domains.narration.strategy import _strip_llm_artifacts
+
+    text = "I'm sitting in a Toronto coffee shop, looking at my bank statements."
+    result = _strip_llm_artifacts(text)
+    assert result == text

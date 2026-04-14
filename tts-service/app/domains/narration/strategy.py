@@ -53,14 +53,17 @@ _THINK_RE = re.compile(
 
 # Conservative preamble patterns: short acknowledgment lines the LLM inserts
 # before the narration text despite the "no preamble" instruction.
-# Only matches if the line ends with common meta-terminator punctuation + newline.
+# Also catches meta-commentary framing like "The journey described in the text..."
 _LLM_PREAMBLE_RE = re.compile(
-    r'^(?:'
-    r"(?:here(?:'s|\s+is)?|sure,?|okay,?|of\s+course,?|certainly,?|"
-    r'absolutely,?|alright,?|got\s+it,?)'
-    r'[^\n]{0,150}\n\n?'
-    r')',
-    re.IGNORECASE,
+    r'^(?:here(?:\'s|\s+is)?|sure,?|okay,?|of\s+course,?|certainly,?|'
+    r'absolutely,?|alright,?|got\s+it,?)[^\n]{0,150}\n\n?'
+    r'|'
+    r'^the\s+(?:journey|story|text|passage|article)\s+described\b.*'
+    r'|'
+    r'^this\s+(?:passage|article)\s+(?:explores|examines)\b.*'
+    r'|'
+    r'^in\s+this\s+(?:article|chapter|section)\b.*',
+    re.IGNORECASE | re.MULTILINE,
 )
 
 # Trailing meta-commentary the LLM sometimes appends after the narration.
