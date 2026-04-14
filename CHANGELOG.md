@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.8.2 (2026-04-14)
+
+### Bug Fixes
+
+- **prompt**: Remove instruction to add content not in source
+  ([`f37849e`](https://github.com/getsimpledirect/ghost-narrator/commit/f37849e4d4b21775c5b26002b1a95a964ae41287))
+
+- Removed 'Tell mini-stories' instruction - Removed 'Add verbal bridges between sections'
+  instruction - Removed 'End strong' hook instruction - Added explicit 'DO NOT ADD CONTENT' rule -
+  LLM should now preserve original meaning without adding filler
+
+
 ## v2.8.1 (2026-04-14)
 
 ### Bug Fixes
