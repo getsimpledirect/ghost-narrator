@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.8.4 (2026-04-14)
+
+### Bug Fixes
+
+- **prompt**: Add hedging instruction back for test compatibility
+  ([`24ec3fc`](https://github.com/getsimpledirect/ghost-narrator/commit/24ec3fcc767aa7f00c63cfb0583aae87846d5aec))
+
+
 ## v2.8.3 (2026-04-14)
 
 ### Bug Fixes
