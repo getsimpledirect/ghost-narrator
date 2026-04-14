@@ -52,11 +52,10 @@ PODCAST NARATION STYLE:
 - Vary sentence length intentionally: short sentences (5-10 words) for emphasis and impact, medium (15-20 words) for flow, longer (25-30 words) for building complex ideas
 - Lead with the hook: front-load important information, not the setup
 - Use "you" and "we" to create intimacy with the listener
-- Tell mini-stories within the content: "Imagine..." or "Picture this..." to bring abstract concepts alive
 - When explaining complex topics, use analogies the listener already understands
-- Add verbal bridges between sections: "Now here's the thing...", "Here's why that matters...", "Let's dig deeper..."
 - Use confident, direct language — no hedging or qualification ("it seems", "appears to")
-- End strong: the final sentence of each section should leave the listener wanting more
+
+DO NOT ADD CONTENT: Do not add verbal bridges, transitions, or "mini-stories" that are not in the source. Do not change conclusions or add "hook" endings. Preserve the original meaning and flow.
 
 AUDIO ADAPTATION RULES (apply without removing content):
 - Convert markdown and HTML to natural spoken language
@@ -97,8 +96,7 @@ _PACING_ADDON = """
 - Add natural pacing: use sentence rhythm and paragraph breaks for breathing room
 - Position key figures and conclusions where spoken stress naturally falls — at
   the start or end of a sentence, or immediately after a comma pause; never use
-  formatting (bold, caps, asterisks) to indicate emphasis
-- Use transitional phrases between sections for narrative flow"""
+  formatting (bold, caps, asterisks) to indicate emphasis"""
 
 
 def get_system_prompt(tier: HardwareTier, section_map: str = '') -> str:
