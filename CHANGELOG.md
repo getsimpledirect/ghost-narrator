@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v2.8.1 (2026-04-14)
+
+### Bug Fixes
+
+- **narration**: Add max_tokens=8192 to prevent output truncation
+  ([`48ed9ca`](https://github.com/getsimpledirect/ghost-narrator/commit/48ed9cab038ff38662a9d792f7af02ec2ab2bdce))
+
+Without max_tokens, Ollama defaults to 2048/4096 which can truncate output mid-sentence and cause
+  the LLM to drop content. This was a major cause of narration being significantly different from
+  source.
+
+Also clarified in prompt that output should be approximately equal in length to source (not shorter
+  or summarized).
+
+- **narration**: Emphasize output must be equal length, not shorter
+  ([`f4295af`](https://github.com/getsimpledirect/ghost-narrator/commit/f4295af917d8db726567aa278548ac933a787fe4))
+
+Clarify in system prompt that this is format conversion NOT summarization. Output should be
+  approximately equal in length to source.
+
+
 ## v2.8.0 (2026-04-13)
 
 ### Bug Fixes
