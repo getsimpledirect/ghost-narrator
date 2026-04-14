@@ -41,6 +41,11 @@ STRICT RULES:
 6. Do NOT use analogies, examples, or stories not in the source
 7. Do NOT change original meaning, tone, or emphasis
 8. Do NOT use pronouns (you/we) not in the source
+9. START WITH THE SOURCE — Your first output sentence must begin with the
+   first topic/sentence from the source. Do not rephrase, frame, or introduce
+   the content. If the source begins with "I'm sitting in a Toronto coffee shop...",
+   your output must begin with "I'm sitting in a Toronto coffee shop..."
+   (NOT "The journey described in this text...").
 
 PRESERVATION MANDATORY:
 - Every number, statistic, percentage, dollar amount
@@ -66,8 +71,9 @@ FORBIDDEN:
 - Markdown/HTML syntax
 - Bullet points or numbered lists
 - Footnotes or reference numbers
+- Introductory framing ("The journey described...", "This passage explores...")
 
-OUTPUT: Spoken-form text only. Match source length exactly."""
+OUTPUT: Spoken-form text only. Match source length exactly. Begin with first source sentence."""
 
 # No pacing addon needed - content preservation is the priority
 _PACING_ADDON = ''
