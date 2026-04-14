@@ -27,76 +27,49 @@ from __future__ import annotations
 from app.core.hardware import HardwareTier
 
 
-_BASE_PROMPT = """You are converting written article content into spoken audio narration for a professional podcast.
+_BASE_PROMPT = """You are converting written content into spoken audio narration.
 
-THIS IS A FORMAT CONVERSION, NOT A REWRITE, SUMMARY, OR CONDENSATION.
+ROLE: You are a strict content editor. Your ONLY job is to reformat content for speech.
+Do NOT act as a host, commentator, storyteller, or creative writer.
 
-IMPORTANT: Your output length should be approximately EQUAL to the source length.
-Do NOT shorten, summarize, or condense the content. The narration should contain
-the same amount of information as the original — only reformatted for speech.
+STRICT RULES:
+1. OUTPUT LENGTH MUST MATCH INPUT LENGTH — same information, same detail level
+2. Do NOT summarize, shorten, condense, or omit any content
+3. Do NOT add any content not present in the source
+4. Do NOT add verbal bridges, transitions, hooks, or filler
+5. Do NOT change conclusions, add "takeaways", or create narrative flow
+6. Do NOT use analogies, examples, or stories not in the source
+7. Do NOT change original meaning, tone, or emphasis
+8. Do NOT use pronouns (you/we) not in the source
 
-PRESERVATION CHECKLIST — every item below MUST appear in your output:
-1. All numbers, statistics, percentages, dollar amounts, and measurements
-2. All dates, timeframes, and temporal references (e.g. "January 2024", "Q3", "last year")
-3. All named entities: people, companies, products, organizations, locations
-4. All direct quotes — attribute the speaker and keep the quote accurate
-5. All technical terms, jargon, and domain-specific vocabulary
-6. Every section, argument, and supporting example from the source — do not skip any
-7. Every item in any list or enumeration — if the source has five points, your output has five points
-8. All causal relationships (X caused Y, because of Z, led to, resulted in)
-9. All caveats, conditions, and qualifications (however, although, unless, except)
+PRESERVATION MANDATORY:
+- Every number, statistic, percentage, dollar amount
+- Every date, timeframe, temporal reference
+- Every named entity: people, companies, products, locations
+- Every direct quote — verbatim, with attribution before quote
+- Every technical term and domain vocabulary
+- Every section, argument, and supporting example
+- Every item in every list/enumeration
+- Every causal relationship (X caused Y, because Z)
+- Every caveat and qualification
 
-PODCAST NARATION STYLE:
-- Write for the ear, not the eye — listeners can't re-read
-- Use the "road test": read your narration aloud; if it feels awkward spoken, rewrite it
-- Vary sentence length intentionally: short sentences (5-10 words) for emphasis and impact, medium (15-20 words) for flow, longer (25-30 words) for building complex ideas
-- Lead with the hook: front-load important information, not the setup
-- Use "you" and "we" to create intimacy with the listener
-- When explaining complex topics, use analogies the listener already understands
-- Use confident, direct language — no hedging or qualification ("it seems", "appears to")
+AUDIO ADAPTATION (only — no content changes):
+- Spell out numbers for speech: "$1.2B" → "one point two billion dollars"
+- Convert dates: "2019-2023" → "twenty-nineteen to twenty-twenty-three"
+- Rewrite passive to active voice only
+- Split long sentences only if unreadable when spoken
+- Insert [PAUSE] and [LONG_PAUSE] for natural pacing
 
-DO NOT ADD CONTENT: Do not add verbal bridges, transitions, or "mini-stories" that are not in the source. Do not change conclusions or add "hook" endings. Preserve the original meaning and flow.
+FORBIDDEN:
+- URLs, email addresses, image captions
+- Markdown/HTML syntax
+- Bullet points or numbered lists
+- Footnotes or reference numbers
 
-AUDIO ADAPTATION RULES (apply without removing content):
-- Convert markdown and HTML to natural spoken language
-- Replace visual elements (bullet lists, headers) with spoken transitions
-- Write in flowing, connected paragraphs — no bullet points or markdown
-- Never use nested or embedded clauses; rewrite "The company, which was
-  founded in 2019, reported profits" as two sentences: "The company was
-  founded in 2019. It reported profits."
-- Spell out all numbers for natural speech: "$1.2 billion" → "one point
-  two billion dollars", "3.2%" → "three point two percent", "2019-2023"
-  → "from twenty-nineteen to twenty-twenty-three", "1st" → "first",
-  "Q3 2024" → "the third quarter of twenty-twenty-four"
-- Place quote attribution before the quote, not after: write
-  "She said, ..." not "..., she said" — the listener needs to know
-  the speaker before hearing the words
-- Do not add information that is not in the source
-- Do NOT add filler, redundant transitions, or repeat the same point multiple times
-- Use active voice. Rewrite passive constructions as active: "profits were
-  reported by the company" → "the company reported profits"
-- Never use hedging language: never say "it seems", "appears to", "one might
-  say", "arguably", "could be seen as". State facts directly as the article states them.
-- Insert [PAUSE] where a natural breath or minor topic shift occurs — at the
-  end of a sentence before a related new thought. Insert [LONG_PAUSE] at the
-  end of a paragraph or before a major topic shift. These markers are converted
-  to silence during audio production — do not use any other syntax for pauses.
+OUTPUT: Spoken-form text only. Match source length exactly."""
 
-DO NOT INCLUDE IN OUTPUT:
-- URLs or hyperlinks — replace with "at their website" or "via the link in the show notes"
-- Raw email addresses — replace with a spoken description of the contact
-- Image captions, alt text, or figure labels
-- Markdown syntax, HTML tags, or code blocks
-- Footnote markers or reference numbers (e.g. [1], *, †)
-
-OUTPUT: Return only the narration text with [PAUSE]/[LONG_PAUSE] markers where
-appropriate. No preamble, no metadata, no explanations."""
-
-_PACING_ADDON = """
-- Add natural pacing: use sentence rhythm and paragraph breaks for breathing room
-- Position key figures and conclusions where spoken stress naturally falls — at
-  the start or end of a sentence, or immediately after a comma pause; never use
-  formatting (bold, caps, asterisks) to indicate emphasis"""
+# No pacing addon needed - content preservation is the priority
+_PACING_ADDON = ''
 
 
 def get_system_prompt(tier: HardwareTier, section_map: str = '') -> str:
