@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v2.8.3 (2026-04-14)
+
+### Bug Fixes
+
+- **prompt**: Optimize for strict content preservation - no summarization
+  ([`03453a0`](https://github.com/getsimpledirect/ghost-narrator/commit/03453a0ae5ca42d0d4a41e62218e9687d4f1c0d8))
+
+Based on research findings: - LLMs struggle with verbatim fidelity in long-text generation -
+  Summarization causes content loss; verbatim compaction preserves better - Key: explicit
+  constraints, no creative instructions
+
+New prompt: - Strict content editor role (not host/storyteller) - Output length MUST match input
+  length - Forbidden: summarization, filler, bridges, hooks, analogies not in source - Only audio
+  adaptation: spell numbers, dates, active voice, [PAUSE] markers - Removed all podcast-style
+  instructions that add content
+
+This is the optimal prompt for preserving source content exactly.
+
+
 ## v2.8.2 (2026-04-14)
 
 ### Bug Fixes
