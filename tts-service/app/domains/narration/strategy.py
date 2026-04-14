@@ -168,10 +168,17 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
     if _OLLAMA_ENDPOINT:
         kwargs['extra_body'] = {'think': False}
 
+    # Set max_tokens to prevent output truncation - use 8192 to accommodate
+    # longer narrations (approximately 6000-7000 words output). Without this,
+    # Ollama defaults (often 2048/4096) can truncate output, causing the LLM
+    # to stop mid-sentence and lose content.
+    max_tokens = 8192
+
     response = await client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=0.3,
+        max_tokens=max_tokens,
         timeout=timeout,
         **kwargs,
     )
