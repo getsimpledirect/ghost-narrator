@@ -59,6 +59,7 @@ AUDIO ADAPTATION (only — no content changes):
 - Rewrite passive to active voice only
 - Split long sentences only if unreadable when spoken
 - Insert [PAUSE] and [LONG_PAUSE] for natural pacing
+- State facts directly — no hedging ("it seems", "appears to", "might")
 
 FORBIDDEN:
 - URLs, email addresses, image captions
