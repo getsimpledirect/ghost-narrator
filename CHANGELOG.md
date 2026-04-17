@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v2.8.7 (2026-04-17)
+
+### Bug Fixes
+
+- **tts-service**: Fix stale cancel flag, tiny chunk explosion, and container rebuild note
+  ([`95096ad`](https://github.com/getsimpledirect/ghost-narrator/commit/95096adc0aedeb614b0a33e485db9527df0cdd35))
+
+Three causes of slow processing surfaced from live logs.
+
+Fix 1 — Stale cancel flag on job resubmission The DELETE /tts/{job_id} endpoint calls
+  engine.cancel_job(), which adds the job_id to an in-memory set that persists until engine restart.
+  When the same job_id is resubmitted without a restart, the first synthesize_to_file call finds the
+  id in _cancelled_jobs and raises SynthesisError immediately, triggering the pipeline fallback and
+  doubling all LLM narration work. Fix: add TTSEngine.uncancel_job() and call it at the start of
+  run_tts_job before any synthesis work begins.
+
+Fix 2 — Tiny TTS chunk explosion from truncated narration split_into_chunks was flushing at every
+  paragraph boundary regardless of accumulated word count. Truncated narration output (section
+  headings, year labels, single-line numbers from the VC math tables) produces many paragraphs of
+  2-15 words. Each became its own synthesis call taking 15-25 seconds due to Qwen3-TTS per-call
+  model initialization overhead — a 244-chunk job for a single chapter, projecting to ~80 minutes of
+  synthesis time. Fix: only flush at paragraph boundaries when accumulated content >= 15 words.
+  Short paragraphs carry over into the next paragraph instead of becoming isolated synthesis calls.
+  A final flush handles any remaining content after the last paragraph.
+
+Fix 3 — Container must be rebuilt to apply num_ctx fix The num_ctx=8192 and
+  narration_chunk_words=800 fixes committed earlier require docker compose build to take effect.
+  Restarting without rebuilding leaves the old 2048-token context active, continuing to truncate
+  narration output and producing the tiny-chunk explosion described above. Run: docker compose build
+  && docker compose up -d on the server to apply all pending fixes.
+
+
 ## v2.8.6 (2026-04-17)
 
 ### Bug Fixes
