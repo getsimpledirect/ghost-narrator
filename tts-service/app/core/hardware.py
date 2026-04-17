@@ -88,12 +88,12 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         mp3_bitrate='192k',
         sample_rate=48000,  # Higher fidelity
         target_lufs=-16.0,
-        tts_temperature=0.4,  # Lower for consistent voice
+        tts_temperature=0.3,
         tts_repetition_penalty=1.05,
-        tts_top_k=50,
-        tts_top_p=0.92,
-        tts_temperature_sub_talker=0.4,  # Lower for consistent voice
-        tts_top_k_sub_talker=50,
+        tts_top_k=40,
+        tts_top_p=0.85,
+        tts_temperature_sub_talker=0.3,
+        tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
         tts_max_new_tokens=3000,
     ),
@@ -110,12 +110,12 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         mp3_bitrate='192k',
         sample_rate=48000,  # Higher fidelity
         target_lufs=-16.0,
-        tts_temperature=0.4,  # Lower for consistent voice
+        tts_temperature=0.3,
         tts_repetition_penalty=1.05,
-        tts_top_k=50,
-        tts_top_p=0.92,
-        tts_temperature_sub_talker=0.4,  # Lower for consistent voice
-        tts_top_k_sub_talker=50,
+        tts_top_k=40,
+        tts_top_p=0.85,
+        tts_temperature_sub_talker=0.3,
+        tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
         tts_max_new_tokens=3000,  # 175 words ≈ 969 tokens; 3000 = 3.1× headroom
     ),
@@ -132,12 +132,12 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         mp3_bitrate='256k',  # Higher bitrate for studio quality
         sample_rate=48000,  # Higher fidelity
         target_lufs=-16.0,
-        tts_temperature=0.4,  # Lower for consistent voice
+        tts_temperature=0.3,
         tts_repetition_penalty=1.05,
-        tts_top_k=50,
-        tts_top_p=0.92,
-        tts_temperature_sub_talker=0.4,  # Lower for consistent voice
-        tts_top_k_sub_talker=50,
+        tts_top_k=40,
+        tts_top_p=0.85,
+        tts_temperature_sub_talker=0.3,
+        tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
         tts_max_new_tokens=3000,
     ),
@@ -154,15 +154,14 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         mp3_bitrate='320k',  # Studio quality
         sample_rate=48000,  # Studio quality
         target_lufs=-14.0,  # Slightly louder for podcasts
-        # Lower temperature for consistent voice across chunks
-        tts_temperature=0.4,  # Was 0.55
+        tts_temperature=0.3,
         tts_repetition_penalty=1.05,
-        tts_top_k=50,
-        tts_top_p=0.92,
-        tts_temperature_sub_talker=0.4,  # Lower for consistent voice
-        tts_top_k_sub_talker=50,
+        tts_top_k=40,
+        tts_top_p=0.85,
+        tts_temperature_sub_talker=0.3,
+        tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=4000,  # More headroom for larger chunks
+        tts_max_new_tokens=4000,
     ),
 }
 

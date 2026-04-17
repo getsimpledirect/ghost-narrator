@@ -75,8 +75,11 @@ FORBIDDEN:
 
 OUTPUT: Spoken-form text only. Match source length exactly. Begin with first source sentence."""
 
-# No pacing addon needed - content preservation is the priority
-_PACING_ADDON = ''
+_PACING_ADDON = (
+    '\n\nPACING: Insert [PAUSE] after each section heading and after a contrasting claim.'
+    ' Insert [LONG_PAUSE] at major topic transitions (roughly once per 150 words).'
+    ' Never insert pauses mid-sentence.'
+)
 
 
 def get_system_prompt(tier: HardwareTier, section_map: str = '') -> str:

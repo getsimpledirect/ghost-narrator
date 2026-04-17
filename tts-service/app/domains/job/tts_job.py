@@ -266,6 +266,7 @@ async def run_tts_job(
 
                     chunk_wav_paths: list[str] = []
                     all_chunks: list[str] = []
+                    narrated_segments: list[str] = []  # raw LLM output before TTS chunking
                     chunk_pause_durations: list[int] = []
                     total_words = 0
                     chunk_index = 0
@@ -304,6 +305,7 @@ async def run_tts_job(
                                         if segment is None:
                                             break
                                         await _check_status()
+                                        narrated_segments.append(segment)
                                         tts_chunks, seg_words, seg_pauses = (
                                             prepare_text_for_synthesis(segment, MAX_CHUNK_WORDS)
                                         )
@@ -367,6 +369,7 @@ async def run_tts_job(
 
                                     narrated_text = normalize_for_narration(text)
                                     narration_skipped = True
+                                narrated_segments.append(narrated_text)
                                 all_chunks, total_words, chunk_pause_durations = (
                                     prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
                                 )
@@ -382,6 +385,7 @@ async def run_tts_job(
                             from app.utils.normalize import normalize_for_narration
 
                             normalized_text = normalize_for_narration(text)
+                            narrated_segments.append(normalized_text)
                             all_chunks, total_words, chunk_pause_durations = (
                                 prepare_text_for_synthesis(normalized_text, MAX_CHUNK_WORDS)
                             )
@@ -400,22 +404,22 @@ async def run_tts_job(
                     # Single-shot produces studio-quality audio without chunk boundaries
                     use_single_shot = total_words > 0 and total_words <= SINGLE_SHOT_MAX_WORDS
 
+                    # Reconstruct narrated text preserving paragraph structure for TTS prosody.
+                    # narrated_segments holds the raw LLM output before TTS chunking —
+                    # each segment is a paragraph-structured narration chunk.
+                    # Joining with '\n\n' gives the model natural topic-boundary cues.
+                    full_narrated_text = '\n\n'.join(narrated_segments) if narrated_segments else ' '.join(all_chunks)
+
                     if use_single_shot:
                         # Single-shot synthesis for optimal quality
                         logger.info(
                             f'[{job_id}] Using single-shot synthesis for {total_words} words'
                         )
-                        # The narration already happened above - use the narrated text
-                        # (all_chunks contains the narrated text)
-                        full_narrated_text = ' '.join(all_chunks)
-
-                        # Edge case: if narrated text is empty, fall back to chunk-based
                         if not full_narrated_text or not full_narrated_text.strip():
                             logger.warning(
                                 f'[{job_id}] Narrated text is empty, falling back to chunk-based synthesis'
                             )
                         else:
-                            # Synthesize in single shot
                             single_shot_wav = str(job_dir / 'single_shot.wav')
                             chunk_wav_paths = [
                                 await synthesize_single_shot_async(
@@ -427,35 +431,26 @@ async def run_tts_job(
                             ]
                             logger.info(f'[{job_id}] Single-shot synthesis complete')
                     elif total_words > SINGLE_SHOT_MAX_WORDS:
-                        # For longer content, use segment-based single-shot
-                        num_segments = (
-                            total_words + SINGLE_SHOT_SEGMENT_WORDS - 1
-                        ) // SINGLE_SHOT_SEGMENT_WORDS
+                        # For longer content, split at sentence boundaries then synthesize
+                        # each segment in single-shot mode. Word-count splitting is avoided
+                        # because it creates mid-sentence TTS input — the model generates
+                        # rising/hanging prosody on incomplete sentences causing audible artifacts.
+                        from app.utils.text import split_into_chunks as _sentence_split
+
+                        sentence_segments = _sentence_split(full_narrated_text, SINGLE_SHOT_SEGMENT_WORDS)
                         logger.info(
-                            f'[{job_id}] Using segment-based single-shot ({num_segments} segments)'
+                            f'[{job_id}] Using segment-based single-shot ({len(sentence_segments)} segments)'
                         )
 
-                        # Edge case: get full text once
-                        full_narrated_text = ' '.join(all_chunks)
                         if not full_narrated_text or not full_narrated_text.strip():
                             logger.warning(
                                 f'[{job_id}] Narrated text is empty, falling back to chunk-based synthesis'
                             )
                         else:
-                            all_words = full_narrated_text.split()
                             segment_wavs = []
-                            for seg_idx in range(num_segments):
-                                start_word = seg_idx * SINGLE_SHOT_SEGMENT_WORDS
-                                end_word = min(
-                                    (seg_idx + 1) * SINGLE_SHOT_SEGMENT_WORDS, total_words
-                                )
-                                segment_words = all_words[start_word:end_word]
-
-                                # Skip empty segments
-                                if not segment_words:
+                            for seg_idx, segment_text in enumerate(sentence_segments):
+                                if not segment_text.strip():
                                     continue
-
-                                segment_text = ' '.join(segment_words)
 
                                 segment_wav = str(job_dir / f'segment_{seg_idx:04d}.wav')
                                 segment_path = await synthesize_single_shot_async(
@@ -466,7 +461,7 @@ async def run_tts_job(
                                 )
                                 segment_wavs.append(segment_path)
                                 logger.info(
-                                    f'[{job_id}] Segment {seg_idx + 1}/{num_segments} complete'
+                                    f'[{job_id}] Segment {seg_idx + 1}/{len(sentence_segments)} complete'
                                 )
 
                             # Handle edge case: no segments were created

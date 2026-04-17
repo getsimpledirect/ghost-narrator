@@ -106,12 +106,10 @@ _ACRONYM_REGISTRY: Final[dict[str, str]] = {
     # Tech
     'API': 'A-P-I',
     'SDK': 'S-D-K',
-    'SaaS': 'Saas',
-    'PaaS': 'Paas',
-    'IaaS': 'Iaas',
+    'SaaS': 'software as a service',
+    'PaaS': 'platform as a service',
+    'IaaS': 'infrastructure as a service',
     'LLM': 'L-L-M',
-    'AI': 'A-I',
-    'ML': 'M-L',
     'UI': 'U-I',
     'UX': 'U-X',
     # Finance / business

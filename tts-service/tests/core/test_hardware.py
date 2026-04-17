@@ -219,18 +219,19 @@ def test_low_vram_tts_max_new_tokens_is_3000():
     assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
 
 
-def test_all_tiers_use_temperature_04():
-    """All hardware tiers must use tts_temperature=0.4 for consistent pitch across chunks.
+def test_all_tiers_use_temperature_03():
+    """All hardware tiers must use tts_temperature=0.3 for consistent pitch across chunks.
 
-    Lower temperature (0.4 vs 0.55) produces more consistent voice characteristics
-    across chunks, critical for studio-quality audio without pitch/speed variation.
+    Lower temperature (0.3 vs 0.4) reduces inter-chunk duration variance in the
+    autoregressive model, producing more consistent speaking rate and pitch across
+    segment boundaries without becoming robotic.
     """
     from app.core.hardware import _TIER_CONFIGS
 
     for tier, config in _TIER_CONFIGS.items():
-        assert config.tts_temperature == 0.4, (
-            f'{tier.value}: tts_temperature is {config.tts_temperature}, expected 0.4'
+        assert config.tts_temperature == 0.3, (
+            f'{tier.value}: tts_temperature is {config.tts_temperature}, expected 0.3'
         )
-        assert config.tts_temperature_sub_talker == 0.4, (
-            f'{tier.value}: tts_temperature_sub_talker is {config.tts_temperature_sub_talker}, expected 0.4'
+        assert config.tts_temperature_sub_talker == 0.3, (
+            f'{tier.value}: tts_temperature_sub_talker is {config.tts_temperature_sub_talker}, expected 0.3'
         )

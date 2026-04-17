@@ -32,14 +32,17 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
+
+from pydub import AudioSegment
 
 from app.config import MAX_CHUNK_WORDS
 from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
-from app.utils.text import split_into_chunks, clean_text_for_tts
+from app.utils.text import split_into_chunks, clean_text_for_tts, has_quoted_speech, split_at_quotes
 
 if TYPE_CHECKING:
     pass
@@ -106,6 +109,13 @@ def synthesize_chunk(
     """
     Synthesize a single text chunk using Qwen3-TTS voice cloning.
 
+    When the chunk contains quoted speech (detected via double-quote marks),
+    the text is split at quote boundaries and each segment is synthesized
+    independently. Quoted segments use a higher sampling temperature to produce
+    more expressive delivery, then all sub-segments are joined with an 80ms
+    breath gap. This is the multi-voice path; chunks without quotes go through
+    the fast single-synthesis path.
+
     This is a synchronous function designed to run in a thread pool.
 
     Args:
@@ -127,7 +137,63 @@ def synthesize_chunk(
         )
 
     engine = get_tts_engine()
-    return engine.synthesize_to_file(text, output_path, job_id, generation_kwargs=generation_kwargs)
+
+    # Fast path: no quoted speech detected — single synthesis call.
+    if not has_quoted_speech(text):
+        return engine.synthesize_to_file(text, output_path, job_id, generation_kwargs=generation_kwargs)
+
+    # Multi-voice path: split at quote boundaries, synthesize each segment
+    # with per-type generation parameters, then concatenate.
+    segments = split_at_quotes(text)
+    if len(segments) <= 1:
+        return engine.synthesize_to_file(text, output_path, job_id, generation_kwargs=generation_kwargs)
+
+    out_path = Path(output_path)
+    temp_dir = out_path.parent / f'_mv_{out_path.stem}'
+    temp_dir.mkdir(exist_ok=True)
+    try:
+        sub_wav_paths: list[str] = []
+        for i, (seg_text, is_quote) in enumerate(segments):
+            if not seg_text.strip():
+                continue
+            seg_path = str(temp_dir / f'seg_{i:04d}.wav')
+            seg_kwargs = dict(generation_kwargs or {})
+            if is_quote:
+                # Quoted speech: raise temperature and top_p for more expressive delivery.
+                # Cap at 0.55/0.92 so voice identity is preserved — the reference prompt
+                # still anchors timbre; only prosody variance increases.
+                seg_kwargs['temperature'] = min((seg_kwargs.get('temperature') or 0.3) + 0.15, 0.55)
+                seg_kwargs['top_p'] = min((seg_kwargs.get('top_p') or 0.85) + 0.05, 0.92)
+            engine.synthesize_to_file(seg_text, seg_path, job_id, generation_kwargs=seg_kwargs)
+            sub_wav_paths.append(seg_path)
+
+        if not sub_wav_paths:
+            raise SynthesisError(
+                'Multi-voice synthesis produced no segments',
+                details=f'output_path={output_path}',
+            )
+
+        # Join sub-segments with an 80ms breath gap — models the natural pause
+        # between a narrator sentence and the start of quoted speech.
+        # Derive silence properties from the first real segment so frame_rate,
+        # channels, and sample_width match — pydub does not auto-resample on
+        # concatenation, so a mismatched silent() causes audio glitches.
+        combined = AudioSegment.from_wav(sub_wav_paths[0])
+        breath = AudioSegment.silent(
+            duration=80,
+            frame_rate=combined.frame_rate,
+            channels=combined.channels,
+        ).set_sample_width(combined.sample_width)
+        for path in sub_wav_paths[1:]:
+            seg = AudioSegment.from_wav(path)
+            combined = combined + breath + seg
+
+        combined.export(output_path, format='wav')
+        logger.debug('[%s] Multi-voice synthesis: %d segments → %s', job_id, len(sub_wav_paths), output_path)
+        return output_path
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def synthesize_single_shot(

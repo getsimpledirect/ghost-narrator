@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TARGET_LUFS: Final[float] = TARGET_LUFS
 DEFAULT_TRUE_PEAK: Final[float] = -1.0
-DEFAULT_LRA: Final[float] = 7.0  # Reduced for more consistent loudness
+DEFAULT_LRA: Final[float] = 9.0  # Podcast standard; 7.0 over-compressed natural emphasis
 
 
 def _parse_loudnorm_stats(stderr: str) -> Optional[Dict[str, float]]:
@@ -106,8 +106,8 @@ def master_audio(
         # - limiter: prevent clipping
         # Removed: highpass (causes harshness), equalizer (unnecessary for TTS)
         _COMPRESSOR = (
-            # threshold=0.177 ≈ -15 dBFS (gentler than -18), ratio=2:1 (softer than 3:1)
-            'acompressor=threshold=0.177:ratio=2:attack=20:release=150'
+            # threshold=0.125 ≈ -18 dBFS; release=250ms prevents audible pumping between sentences
+            'acompressor=threshold=0.125:ratio=2:attack=20:release=250'
         )
 
         measure_result = subprocess.run(
