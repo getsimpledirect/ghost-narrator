@@ -311,11 +311,21 @@ def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> li
                 current_chunk_words = []
                 current_word_count = 0
 
-        # Flush remaining words in this paragraph
-        if current_chunk_words:
+        # Flush remaining words at paragraph boundary only if we have enough
+        # content to justify a synthesis call. Short paragraphs (section headings,
+        # single-word labels) carry over into the next paragraph instead of becoming
+        # their own chunk — a 2-word chunk takes nearly as long to synthesize as a
+        # 300-word chunk due to model initialization overhead.
+        if current_chunk_words and current_word_count >= 15:
             chunks.append(' '.join(current_chunk_words))
+            current_chunk_words = []
+            current_word_count = 0
 
-    # Filter empty or trivially short chunks
+    # Flush whatever remains after the last paragraph
+    if current_chunk_words:
+        chunks.append(' '.join(current_chunk_words))
+
+    # Filter empty chunks
     chunks = [c.strip() for c in chunks if c.strip()]
 
     if not chunks:

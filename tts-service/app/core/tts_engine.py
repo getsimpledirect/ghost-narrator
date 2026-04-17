@@ -255,6 +255,10 @@ class TTSEngine:
         """Signal that the next synthesize_to_file call for this job_id should abort."""
         self._cancelled_jobs.add(job_id)
 
+    def uncancel_job(self, job_id: str) -> None:
+        """Clear any stale cancel flag for job_id before a fresh submission."""
+        self._cancelled_jobs.discard(job_id)
+
 
 _engine: Optional[TTSEngine] = None
 _engine_lock = threading.Lock()
