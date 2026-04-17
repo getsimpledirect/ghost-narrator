@@ -1,6 +1,77 @@
 # CHANGELOG
 
 
+## v2.8.5 (2026-04-17)
+
+### Bug Fixes
+
+- **tts-service**: Fix audio artifacts, speed/pitch variance, and wire multi-voice synthesis
+  ([`0f01f01`](https://github.com/getsimpledirect/ghost-narrator/commit/0f01f0128ba2bafbb701d69cbcd6fc2bce4a1017))
+
+Addresses a cluster of audio quality issues — disturbances, inter-chunk speed and pitch changes, and
+  glitches at segment joins — plus several correctness and quality improvements identified in a
+  systematic pipeline audit.
+
+Bug fixes --------- concatenate.py: Fix reversed crossfade curves in concatenate_audio_with_overlap.
+  The fade_out was sin(0→π/2)=0→1 (increasing) and fade_in was sin(π/2→0)=1→0 (decreasing) — the
+  opposite of what a crossfade requires. Corrected to cos(0→π/2)=1→0 for fade_out and sin(0→π/2)=0→1
+  for fade_in, matching the equal-power implementation already used in _crossfade_append. This bug
+  only manifested on articles >4000 words where concatenate_audio_with_overlap joins independently
+  synthesised segments.
+
+tts_job.py: Replace raw word-count segment splitting with sentence-boundary-aware
+  split_into_chunks(). The previous code sliced full_narrated_text.split() at a fixed word index,
+  which cut mid-sentence and handed the TTS model incomplete input. Autoregressive TTS generates
+  rising/hanging prosody on sentence fragments, causing audible pitch artifacts at every segment
+  boundary.
+
+service.py: Fix AudioSegment.silent() frame_rate mismatch in multi-voice path. The breath gap
+  between narrator and quoted segments was created with pydub's default 11025 Hz, which differs from
+  the TTS model's native output rate. Pydub does not auto-resample on concatenation, so the mismatch
+  caused audio glitches. Silence is now derived from the first real segment's frame_rate, channels,
+  and sample_width.
+
+Audio quality improvements -------------------------- hardware.py: Reduce TTS sampling temperature
+  from 0.4 to 0.3 (and top_k 50→40, top_p 0.92→0.85) across all hardware tiers. Each
+  generate_voice_clone() call is an independent autoregressive generation; higher temperature widens
+  the duration distribution, producing perceptible speaking-rate and pitch shifts between chunks.
+  Lower temperature narrows this variance while remaining above the robotic range.
+
+tts_job.py: Track raw LLM narration output in narrated_segments before TTS chunking. Single-shot and
+  segment-based synthesis paths previously joined TTS chunks with spaces, discarding all paragraph
+  structure. Now narrated_segments is joined with double newlines so the TTS model receives natural
+  paragraph breaks as topic-boundary cues for better prosody.
+
+mastering.py: Raise DEFAULT_LRA from 7.0 to 9.0 LU (podcast standard range 8–12 LU). At 7 LU the
+  loudnorm filter removed the natural emphasis dynamics the TTS model generates, flattening the
+  audio.
+
+mastering.py: Lower compressor threshold from -15 dBFS (0.177) to -18 dBFS (0.125) and extend
+  release from 150 ms to 250 ms. The shorter release caused audible gain pumping between sentences;
+  250 ms is transparent for speech content.
+
+normalize.py: Expand SaaS/PaaS/IaaS to full spoken phrases rather than capitalised tokens ("Saas",
+  "Paas", "Iaas") that TTS reads as nonsense words. Remove AI and ML from the acronym registry —
+  Qwen3-TTS pronounces them correctly natively and hyphenated letter-spelling (A-I, M-L) sounds
+  choppy in fast narration.
+
+prompt.py: Populate _PACING_ADDON with explicit [PAUSE]/[LONG_PAUSE] placement guidance for MID_VRAM
+  and HIGH_VRAM tiers. The base prompt instructed the model to insert pause markers but gave no
+  frequency guidance; LLM models rarely inserted them unprompted, losing natural pacing at section
+  and topic boundaries.
+
+Multi-voice synthesis (new capability) --------------------------------------- service.py: Wire the
+  existing has_quoted_speech/split_at_quotes utilities into synthesize_chunk(). Chunks containing
+  double-quoted speech are now split at quote boundaries and each segment synthesised independently.
+  Narrator segments use the tier default parameters; quoted segments receive temperature +0.15
+  (capped at 0.55) and top_p +0.05 (capped at 0.92) for more expressive delivery while preserving
+  voice identity through the shared reference prompt. Sub-segments are joined with an 80 ms breath
+  gap whose silence properties are derived from the first segment to avoid sample-rate mismatches.
+  Chunks without quotes take the unchanged fast single-synthesis path.
+
+Tests: update test_all_tiers_use_temperature_03 assertion to match new value.
+
+
 ## v2.8.4 (2026-04-14)
 
 ### Bug Fixes
