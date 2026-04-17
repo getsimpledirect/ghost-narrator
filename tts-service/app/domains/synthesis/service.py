@@ -179,11 +179,13 @@ def synthesize_chunk(
         # channels, and sample_width match — pydub does not auto-resample on
         # concatenation, so a mismatched silent() causes audio glitches.
         combined = AudioSegment.from_wav(sub_wav_paths[0])
-        breath = AudioSegment.silent(
-            duration=80,
-            frame_rate=combined.frame_rate,
-            channels=combined.channels,
-        ).set_sample_width(combined.sample_width)
+        # pydub.AudioSegment.silent() only accepts duration and frame_rate —
+        # channels and sample_width must be set via chained method calls.
+        breath = (
+            AudioSegment.silent(duration=80, frame_rate=combined.frame_rate)
+            .set_channels(combined.channels)
+            .set_sample_width(combined.sample_width)
+        )
         for path in sub_wav_paths[1:]:
             seg = AudioSegment.from_wav(path)
             combined = combined + breath + seg

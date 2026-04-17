@@ -163,13 +163,15 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
     if timeout is None:
         timeout = LLM_TIMEOUT
 
-    # On Ollama endpoints, pass think=False to prevent Qwen3 from generating
-    # <think> blocks entirely.  Stripping post-hoc is a safety net, but the
-    # model still spends inference time generating tokens we discard — disabling
-    # at source eliminates that overhead (can save 10-60s per chunk on Qwen3-8b).
+    # On Ollama endpoints: disable thinking blocks and explicitly set num_ctx=8192.
+    # Ollama's default context window for qwen3:8b is 2048 tokens. With the system
+    # prompt consuming ~1050 tokens, a 2500-word narration chunk (≈3750 tokens) never
+    # fits — Ollama silently truncates the input and the model generates a partial
+    # narration that looks like summarization. num_ctx=8192 gives 8192-(input) tokens
+    # for output, which is sufficient for chunks up to ~2000 words.
     kwargs: dict = {}
     if _OLLAMA_ENDPOINT:
-        kwargs['extra_body'] = {'think': False}
+        kwargs['extra_body'] = {'think': False, 'options': {'num_ctx': 8192}}
 
     # Set max_tokens to prevent output truncation - use 8192 to accommodate
     # longer narrations (approximately 6000-7000 words output). Without this,

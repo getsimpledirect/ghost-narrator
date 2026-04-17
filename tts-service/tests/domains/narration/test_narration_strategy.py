@@ -58,7 +58,7 @@ def test_ollama_endpoint_detected():
 
 @pytest.mark.asyncio
 async def test_chunked_strategy_passes_think_false_to_ollama():
-    """When targeting Ollama, extra_body={'think': False} must be in the LLM call."""
+    """When targeting Ollama, extra_body must contain think=False and num_ctx=8192."""
     client = _make_llm_client('Narrated output with enough words to pass validation check here.')
     strategy = ChunkedStrategy(
         llm_client=client,
@@ -72,7 +72,9 @@ async def test_chunked_strategy_passes_think_false_to_ollama():
         strat._OLLAMA_ENDPOINT = True
         await strategy.narrate('Short source text paragraph for testing purposes only.')
         call_kwargs = client.chat.completions.create.call_args[1]
-        assert call_kwargs.get('extra_body') == {'think': False}
+        extra_body = call_kwargs.get('extra_body', {})
+        assert extra_body.get('think') is False
+        assert extra_body.get('options', {}).get('num_ctx') == 8192
     finally:
         strat._OLLAMA_ENDPOINT = original
 
