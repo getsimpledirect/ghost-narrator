@@ -1,6 +1,49 @@
 # CHANGELOG
 
 
+## v2.8.6 (2026-04-17)
+
+### Bug Fixes
+
+- **tts-service**: Fix multi-voice crash and Ollama context truncation
+  ([`7cc4498`](https://github.com/getsimpledirect/ghost-narrator/commit/7cc44981ecaba64b2dff78825ae8adb04da84cdd))
+
+Two production bugs surfaced from live logs.
+
+Fix 1 — AudioSegment.silent() crash (multi-voice path)
+  ------------------------------------------------------ pydub's AudioSegment.silent() only accepts
+  duration and frame_rate parameters. Passing channels= raised TypeError on every chunk containing
+  quoted speech, which crashed the pipelined synthesis and forced a full sequential re-run. Fixed by
+  chaining .set_channels() and .set_sample_width() after the silent() call to match the first real
+  segment's properties.
+
+Fix 2 — Ollama context window truncation (narration quality)
+  ------------------------------------------------------------ Ollama defaults qwen3:8b to a
+  2048-token context window. The narration system prompt consumes ~1050 tokens, leaving only ~998
+  tokens for input and output combined. A 2500-word chunk requires ~3750 input tokens alone — Ollama
+  silently truncated the input and the model faithfully narrated the partial content it received,
+  producing outputs at 11–28% of the expected length. This looked like summarization but was
+  actually correct behaviour on truncated input.
+
+Three changes address this:
+
+strategy.py: Pass options.num_ctx=8192 in extra_body on Ollama endpoints, alongside the existing
+  think=False. This raises the effective context window from 2048 to 8192 tokens so the full chunk
+  and its output can coexist.
+
+hardware.py: Reduce narration_chunk_words from 2500 to 800 for MID_VRAM and HIGH_VRAM tiers. With
+  num_ctx=8192 and ~1050 token system prompt, an 800-word chunk (≈1200 tokens) leaves ~5942 tokens
+  for output — comfortable headroom. 2500-word chunks leave only ~3392 tokens for output, which is
+  insufficient for faithful full-length narration even with 8192 context.
+
+factory.py: Reduce MID_VRAM single-shot fallback threshold from 3000 to 1200 words. Single-shot
+  sends the entire article in one call; at 3000 words input (≈4500 tokens) + 4500 tokens expected
+  output the total exceeds 8192. At 1200 words the total fits comfortably within context.
+
+Tests: update extra_body assertion to verify both think=False and options.num_ctx=8192 are present
+  in Ollama calls.
+
+
 ## v2.8.5 (2026-04-17)
 
 ### Bug Fixes
