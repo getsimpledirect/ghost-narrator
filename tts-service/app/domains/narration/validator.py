@@ -336,19 +336,36 @@ class NarrationValidator:
         )
 
     def build_retry_prompt(self, result: ValidationResult, original_chunk: str) -> str:
-        # Only include top 5 most critical missing items to prevent overwhelming the LLM
-        # Filter out the word ratio message as it's not actionable
+        source_words = len(original_chunk.split())
+
+        # CRITICAL truncation: the output was so short that listing missing entities
+        # is unhelpful — the model needs to know it must narrate the full text.
+        if result.word_ratio < self.CRITICAL_WORD_RATIO:
+            return (
+                f'Your previous narration was far too short '
+                f'({int(result.word_ratio * 100)}% of the source). '
+                f'The source has ~{source_words} words. '
+                f'You must narrate ALL of the content — every sentence, every argument, '
+                f'every number, every example. '
+                f'Your output must be approximately {source_words} words.\n\n'
+                f'Narrate the COMPLETE text:\n\n{original_chunk}'
+            )
+
+        # Moderate truncation: list the specific missing items so the model knows
+        # what to add, plus reinforce the length requirement.
         critical_items = [e for e in result.missing_entities if not e.startswith('[WORD COUNT')][:5]
 
         if not critical_items:
             return (
-                f'Please provide a more complete narration of the following text:\n\n'
+                f'Your narration was too short (~{int(result.word_ratio * 100)}% of source). '
+                f'Please provide a more complete narration (~{source_words} words) of:\n\n'
                 f'{original_chunk}'
             )
 
         missing_list = '\n'.join(f'- {e}' for e in critical_items)
         return (
-            f'Your previous output was missing some key information: '
+            f'Your previous output was missing some key information and was too short '
+            f'(~{int(result.word_ratio * 100)}% of the ~{source_words}-word source):\n'
             f'{missing_list}\n\n'
-            f'Please provide a more complete narration of:\n\n{original_chunk}'
+            f'Please provide a complete narration (~{source_words} words) of:\n\n{original_chunk}'
         )

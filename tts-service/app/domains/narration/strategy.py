@@ -163,25 +163,43 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
     if timeout is None:
         timeout = LLM_TIMEOUT
 
-    # On Ollama endpoints: disable thinking blocks and explicitly set num_ctx=8192.
-    # Ollama's default context window for qwen3:8b is 2048 tokens. With the system
-    # prompt consuming ~1050 tokens, a 2500-word narration chunk (≈3750 tokens) never
-    # fits — Ollama silently truncates the input and the model generates a partial
-    # narration that looks like summarization. num_ctx=8192 gives 8192-(input) tokens
-    # for output, which is sufficient for chunks up to ~2000 words.
+    # On Ollama endpoints: disable thinking blocks via two mechanisms:
+    #   1. think: False in extra_body — API-level flag (Ollama >= 0.6.x)
+    #   2. /no_think prepended to each user message — model-level instruction that
+    #      works on ALL Ollama versions since qwen3 was trained to respect it.
+    #
+    # Why both? Older Ollama container images silently ignore think: False. When
+    # thinking is not suppressed, qwen3:8b may generate 5000-8000 thinking tokens
+    # before the narration text. Those tokens count against max_tokens=8192 and can
+    # leave as few as 59 tokens for the actual narration — producing the CRITICAL 7%
+    # word-ratio failures seen in production. Stripping <think> blocks fixes the
+    # output text but the token budget is already spent.
+    #
+    # Also set num_ctx=8192 explicitly: Ollama defaults to 2048, which silently
+    # truncates long chunks and produces summarization-style output.
     kwargs: dict = {}
+    effective_messages = messages
     if _OLLAMA_ENDPOINT:
+        # Prepend /no_think to every user turn so thinking is suppressed regardless
+        # of Ollama version. Skip turns that already carry the instruction (retries).
+        effective_messages = [
+            (
+                {**msg, 'content': '/no_think\n' + msg['content']}
+                if msg.get('role') == 'user' and not msg['content'].startswith('/no_think')
+                else msg
+            )
+            for msg in messages
+        ]
         kwargs['extra_body'] = {'think': False, 'options': {'num_ctx': 8192}}
 
-    # Set max_tokens to prevent output truncation - use 8192 to accommodate
-    # longer narrations (approximately 6000-7000 words output). Without this,
-    # Ollama defaults (often 2048/4096) can truncate output, causing the LLM
-    # to stop mid-sentence and lose content.
+    # max_tokens: set high enough to never truncate narration output. Ollama caps
+    # the actual output at min(max_tokens, num_ctx - prompt_tokens), so this only
+    # matters if thinking is disabled and input is small.
     max_tokens = 8192
 
     response = await client.chat.completions.create(
         model=model,
-        messages=messages,
+        messages=effective_messages,
         temperature=0.3,
         max_tokens=max_tokens,
         timeout=timeout,
@@ -240,7 +258,14 @@ class ChunkedStrategy(NarrationStrategy):
         system_prompt: str = '',
     ) -> str:
         effective_prompt = system_prompt or self._base_system_prompt
-        position_ctx = f'\n[SECTION {chunk_index + 1} of {total_chunks}]'
+        word_count = len(chunk.split())
+        # Explicit word-count target prevents qwen3:8b from under-generating.
+        # Without this, the model sometimes outputs a brief summary (7-45% of source
+        # length) despite the system prompt's "match source length" instruction.
+        position_ctx = (
+            f'\n[SECTION {chunk_index + 1} of {total_chunks} | '
+            f'SOURCE: ~{word_count} words → your narration must be approximately {word_count} words]'
+        )
         continuity = get_continuity_instruction(previous_output_tail, previous_source_tail)
         messages = [
             {'role': 'system', 'content': effective_prompt},

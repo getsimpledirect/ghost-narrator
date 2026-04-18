@@ -290,7 +290,7 @@ async def test_chunk_position_in_user_content():
     # First call (chunk 0) has [SECTION 1 of 2]
     first_call_messages = client.chat.completions.create.call_args_list[0][1]['messages']
     user_content = next(m['content'] for m in first_call_messages if m['role'] == 'user')
-    assert '[SECTION 1 of 2]' in user_content
+    assert '[SECTION 1 of 2 |' in user_content
 
 
 @pytest.mark.asyncio
