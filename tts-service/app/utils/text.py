@@ -126,10 +126,11 @@ def clean_text_for_tts(text: str) -> str:
 
     # Convert pause markers to punctuation the TTS model naturally pauses on.
     # [LONG_PAUSE] → paragraph break (longest natural pause in spoken delivery).
-    # [PAUSE]      → ellipsis (signals a beat/breath to the TTS prosody model).
+    # [PAUSE]      → comma (reliable short-beat cue; '...' would be collapsed to '.'
+    #                by the _MULTI_PUNCT_RE normalizer that runs below).
     # LONG_PAUSE first so its pattern isn't consumed by the PAUSE replacement.
     text = re.sub(r'\s*\[LONG_PAUSE\]\s*', '\n\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'\s*\[PAUSE\]\s*', ' ... ', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s*\[PAUSE\]\s*', ', ', text, flags=re.IGNORECASE)
 
     # Replace smart quotes and special characters
     for char, replacement in _SPECIAL_CHARS.items():
@@ -394,6 +395,42 @@ def _split_sentence_at_clauses(sentence: str, max_words: int) -> list[str]:
         result.append(' '.join(current))
 
     return result or [sentence]
+
+
+def split_into_large_segments(text: str, target_words: int) -> list[str]:
+    """Group paragraphs into large segments of ~target_words for segment synthesis.
+
+    Unlike split_into_chunks (designed for ≤400-word TTS chunks), this function
+    accumulates paragraphs until the target word count is reached.  A paragraph
+    boundary is only used as a split point when the accumulated words would exceed
+    target_words — not at every paragraph as split_into_chunks does.
+
+    Args:
+        text: Full narration text.
+        target_words: Desired words per segment (e.g. SINGLE_SHOT_SEGMENT_WORDS=3000).
+
+    Returns:
+        List of large text segments, each close to target_words in length.
+    """
+    paragraphs = [p.strip() for p in re.split(r'\n\n+', text) if p.strip()]
+    segments: list[str] = []
+    current: list[str] = []
+    current_words = 0
+
+    for para in paragraphs:
+        para_words = len(para.split())
+        if current_words + para_words > target_words and current:
+            segments.append('\n\n'.join(current))
+            current = [para]
+            current_words = para_words
+        else:
+            current.append(para)
+            current_words += para_words
+
+    if current:
+        segments.append('\n\n'.join(current))
+
+    return segments if segments else [text]
 
 
 def get_pause_ms_after_chunk(chunk: str, next_chunk: str | None) -> int:

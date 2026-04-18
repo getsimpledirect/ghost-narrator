@@ -349,12 +349,9 @@ async def run_tts_job(
                         else:
                             # Long content: split at sentence boundaries, synthesize each
                             # segment in single-shot mode, quality-check before merging
-                            from app.utils.text import (
-                                split_into_chunks as _sentence_split,
-                                clean_text_for_tts,
-                            )
+                            from app.utils.text import split_into_large_segments, clean_text_for_tts
 
-                            sentence_segments = _sentence_split(
+                            sentence_segments = split_into_large_segments(
                                 full_narrated_text, SINGLE_SHOT_SEGMENT_WORDS
                             )
                             logger.info(
