@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.8.11 (2026-04-18)
+
+### Bug Fixes
+
+- **tts-service**: Convert pause markers to punctuation cues instead of reading them aloud
+  ([`c93c829`](https://github.com/getsimpledirect/ghost-narrator/commit/c93c8295a83334a5493141c4d07fee83633d0643))
+
+[PAUSE] and [LONG_PAUSE] markers were passed raw to Qwen3-TTS, which narrated them as literal text.
+  clean_text_for_tts now converts them to natural punctuation the model responds to prosodically:
+  [PAUSE] becomes an ellipsis and [LONG_PAUSE] becomes a paragraph break. The single-shot synthesis
+  path is preserved as a single TTS call.
+
+
 ## v2.8.10 (2026-04-18)
 
 ### Bug Fixes
