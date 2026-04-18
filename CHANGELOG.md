@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v2.8.9 (2026-04-18)
+
+### Refactoring
+
+- **tts-service**: Remove dead import and update stale test mocks
+  ([`213b075`](https://github.com/getsimpledirect/ghost-narrator/commit/213b0752e1273197e1ac228275096264e2f432ba))
+
+synthesize_chunks_auto was imported in tts_job.py but never called after the two-phase pipeline
+  refactor. Five tests patched it as a mock that silently went uncalled, and the synthesis failure
+  test relied on Redis failing rather than the mock raising SynthesisError.
+
+Replace all five synthesize_chunks_auto patches with synthesize_single_shot_async (the function that
+  is actually invoked in Phase 2). Add get_narration_strategy and get_effective_config patches to
+  the synthesis failure test so the error fires at synthesis, not Redis. Rewrite the timeout test to
+  use a slow async generator for narration, which is the deterministic hang point in the new
+  architecture.
+
+Add 10 direct tests for filter_non_narrable_content covering fenced code blocks, inline code, HTML
+  pre/table, markdown tables, footnote markers, CTA lines, prose preservation, and whitespace
+  collapse.
+
+
 ## v2.8.8 (2026-04-18)
 
 ### Bug Fixes
