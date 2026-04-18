@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v2.8.10 (2026-04-18)
+
+### Bug Fixes
+
+- **narration**: Suppress qwen3 thinking tokens and add word-count target
+  ([`47bcb70`](https://github.com/getsimpledirect/ghost-narrator/commit/47bcb708199c118fc918604aacbcb9452e3bcd1f))
+
+Three root-cause fixes for the 7-45% word-ratio truncation failures seen in production (CRITICAL: 59
+  words from 797-word chunks):
+
+1. /no_think prepended to every user message (strategy.py _call_llm). qwen3:8b generates 5000-8000
+  thinking tokens before narrating when thinking is not disabled. Those tokens count against
+  max_tokens=8192, leaving as few as 59 tokens for the actual narration. think: False in extra_body
+  is an Ollama API flag added in 0.6.x; older container images silently ignore it. /no_think is a
+  model-level instruction the qwen3 family was trained to respect regardless of Ollama version.
+
+2. Explicit word-count target in every chunk's user message (_narrate_chunk). [SECTION X of Y |
+  SOURCE: ~N words → narrate approximately N words] gives the model a concrete numeric target. The
+  system prompt's "match source length" is categorical; a number in the user turn is harder to
+  ignore and catches truncation even when thinking is not the cause.
+
+3. Word-count-aware retry prompt (validator.py build_retry_prompt). CRITICAL retries (<25% ratio)
+  now say "your output was 7% of source, must be ~800 words, narrate the complete text" instead of
+  listing five missing entities. Moderate retries include both the missing list and the target word
+  count.
+
+
 ## v2.8.9 (2026-04-18)
 
 ### Refactoring
