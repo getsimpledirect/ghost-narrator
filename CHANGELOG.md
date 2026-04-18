@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v2.8.8 (2026-04-18)
+
+### Bug Fixes
+
+- **tts-service**: Decouple narration from synthesis and add content pre-filter
+  ([`d4ce79f`](https://github.com/getsimpledirect/ghost-narrator/commit/d4ce79fdd838e0fd9b1f0c0481813ea3bb4a0efa))
+
+The prior architecture ran pipelined chunked TTS synthesis concurrently with LLM narration, then
+  immediately discarded all synthesized audio and re-synthesized from scratch via single-shot
+  segment mode for articles above 4000 words. This caused 5-10x redundant GPU work and was the
+  primary driver of the 7200s job timeouts seen on all three test articles.
+
+The pipeline is now split into two fully sequential phases: - Phase 1 (narration): LLM rewrites
+  article text into spoken script, no audio - Phase 2 (synthesis): one path chosen based on final
+  narrated word count - <= SINGLE_SHOT_MAX_WORDS: single full-text synthesis pass - >
+  SINGLE_SHOT_MAX_WORDS: segment synthesis with quality check before merge
+
+This eliminates the dual-path synthesis entirely. For a 6000-word article the previous architecture
+  ran ~70 chunk synthesis passes then 2 segment passes; the new architecture runs 2 segment passes
+  only.
+
+Also fix three compounding issues: - normalize.py: add filter_non_narrable_content() called before
+  LLM narration to strip fenced code blocks, HTML pre/table/figure elements, markdown tables,
+  footnote markers, and CTA boilerplate. Ghost CMS articles contain significant non-prose content
+  that inflates LLM token count and triggers summarization. - strategy.py: guard
+  _llm_completeness_check with a 4000-word combined budget check. The prior code sent source +
+  narration (~16k tokens) into an 8192-token context, producing truncated garbage JSON that
+  triggered unnecessary re-narration. - validator.py: raise MIN_WORD_RATIO from 0.40 to 0.60 so
+  content truncation (>40% loss) is caught and retried sooner rather than passing validation
+  silently.
+
+
 ## v2.8.7 (2026-04-17)
 
 ### Bug Fixes
