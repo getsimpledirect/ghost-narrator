@@ -156,7 +156,7 @@ def master_audio(
                     'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
                     f'{_COMPRESSOR},'
                     f'{loudnorm_filter},'
-                    'alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled'
+                    'alimiter=level_in=1:level_out=1:limit=0.708:attack=5:release=50:level=disabled'
                 ),
                 '-ar',
                 str(sample_rate),

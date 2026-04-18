@@ -104,13 +104,15 @@ except ValueError:
     MAX_CHUNK_WORDS: Final[int] = 400  # Default to 400
 
 # Single-shot synthesis settings
-# When content is below this word count, synthesize in a single pass
-# for studio-quality seamless audio (no chunk boundaries).
-SINGLE_SHOT_MAX_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_MAX_WORDS', '4000'))
+# When content is at or below this word count, synthesize in a single pass.
+# Must stay ≤ 400 — Qwen3-TTS-1.7B's codec token budget (~75 tokens/sec audio)
+# overflows the model's context window beyond ~700 words, producing noise.
+SINGLE_SHOT_MAX_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_MAX_WORDS', '400'))
 
-# For content above SINGLE_SHOT_MAX_WORDS, split into segments
-# Each segment is synthesized in single-shot mode, then concatenated.
-SINGLE_SHOT_SEGMENT_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_SEGMENT_WORDS', '3000'))
+# For content above SINGLE_SHOT_MAX_WORDS, split into segments of this size.
+# Each segment is synthesized in single-shot mode, then crossfaded together.
+# Keep ≤ 400 for the same context-window reason as SINGLE_SHOT_MAX_WORDS.
+SINGLE_SHOT_SEGMENT_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_SEGMENT_WORDS', '400'))
 
 # Overlap between segments for crossfade (in milliseconds)
 SINGLE_SHOT_OVERLAP_MS: Final[int] = int(os.environ.get('SINGLE_SHOT_OVERLAP_MS', '500'))
