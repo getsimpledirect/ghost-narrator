@@ -131,6 +131,78 @@ _ACRONYM_RE: Final = re.compile(r'\b(' + '|'.join(re.escape(k) for k in _ACRONYM
 _MULTI_SPACE_RE: Final = re.compile(r'[ \t]+')
 _MULTI_NEWLINE_RE: Final = re.compile(r'\n{3,}')
 
+# ── Content pre-filter patterns ───────────────────────────────────────────────
+# Strip non-narrable blocks BEFORE they reach the LLM narration pipeline.
+# These patterns match content that is meaningful visually but nonsensical
+# when spoken aloud: code, tables, CTA boilerplate, Ghost CMS card elements.
+
+# Fenced code blocks: ```...``` (possibly with language tag)
+_FENCED_CODE_RE: Final = re.compile(r'```[\s\S]*?```', re.DOTALL)
+
+# Inline code: `...`
+_INLINE_CODE_RE: Final = re.compile(r'`[^`\n]+`')
+
+# HTML block-level elements that are never narrated: pre, code, table, figure,
+# script, style, noscript, and Ghost CMS kg-card variants.
+_HTML_NON_NARRABLE_RE: Final = re.compile(
+    r'<(?:pre|code|table|figure|script|style|noscript|iframe|svg)[^>]*>[\s\S]*?'
+    r'</(?:pre|code|table|figure|script|style|noscript|iframe|svg)>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Markdown table rows: lines that start and end with | (including header separator)
+_MD_TABLE_ROW_RE: Final = re.compile(r'^\|.*\|[ \t]*$', re.MULTILINE)
+_MD_TABLE_SEP_RE: Final = re.compile(r'^\|[-| :]+\|[ \t]*$', re.MULTILINE)
+
+# Footnote reference markers: [^1] or [1] at end of sentence
+_FOOTNOTE_MARKER_RE: Final = re.compile(r'\[\^?\d+\]')
+
+# Call-to-action boilerplate common in Ghost posts — single-line patterns
+# matched at start of line so mid-sentence uses of these words are unaffected.
+_CTA_LINE_RE: Final = re.compile(
+    r'^[ \t]*(?:subscribe|follow us|share this|sign up|get notified|'
+    r'join our newsletter|click here|read more|learn more|see more|'
+    r'view all|newsletter|unsubscribe)[^\n]{0,120}$',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def filter_non_narrable_content(text: str) -> str:
+    """Strip content that is visual/interactive but nonsensical when narrated.
+
+    Applied before normalize_for_narration so the LLM receives only prose.
+    Removes: fenced code blocks, HTML pre/code/table/figure/script elements,
+    markdown tables, footnote markers, and common CTA boilerplate lines.
+
+    Args:
+        text: Raw article text (HTML or Markdown, not yet normalized).
+
+    Returns:
+        Text with non-narrable blocks removed.
+    """
+    # HTML non-narrable block elements (pre/code/table/figure/etc.)
+    text = _HTML_NON_NARRABLE_RE.sub('', text)
+
+    # Fenced code blocks before markdown stripping removes the backticks
+    text = _FENCED_CODE_RE.sub('', text)
+
+    # Inline code (single backtick)
+    text = _INLINE_CODE_RE.sub('', text)
+
+    # Markdown table rows (separator lines and data rows)
+    text = _MD_TABLE_SEP_RE.sub('', text)
+    text = _MD_TABLE_ROW_RE.sub('', text)
+
+    # Footnote markers
+    text = _FOOTNOTE_MARKER_RE.sub('', text)
+
+    # CTA boilerplate lines
+    text = _CTA_LINE_RE.sub('', text)
+
+    # Re-collapse whitespace introduced by the removals
+    text = _MULTI_NEWLINE_RE.sub('\n\n', text)
+    return text.strip()
+
 
 def extract_section_map(html_text: str) -> str:
     """Extract H2/H3 section headers from HTML or Markdown to build a compact section map.
@@ -171,6 +243,7 @@ def normalize_for_narration(text: str) -> str:
     """Normalize raw article text before the LLM narration pipeline.
 
     Applies deterministic, fast transforms only:
+    - Filter non-narrable blocks (code, tables, Ghost kg-cards, CTAs)
     - Strip HTML tags and unescape HTML entities
     - Expand $NB/$NM/$NT/$NK abbreviations to spoken form
     - Convert ISO 8601 dates to natural form (April 13, 2026)
@@ -184,6 +257,10 @@ def normalize_for_narration(text: str) -> str:
     Returns:
         Cleaned text suitable for LLM narration.
     """
+    # Strip non-narrable content before any other processing so code blocks,
+    # tables, and CTAs don't inflate token count or confuse the LLM
+    text = filter_non_narrable_content(text)
+
     # Strip Markdown frontmatter
     text = _MD_FRONTMATTER_RE.sub('', text)
 

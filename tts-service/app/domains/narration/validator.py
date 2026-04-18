@@ -110,18 +110,17 @@ class NarrationValidator:
     _EMAIL_RE = re.compile(
         r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
     )
-    # Minimum acceptable word count ratio (narration / source)
-    # Primary check for content preservation - if below this, significant
-    # content was likely dropped. 40% allows natural compression while
-    # catching genuine content loss (60% max compression).
-    MIN_WORD_RATIO = 0.40
+    # Minimum acceptable word count ratio (narration / source).
+    # The narration prompt instructs the LLM to preserve all content and match
+    # source length — a ratio below 0.60 means at least 40% of content was dropped.
+    # Raised from 0.40 to 0.60 so truncation is caught earlier (triggers retry)
+    # rather than passing validation and producing incomplete audio.
+    MIN_WORD_RATIO = 0.60
 
-    # Warning threshold - log when ratio is below this but above MIN_WORD_RATIO
-    # This provides visibility into potential content issues without blocking.
-    WARNING_WORD_RATIO = 0.50
+    # Warning threshold — log when ratio is below this but above MIN_WORD_RATIO.
+    WARNING_WORD_RATIO = 0.75
 
-    # Critical threshold - hard fail below this (no retries)
-    # Anything below this likely means major content was lost.
+    # Critical threshold — hard fail below this (no retries, content too sparse).
     CRITICAL_WORD_RATIO = 0.25
 
     # Entity validation is now SECONDARY and non-blocking.

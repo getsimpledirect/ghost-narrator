@@ -347,10 +347,22 @@ class ChunkedStrategy(NarrationStrategy):
 
         full_narration = '\n\n'.join(outputs)
 
-        # Layer 4: LLM completeness check — HIGH_VRAM only
+        # Layer 4: LLM completeness check — HIGH_VRAM only, small articles only.
+        # The check sends source + narration to the LLM in one call. With num_ctx=8192
+        # and the system prompt consuming ~200 tokens, the combined budget for source
+        # and narration is ~4000 words each. Skip for larger content to avoid silent
+        # truncation that produces garbage JSON and triggers unnecessary re-narration.
         if self._tier == HardwareTier.HIGH_VRAM:
-            logger.info('Running LLM completeness check (HIGH_VRAM)...')
-            full_narration = await self._llm_completeness_check(text, full_narration)
+            _combined_words = len(text.split()) + len(full_narration.split())
+            if _combined_words <= 4000:
+                logger.info('Running LLM completeness check (HIGH_VRAM)...')
+                full_narration = await self._llm_completeness_check(text, full_narration)
+            else:
+                logger.info(
+                    'Skipping LLM completeness check — combined word count %d exceeds '
+                    '4000-word context budget',
+                    _combined_words,
+                )
 
         return full_narration
 

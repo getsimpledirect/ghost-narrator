@@ -125,15 +125,13 @@ async def run_tts_job(
     """
     Execute the complete TTS pipeline with parallel processing and optimizations.
 
-    This orchestrator manages:
-    1. Status tracking via JobStore (Redis).
-    2. TTS engine readiness check.
-    3. LLM narration (article text → spoken podcast script).
-    4. Text chunking for TTS synthesis.
-    5. Chunk synthesis (sequential on GPU, parallel on CPU).
-    6. Per-chunk normalization and concatenation with dynamic gaps.
-    7. Final mastering (EBU R128 loudness normalization).
-    8. Quality validation, upload, and webhook notification.
+    The pipeline is divided into two fully decoupled phases:
+    1. Narration phase — LLM rewrites article text into a spoken script (no audio).
+    2. Synthesis phase — Qwen3-TTS converts the script to audio (one path only).
+
+    This decoupling eliminates the prior dual-path bug where chunked TTS ran
+    during narration and was immediately discarded and re-synthesized via
+    single-shot, causing up to 10× redundant GPU work and 7200s timeouts.
 
     Args:
         job_id: Unique identifier for tracking and file storage.
@@ -261,9 +259,14 @@ async def run_tts_job(
             # which unblocks any awaiting run_in_executor call and releases the semaphore.
             try:
                 async with asyncio.timeout(MAX_JOB_DURATION_SECONDS):
-                    # Step 1+2+3: Narrate, chunk, and synthesize (pipelined when possible)
+                    # ─── PHASE 1: NARRATION ──────────────────────────────────────────
+                    # LLM rewrites article text into a spoken-form narration script.
+                    # No audio is generated in this phase — narration and synthesis are
+                    # fully decoupled. The prior architecture synthesized TTS chunks
+                    # during narration then discarded them to re-synthesize via
+                    # single-shot, causing 5-10× redundant GPU work per job.
                     await _check_status()
-                    logger.info(f'[{job_id}] Starting narration + synthesis pipeline...')
+                    logger.info(f'[{job_id}] Phase 1: narration...')
                     try:
                         narration = get_narration_strategy()
                     except Exception as exc:
@@ -272,160 +275,63 @@ async def run_tts_job(
 
                     chunk_wav_paths: list[str] = []
                     all_chunks: list[str] = []
-                    narrated_segments: list[str] = []  # raw LLM output before TTS chunking
+                    narrated_segments: list[str] = []
                     chunk_pause_durations: list[int] = []
                     total_words = 0
-                    chunk_index = 0
                     narration_skipped = False
-                    with _span('tts.narration_synthesis'):
+
+                    with _span('tts.narration'):
                         if narration is not None:
-                            # True pipelined: LLM narration of chunk N+1 runs concurrently with
-                            # TTS synthesis of chunk N via asyncio producer-consumer with a queue.
-                            #
-                            # The original `async for` loop was NOT pipelined — Python's async
-                            # generator only advances when __anext__() is called, which happens
-                            # after the loop body (TTS synthesis) fully completes. Using a
-                            # background task + Queue decouples the two stages so the LLM HTTP
-                            # call and Ollama inference genuinely overlap with TTS thread work.
                             try:
-                                _narration_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(
-                                    maxsize=2
-                                )
-                                _producer_errors: list[BaseException] = []
-
-                                async def _narration_producer() -> None:
-                                    try:
-                                        async for segment in narration.narrate_iter(text):
-                                            await _check_status()
-                                            await _narration_queue.put(segment)
-                                    except Exception as exc:
-                                        _producer_errors.append(exc)
-                                    finally:
-                                        # Always deliver sentinel so consumer can exit cleanly
-                                        await _narration_queue.put(None)
-
-                                async def _synthesis_consumer() -> None:
-                                    nonlocal total_words, chunk_index
-                                    while True:
-                                        segment = await _narration_queue.get()
-                                        if segment is None:
-                                            break
-                                        await _check_status()
-                                        narrated_segments.append(segment)
-                                        tts_chunks, seg_words, seg_pauses = (
-                                            prepare_text_for_synthesis(segment, MAX_CHUNK_WORDS)
-                                        )
-                                        all_chunks.extend(tts_chunks)
-                                        chunk_pause_durations.extend(seg_pauses)
-                                        total_words += seg_words
-                                        paths = await synthesize_chunks_auto(
-                                            chunks=tts_chunks,
-                                            job_dir=job_dir,
-                                            job_id=job_id,
-                                            status_check_callback=_check_status,
-                                            chunk_offset=chunk_index,
-                                            generation_kwargs=generation_kwargs,
-                                        )
-                                        chunk_wav_paths.extend(paths)
-                                        chunk_index += len(tts_chunks)
-
-                                _producer_task = asyncio.create_task(_narration_producer())
-                                try:
-                                    await _synthesis_consumer()
-                                finally:
-                                    if not _producer_task.done():
-                                        _producer_task.cancel()
-                                    # Drain the queue so the producer's blocked put() can
-                                    # complete and the task can exit.  get_nowait() calls
-                                    # _wakeup_next internally, waking the awaiting putter;
-                                    # await sleep(0) yields the event loop so it can run.
-                                    for _ in range(50):
-                                        if _producer_task.done():
-                                            break
-                                        while not _narration_queue.empty():
-                                            try:
-                                                _narration_queue.get_nowait()
-                                            except asyncio.QueueEmpty:
-                                                break
-                                        await asyncio.sleep(0)
-                                    try:
-                                        await _producer_task
-                                    except (asyncio.CancelledError, Exception):
-                                        pass
-
-                                if _producer_errors:
-                                    raise _producer_errors[0]
-
+                                async for segment in narration.narrate_iter(text):
+                                    await _check_status()
+                                    narrated_segments.append(segment)
                                 logger.info(
-                                    f'[{job_id}] Pipelined narration+synthesis complete — '
-                                    f'{len(chunk_wav_paths)} audio chunks, {total_words} words'
+                                    f'[{job_id}] Narration complete — '
+                                    f'{len(narrated_segments)} segments'
                                 )
                             except Exception as exc:
                                 logger.warning(
-                                    f'[{job_id}] Pipelined narration failed, falling back to sequential: {exc}'
+                                    f'[{job_id}] Narration failed, using raw text: {exc}'
                                 )
-                                # Fallback: narrate all, then synthesize all
-                                try:
-                                    narrated_text = await narration.narrate(text)
-                                except Exception as narration_exc:
-                                    logger.warning(
-                                        f'[{job_id}] Sequential narration also failed, using raw text: {narration_exc}'
-                                    )
-                                    from app.utils.normalize import normalize_for_narration
+                                from app.utils.normalize import normalize_for_narration
 
-                                    narrated_text = normalize_for_narration(text)
-                                    narration_skipped = True
-                                narrated_segments.append(narrated_text)
-                                all_chunks, total_words, chunk_pause_durations = (
-                                    prepare_text_for_synthesis(narrated_text, MAX_CHUNK_WORDS)
-                                )
-                                chunk_wav_paths = await synthesize_chunks_auto(
-                                    chunks=all_chunks,
-                                    job_dir=job_dir,
-                                    job_id=job_id,
-                                    status_check_callback=_check_status,
-                                    generation_kwargs=generation_kwargs,
-                                )
+                                narrated_segments = [normalize_for_narration(text)]
+                                narration_skipped = True
                         else:
-                            # No narration available — synthesize raw text directly
                             from app.utils.normalize import normalize_for_narration
 
-                            normalized_text = normalize_for_narration(text)
-                            narrated_segments.append(normalized_text)
-                            all_chunks, total_words, chunk_pause_durations = (
-                                prepare_text_for_synthesis(normalized_text, MAX_CHUNK_WORDS)
+                            narrated_segments = [normalize_for_narration(text)]
+
+                    full_narrated_text = '\n\n'.join(narrated_segments)
+                    if not full_narrated_text.strip():
+                        raise RuntimeError('Narrated text is empty')
+
+                    # Build TTS chunk list + pause durations for the concat step.
+                    all_chunks, total_words, chunk_pause_durations = prepare_text_for_synthesis(
+                        full_narrated_text, MAX_CHUNK_WORDS
+                    )
+                    logger.info(
+                        f'[{job_id}] {total_words} narrated words → '
+                        f'{len(all_chunks)} TTS chunks'
+                    )
+
+                    # ─── PHASE 2: SYNTHESIS ──────────────────────────────────────────
+                    # Exactly ONE synthesis path runs based on the final narrated word
+                    # count. Choosing the path after narration (not before) is critical —
+                    # we cannot know the output word count until the LLM finishes.
+                    #
+                    #  ≤ SINGLE_SHOT_MAX_WORDS  → full single-shot (no boundary artifacts)
+                    #  > SINGLE_SHOT_MAX_WORDS  → segment single-shot (sentence-boundary
+                    #                             splits + crossfade merge)
+                    await _check_status()
+
+                    with _span('tts.synthesis'):
+                        if total_words <= SINGLE_SHOT_MAX_WORDS:
+                            # Short content: synthesize the entire narration in one pass
+                            logger.info(
+                                f'[{job_id}] Phase 2: single-shot ({total_words} words)'
                             )
-                            chunk_wav_paths = await synthesize_chunks_auto(
-                                chunks=all_chunks,
-                                job_dir=job_dir,
-                                job_id=job_id,
-                                status_check_callback=_check_status,
-                                generation_kwargs=generation_kwargs,
-                            )
-
-                    if not chunk_wav_paths:
-                        raise RuntimeError('No audio chunks were synthesized')
-
-                    # Check if we should use single-shot synthesis
-                    # Single-shot produces studio-quality audio without chunk boundaries
-                    use_single_shot = total_words > 0 and total_words <= SINGLE_SHOT_MAX_WORDS
-
-                    # Reconstruct narrated text preserving paragraph structure for TTS prosody.
-                    # narrated_segments holds the raw LLM output before TTS chunking —
-                    # each segment is a paragraph-structured narration chunk.
-                    # Joining with '\n\n' gives the model natural topic-boundary cues.
-                    full_narrated_text = '\n\n'.join(narrated_segments) if narrated_segments else ' '.join(all_chunks)
-
-                    if use_single_shot:
-                        # Single-shot synthesis for optimal quality
-                        logger.info(
-                            f'[{job_id}] Using single-shot synthesis for {total_words} words'
-                        )
-                        if not full_narrated_text or not full_narrated_text.strip():
-                            logger.warning(
-                                f'[{job_id}] Narrated text is empty, falling back to chunk-based synthesis'
-                            )
-                        else:
                             single_shot_wav = str(job_dir / 'single_shot.wav')
                             chunk_wav_paths = [
                                 await synthesize_single_shot_async(
@@ -435,29 +341,29 @@ async def run_tts_job(
                                     generation_kwargs=generation_kwargs,
                                 )
                             ]
+                            # Align metadata so quality-check and concat steps work correctly
+                            all_chunks = [full_narrated_text]
+                            chunk_pause_durations = [0]
                             logger.info(f'[{job_id}] Single-shot synthesis complete')
-                    elif total_words > SINGLE_SHOT_MAX_WORDS:
-                        # For longer content, split at sentence boundaries then synthesize
-                        # each segment in single-shot mode. Word-count splitting is avoided
-                        # because it creates mid-sentence TTS input — the model generates
-                        # rising/hanging prosody on incomplete sentences causing audible artifacts.
-                        from app.utils.text import split_into_chunks as _sentence_split
-
-                        sentence_segments = _sentence_split(full_narrated_text, SINGLE_SHOT_SEGMENT_WORDS)
-                        logger.info(
-                            f'[{job_id}] Using segment-based single-shot ({len(sentence_segments)} segments)'
-                        )
-
-                        if not full_narrated_text or not full_narrated_text.strip():
-                            logger.warning(
-                                f'[{job_id}] Narrated text is empty, falling back to chunk-based synthesis'
-                            )
                         else:
-                            segment_wavs = []
+                            # Long content: split at sentence boundaries, synthesize each
+                            # segment in single-shot mode, quality-check before merging
+                            from app.utils.text import split_into_chunks as _sentence_split
+
+                            sentence_segments = _sentence_split(
+                                full_narrated_text, SINGLE_SHOT_SEGMENT_WORDS
+                            )
+                            logger.info(
+                                f'[{job_id}] Phase 2: segment synthesis '
+                                f'({len(sentence_segments)} × ~{SINGLE_SHOT_SEGMENT_WORDS}-word segments)'
+                            )
+
+                            segment_wavs: list[str] = []
+                            segment_texts: list[str] = []
                             for seg_idx, segment_text in enumerate(sentence_segments):
                                 if not segment_text.strip():
                                     continue
-
+                                await _check_status()
                                 segment_wav = str(job_dir / f'segment_{seg_idx:04d}.wav')
                                 segment_path = await synthesize_single_shot_async(
                                     text=segment_text,
@@ -466,17 +372,32 @@ async def run_tts_job(
                                     generation_kwargs=generation_kwargs,
                                 )
                                 segment_wavs.append(segment_path)
+                                segment_texts.append(segment_text)
                                 logger.info(
-                                    f'[{job_id}] Segment {seg_idx + 1}/{len(sentence_segments)} complete'
+                                    f'[{job_id}] Segment {seg_idx + 1}'
+                                    f'/{len(sentence_segments)} complete'
                                 )
 
-                            # Handle edge case: no segments were created
                             if not segment_wavs:
-                                logger.warning(
-                                    f'[{job_id}] No segments created, falling back to chunk-based synthesis'
-                                )
-                            else:
-                                # Concatenate segments with overlap crossfade
+                                raise RuntimeError('Segment synthesis produced no audio files')
+
+                            # Quality check BEFORE merging — bad segments can be
+                            # re-synthesized independently without affecting others
+                            await _check_status()
+                            logger.info(
+                                f'[{job_id}] Quality check on {len(segment_wavs)} segments...'
+                            )
+                            segment_wavs = await _quality_check_and_resynthesize(
+                                segment_wavs,
+                                segment_texts,
+                                job_id,
+                                engine,
+                                loop,
+                                executor,
+                                generation_kwargs,
+                            )
+
+                            if len(segment_wavs) > 1:
                                 merged_wav = await loop.run_in_executor(
                                     executor,
                                     functools.partial(
@@ -487,23 +408,32 @@ async def run_tts_job(
                                     str(job_dir / 'merged.wav'),
                                 )
                                 chunk_wav_paths = [merged_wav]
-                                logger.info(f'[{job_id}] Segment concatenation complete')
-                    # else: use original chunk-based synthesis (already in chunk_wav_paths)
+                            else:
+                                chunk_wav_paths = segment_wavs
 
-                    # Step 3b: Quality check and re-synthesis
-                    await _check_status()
-                    logger.info(
-                        f'[{job_id}] Running quality check on {len(chunk_wav_paths)} chunks...'
-                    )
-                    chunk_wav_paths = await _quality_check_and_resynthesize(
-                        chunk_wav_paths,
-                        all_chunks,
-                        job_id,
-                        engine,
-                        loop,
-                        executor,
-                        generation_kwargs,
-                    )
+                            # Single merged file — align metadata for concat step
+                            all_chunks = [full_narrated_text]
+                            chunk_pause_durations = [0]
+
+                    if not chunk_wav_paths:
+                        raise RuntimeError('No audio chunks were synthesized')
+
+                    # Quality check for the single-shot path.
+                    # Segment path already ran quality check before merging above.
+                    if total_words <= SINGLE_SHOT_MAX_WORDS:
+                        await _check_status()
+                        logger.info(
+                            f'[{job_id}] Quality check on {len(chunk_wav_paths)} audio file(s)...'
+                        )
+                        chunk_wav_paths = await _quality_check_and_resynthesize(
+                            chunk_wav_paths,
+                            all_chunks,
+                            job_id,
+                            engine,
+                            loop,
+                            executor,
+                            generation_kwargs,
+                        )
 
                     # Step 4: Skip per-chunk normalization — it causes inconsistent loudness
                     # between chunks (single-pass loudnorm is inaccurate). Final mastering
