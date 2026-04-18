@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v2.8.12 (2026-04-18)
+
+### Bug Fixes
+
+- **tts-service**: Fix segment synthesis creating 67 tiny chunks instead of 2 large ones
+  ([`f680900`](https://github.com/getsimpledirect/ghost-narrator/commit/f6809004e056d6973477d119694c7071e335ac48))
+
+split_into_chunks flushes at every paragraph boundary (>=15 words), so passing it
+  SINGLE_SHOT_SEGMENT_WORDS=3000 still produced one chunk per paragraph (~63 words each) instead of
+  grouping paragraphs into ~3000-word segments. Added split_into_large_segments for the segment
+  synthesis path, which only splits at paragraph boundaries when the target word count is exceeded.
+  Also fixed [PAUSE] conversion from '...' to ',' — the ellipsis was immediately collapsed to '.' by
+  the multi-punct normalizer downstream.
+
+### Code Style
+
+- **tts-service**: Ruff format
+  ([`a3118ab`](https://github.com/getsimpledirect/ghost-narrator/commit/a3118ab518f58442175db15e3ba1eac32b51b795))
+
+
 ## v2.8.11 (2026-04-18)
 
 ### Bug Fixes
