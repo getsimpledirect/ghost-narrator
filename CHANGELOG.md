@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v2.8.14 (2026-04-18)
+
+### Bug Fixes
+
+- **tts-service**: Cap segment size at 400 words to stay within model context
+  ([`76ca4f8`](https://github.com/getsimpledirect/ghost-narrator/commit/76ca4f8968c99cd8fc8d263912c3edc0781b3512))
+
+Qwen3-TTS-1.7B generates audio codec tokens at ~75 tokens/sec; a 2500-word segment (~25 min of
+  audio) requires ~112,500 codec tokens, far exceeding the model's effective context window. The
+  result is valid speech for the opening few hundred words followed by garbage noise for the rest of
+  the segment.
+
+SINGLE_SHOT_MAX_WORDS and SINGLE_SHOT_SEGMENT_WORDS both default to 400, which matches
+  MAX_CHUNK_WORDS and the pre-refactor chunk size that produced good audio. A 5000-word article now
+  produces ~12 × 400-word segments that are crossfaded into a seamless file, instead of 2 ×
+  2500-word segments that degrade to noise.
+
+Also fixes the mastering alimiter true-peak limit: MP3 MDCT reconstruction adds 1-3 dB of
+  inter-sample overshoot, so limiting PCM to -1 dBFS (0.891 linear) was too close to 0 dBFS. Changed
+  to -3 dBFS (0.708 linear) to leave encoding headroom and prevent the measured +2.2 dBFS true peak
+  in the final MP3.
+
+
 ## v2.8.13 (2026-04-18)
 
 ### Bug Fixes
