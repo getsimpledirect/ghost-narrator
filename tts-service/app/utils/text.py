@@ -124,9 +124,12 @@ def clean_text_for_tts(text: str) -> str:
     # survive the markdown pass and get synthesized as garbled speech
     text = _THINK_RE.sub('', text)
 
-    # Strip [PAUSE]/[LONG_PAUSE] markers — these are assembly directives extracted
-    # by parse_pause_markers(); TTS must never receive them as text to speak.
-    text = _PAUSE_MARKER_RE.sub('', text)
+    # Convert pause markers to punctuation the TTS model naturally pauses on.
+    # [LONG_PAUSE] → paragraph break (longest natural pause in spoken delivery).
+    # [PAUSE]      → ellipsis (signals a beat/breath to the TTS prosody model).
+    # LONG_PAUSE first so its pattern isn't consumed by the PAUSE replacement.
+    text = re.sub(r'\s*\[LONG_PAUSE\]\s*', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s*\[PAUSE\]\s*', ' ... ', text, flags=re.IGNORECASE)
 
     # Replace smart quotes and special characters
     for char, replacement in _SPECIAL_CHARS.items():

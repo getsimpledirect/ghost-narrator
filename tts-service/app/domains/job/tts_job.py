@@ -327,27 +327,32 @@ async def run_tts_job(
 
                     with _span('tts.synthesis'):
                         if total_words <= SINGLE_SHOT_MAX_WORDS:
-                            # Short content: synthesize the entire narration in one pass
+                            # Short content: one TTS call for the entire narration.
+                            # Pause markers are converted to natural punctuation cues
+                            # ([PAUSE] → '...', [LONG_PAUSE] → paragraph break) so the
+                            # model pauses with correct rhythm without splitting the audio.
                             logger.info(
                                 f'[{job_id}] Phase 2: single-shot ({total_words} words)'
                             )
+                            from app.utils.text import clean_text_for_tts
+
+                            clean_text = clean_text_for_tts(full_narrated_text)
                             single_shot_wav = str(job_dir / 'single_shot.wav')
                             chunk_wav_paths = [
                                 await synthesize_single_shot_async(
-                                    text=full_narrated_text,
+                                    text=clean_text,
                                     output_path=single_shot_wav,
                                     job_id=job_id,
                                     generation_kwargs=generation_kwargs,
                                 )
                             ]
-                            # Align metadata so quality-check and concat steps work correctly
-                            all_chunks = [full_narrated_text]
+                            all_chunks = [clean_text]
                             chunk_pause_durations = [0]
                             logger.info(f'[{job_id}] Single-shot synthesis complete')
                         else:
                             # Long content: split at sentence boundaries, synthesize each
                             # segment in single-shot mode, quality-check before merging
-                            from app.utils.text import split_into_chunks as _sentence_split
+                            from app.utils.text import split_into_chunks as _sentence_split, clean_text_for_tts
 
                             sentence_segments = _sentence_split(
                                 full_narrated_text, SINGLE_SHOT_SEGMENT_WORDS
@@ -363,15 +368,18 @@ async def run_tts_job(
                                 if not segment_text.strip():
                                     continue
                                 await _check_status()
+                                clean_seg = clean_text_for_tts(segment_text)
+                                if not clean_seg.strip():
+                                    continue
                                 segment_wav = str(job_dir / f'segment_{seg_idx:04d}.wav')
                                 segment_path = await synthesize_single_shot_async(
-                                    text=segment_text,
+                                    text=clean_seg,
                                     output_path=segment_wav,
                                     job_id=job_id,
                                     generation_kwargs=generation_kwargs,
                                 )
                                 segment_wavs.append(segment_path)
-                                segment_texts.append(segment_text)
+                                segment_texts.append(clean_seg)
                                 logger.info(
                                     f'[{job_id}] Segment {seg_idx + 1}'
                                     f'/{len(sentence_segments)} complete'
