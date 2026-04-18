@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v2.8.13 (2026-04-18)
+
+### Bug Fixes
+
+- **tts-service**: Fix 5 bugs found in codebase audit
+  ([`3a6d3f5`](https://github.com/getsimpledirect/ghost-narrator/commit/3a6d3f58106d77763752fdd4dda36a059bfcdf7b))
+
+- tts_engine: cancel flag was discarded in finally block, so cancelled jobs continued synthesizing
+  after the first segment raised SynthesisError; discard now only happens on the success path
+
+- concatenate: _trim_silence set trailing=0 for all-silent segments, then segment[:0] produced an
+  empty AudioSegment that silenced all subsequent audio; all-silent segments are now left untouched
+  for quality_check to handle
+
+- concatenate: overlap guard multiplied len(ms) * frame_rate(Hz) / 1000 — a dimension error that
+  always evaluated False; fixed to len(combined) < overlap_ms
+
+- quality_check: _resynthesize_chunk hardcoded chunk_{idx}.wav path, diverging from
+  segment_{idx}.wav used in the segment synthesis path; now receives the actual wav_path from the
+  caller
+
+- strategy: retry loop did not break on CRITICAL_WORD_RATIO, wasting up to 2 × LLM_TIMEOUT on
+  outputs so truncated that retries cannot help; both ChunkedStrategy and SingleShotStrategy now
+  break immediately on critical truncation
+
+
 ## v2.8.12 (2026-04-18)
 
 ### Bug Fixes
