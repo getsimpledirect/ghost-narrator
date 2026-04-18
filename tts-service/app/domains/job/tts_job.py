@@ -311,8 +311,7 @@ async def run_tts_job(
                         full_narrated_text, MAX_CHUNK_WORDS
                     )
                     logger.info(
-                        f'[{job_id}] {total_words} narrated words → '
-                        f'{len(all_chunks)} TTS chunks'
+                        f'[{job_id}] {total_words} narrated words → {len(all_chunks)} TTS chunks'
                     )
 
                     # ─── PHASE 2: SYNTHESIS ──────────────────────────────────────────
@@ -331,9 +330,7 @@ async def run_tts_job(
                             # Pause markers are converted to natural punctuation cues
                             # ([PAUSE] → '...', [LONG_PAUSE] → paragraph break) so the
                             # model pauses with correct rhythm without splitting the audio.
-                            logger.info(
-                                f'[{job_id}] Phase 2: single-shot ({total_words} words)'
-                            )
+                            logger.info(f'[{job_id}] Phase 2: single-shot ({total_words} words)')
                             from app.utils.text import clean_text_for_tts
 
                             clean_text = clean_text_for_tts(full_narrated_text)
@@ -352,7 +349,10 @@ async def run_tts_job(
                         else:
                             # Long content: split at sentence boundaries, synthesize each
                             # segment in single-shot mode, quality-check before merging
-                            from app.utils.text import split_into_chunks as _sentence_split, clean_text_for_tts
+                            from app.utils.text import (
+                                split_into_chunks as _sentence_split,
+                                clean_text_for_tts,
+                            )
 
                             sentence_segments = _sentence_split(
                                 full_narrated_text, SINGLE_SHOT_SEGMENT_WORDS

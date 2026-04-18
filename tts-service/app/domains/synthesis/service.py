@@ -140,13 +140,17 @@ def synthesize_chunk(
 
     # Fast path: no quoted speech detected — single synthesis call.
     if not has_quoted_speech(text):
-        return engine.synthesize_to_file(text, output_path, job_id, generation_kwargs=generation_kwargs)
+        return engine.synthesize_to_file(
+            text, output_path, job_id, generation_kwargs=generation_kwargs
+        )
 
     # Multi-voice path: split at quote boundaries, synthesize each segment
     # with per-type generation parameters, then concatenate.
     segments = split_at_quotes(text)
     if len(segments) <= 1:
-        return engine.synthesize_to_file(text, output_path, job_id, generation_kwargs=generation_kwargs)
+        return engine.synthesize_to_file(
+            text, output_path, job_id, generation_kwargs=generation_kwargs
+        )
 
     out_path = Path(output_path)
     temp_dir = out_path.parent / f'_mv_{out_path.stem}'
@@ -191,7 +195,9 @@ def synthesize_chunk(
             combined = combined + breath + seg
 
         combined.export(output_path, format='wav')
-        logger.debug('[%s] Multi-voice synthesis: %d segments → %s', job_id, len(sub_wav_paths), output_path)
+        logger.debug(
+            '[%s] Multi-voice synthesis: %d segments → %s', job_id, len(sub_wav_paths), output_path
+        )
         return output_path
 
     finally:

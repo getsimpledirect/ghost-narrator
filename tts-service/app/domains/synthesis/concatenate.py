@@ -230,7 +230,7 @@ def concatenate_audio_with_overlap(
 
         t = np.linspace(0, np.pi / 2, min_len)
         fade_out = np.cos(t)  # 1→0
-        fade_in = np.sin(t)   # 0→1
+        fade_in = np.sin(t)  # 0→1
 
         faded = combined_tail * fade_out + segment_head * fade_in
         faded = np.clip(faded, -32768, 32767).astype(np.int16)
