@@ -64,7 +64,7 @@ async def _quality_check_and_resynthesize(
                 # Extremely short — likely failed
                 logger.warning(f'[{job_id}] Chunk {i} is only {duration_ms}ms — re-synthesizing')
                 checked_paths[i] = await _resynthesize_chunk(
-                    i, chunk_texts, job_id, engine, loop, executor, generation_kwargs
+                    i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
                 )
                 resynth_count += 1
                 continue
@@ -84,7 +84,7 @@ async def _quality_check_and_resynthesize(
                     f'[{job_id}] Chunk {i} is {silence_ratio:.0%} silence — re-synthesizing'
                 )
                 checked_paths[i] = await _resynthesize_chunk(
-                    i, chunk_texts, job_id, engine, loop, executor, generation_kwargs
+                    i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
                 )
                 resynth_count += 1
 
@@ -99,6 +99,7 @@ async def _quality_check_and_resynthesize(
 
 async def _resynthesize_chunk(
     chunk_idx: int,
+    wav_path: str,
     chunk_texts: list[str],
     job_id: str,
     engine,
@@ -108,10 +109,7 @@ async def _resynthesize_chunk(
 ) -> str:
     """Re-synthesize a single chunk. Returns the path (may be original if re-synth fails)."""
     if chunk_idx >= len(chunk_texts):
-        return ''
-
-    job_dir = OUTPUT_DIR / job_id
-    wav_path = str(job_dir / f'chunk_{chunk_idx:04d}.wav')
+        return wav_path
 
     try:
         # Use same temperature as original synthesis - re-synthesizing with

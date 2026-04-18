@@ -77,7 +77,9 @@ def _trim_silence(segment: AudioSegment) -> AudioSegment:
             trailing = i
             break
     else:
-        trailing = 0
+        # No speech found anywhere — entirely silent segment.  Leave it untouched
+        # so the quality-check layer (not the trimmer) can decide what to do with it.
+        trailing = len(segment)
 
     if leading > MIN_SILENCE_MS:
         segment = segment[leading:]
@@ -214,7 +216,7 @@ def concatenate_audio_with_overlap(
 
     combined = segments[0]
     for i, segment in enumerate(segments[1:], start=1):
-        if len(combined) * combined.frame_rate / 1000 < overlap_ms / 1000:
+        if len(combined) < overlap_ms:
             combined += segment
             continue
 

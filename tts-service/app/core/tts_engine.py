@@ -242,14 +242,16 @@ class TTSEngine:
                         **gen_kw,
                     )
                 sf.write(str(output_path), wavs[0], sr)
+            # Discard cancel flag only on success — if synthesis raised SynthesisError
+            # (including the cancellation case) the flag must survive so subsequent
+            # segments / retries for the same job also abort immediately.
+            if actual_job_id:
+                self._cancelled_jobs.discard(actual_job_id)
             return str(output_path)
         except SynthesisError:
             raise
         except Exception as e:
             raise SynthesisError(f'Synthesis failed: {e}') from e
-        finally:
-            if actual_job_id:
-                self._cancelled_jobs.discard(actual_job_id)
 
     def cancel_job(self, job_id: str) -> None:
         """Signal that the next synthesize_to_file call for this job_id should abort."""

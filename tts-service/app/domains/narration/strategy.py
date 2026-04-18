@@ -277,6 +277,12 @@ class ChunkedStrategy(NarrationStrategy):
         retry_count = 0
         max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
         while not validation.passed and retry_count < max_retries:
+            if validation.word_ratio < _validator.CRITICAL_WORD_RATIO:
+                logger.error(
+                    'Critical truncation (%.0f%%) for chunk — skipping retries',
+                    validation.word_ratio * 100,
+                )
+                break
             logger.warning(
                 'Validation failed for chunk — retrying (%d/%d). Missing: %s',
                 retry_count + 1,
@@ -287,7 +293,6 @@ class ChunkedStrategy(NarrationStrategy):
             messages.append({'role': 'assistant', 'content': result})
             messages.append({'role': 'user', 'content': retry_prompt})
             result = await _call_llm(self._client, messages, self._model)
-            # Validate the retry result
             validation = _validator.validate(chunk, result)
             retry_count += 1
 
@@ -463,6 +468,12 @@ class SingleShotStrategy(NarrationStrategy):
         retry_count = 0
         max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
         while not validation.passed and retry_count < max_retries:
+            if validation.word_ratio < _validator.CRITICAL_WORD_RATIO:
+                logger.error(
+                    'Critical truncation (%.0f%%) — skipping retries',
+                    validation.word_ratio * 100,
+                )
+                break
             logger.warning(
                 'Validation failed — retrying (%d/%d). Missing: %s',
                 retry_count + 1,
@@ -473,7 +484,6 @@ class SingleShotStrategy(NarrationStrategy):
             messages.append({'role': 'assistant', 'content': result})
             messages.append({'role': 'user', 'content': retry_prompt})
             result = await _call_llm(self._client, messages, self._model)
-            # Validate the retry result
             validation = _validator.validate(text, result)
             retry_count += 1
 
