@@ -1,4 +1,4 @@
-from app.utils.normalize import normalize_for_narration, extract_section_map
+from app.utils.normalize import normalize_for_narration, extract_section_map, filter_non_narrable_content
 
 
 def test_strips_html_tags():
@@ -137,3 +137,86 @@ def test_normalize_strips_markdown_syntax():
     assert 'http://example.com' not in result
     assert 'image' not in result
     assert 'This is bold and italic with a link and an .' in result
+
+
+# filter_non_narrable_content tests
+
+def test_filter_removes_fenced_code_blocks():
+    text = 'Here is some prose.\n```python\nprint("hello")\n```\nAnd more prose.'
+    result = filter_non_narrable_content(text)
+    assert '```' not in result
+    assert 'print' not in result
+    assert 'Here is some prose.' in result
+    assert 'And more prose.' in result
+
+
+def test_filter_removes_inline_code():
+    text = 'Call the `foo()` function to start.'
+    result = filter_non_narrable_content(text)
+    assert '`' not in result
+    assert 'foo()' not in result
+    assert 'Call the' in result
+    assert 'function to start.' in result
+
+
+def test_filter_removes_html_pre_block():
+    text = 'Before.\n<pre><code>int x = 1;</code></pre>\nAfter.'
+    result = filter_non_narrable_content(text)
+    assert 'int x = 1;' not in result
+    assert 'Before.' in result
+    assert 'After.' in result
+
+
+def test_filter_removes_html_table():
+    text = 'Intro.\n<table><tr><td>Cell</td></tr></table>\nConclusion.'
+    result = filter_non_narrable_content(text)
+    assert 'Cell' not in result
+    assert 'Intro.' in result
+    assert 'Conclusion.' in result
+
+
+def test_filter_removes_markdown_table():
+    text = 'Summary:\n\n| Col A | Col B |\n|-------|-------|\n| Val 1 | Val 2 |\n\nEnd.'
+    result = filter_non_narrable_content(text)
+    assert 'Col A' not in result
+    assert 'Val 1' not in result
+    assert 'End.' in result
+
+
+def test_filter_removes_footnote_markers():
+    text = 'This claim[^1] needs a source[2].'
+    result = filter_non_narrable_content(text)
+    assert '[^1]' not in result
+    assert '[2]' not in result
+    assert 'This claim' in result
+    assert 'needs a source' in result
+
+
+def test_filter_removes_cta_lines():
+    text = 'Some content.\nSubscribe to our newsletter for updates.\nMore content.'
+    result = filter_non_narrable_content(text)
+    assert 'Subscribe' not in result
+    assert 'Some content.' in result
+    assert 'More content.' in result
+
+
+def test_filter_preserves_clean_prose():
+    text = 'The company raised $50 million in Series B funding led by Sequoia Capital.'
+    result = filter_non_narrable_content(text)
+    assert result == text
+
+
+def test_filter_collapses_excess_newlines_after_removal():
+    text = 'Para one.\n\n```code block```\n\n\n\nPara two.'
+    result = filter_non_narrable_content(text)
+    assert result.count('\n\n\n') == 0
+    assert 'Para one.' in result
+    assert 'Para two.' in result
+
+
+def test_normalize_strips_code_blocks_via_filter():
+    text = 'Article intro.\n```bash\ncurl http://example.com\n```\nArticle conclusion.'
+    result = normalize_for_narration(text)
+    assert 'curl' not in result
+    assert 'Article intro.' in result
+    assert 'Article conclusion.' in result

@@ -131,7 +131,7 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
             return_value=({}, {}),
         ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
+        patch('app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock) as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto') as mock_concat,
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
@@ -154,7 +154,7 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
 
         mock_stat.return_value.st_size = 1024 * 1024
         mock_prepare.return_value = (['Hello world.', 'This is a test.'], 6, [0, 0])
-        mock_synth.return_value = ['/tmp/chunk_0000.wav']
+        mock_synth.return_value = '/tmp/single_shot.wav'
         mock_concat.return_value = None
 
         await run_tts_job(job_id, text, storage_path)
@@ -204,8 +204,14 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
     storage_path = 'audio/fail.mp3'
 
     with (
+        patch('app.domains.job.tts_job.get_narration_strategy', return_value=None),
+        patch(
+            'app.domains.job.tts_job.get_effective_config',
+            new_callable=AsyncMock,
+            return_value=({}, {}),
+        ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
+        patch('app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock) as mock_synth,
         patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
         patch.object(Path, 'mkdir'),
@@ -253,7 +259,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
             return_value=({}, {}),
         ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
+        patch('app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock) as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto'),
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
@@ -273,7 +279,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
 
         mock_stat.return_value.st_size = 1024 * 1024
         mock_prepare.return_value = (['Hello world.'], 2, [0])
-        mock_synth.return_value = ['/tmp/chunk_0000.wav']
+        mock_synth.return_value = '/tmp/single_shot.wav'
 
         await run_tts_job(job_id, text, storage_path)
 
@@ -341,7 +347,7 @@ async def test_run_tts_job_transitions_through_queued_status(
             return_value=({}, {}),
         ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_chunks_auto') as mock_synth,
+        patch('app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock) as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto'),
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
@@ -360,7 +366,7 @@ async def test_run_tts_job_transitions_through_queued_status(
         mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
         mock_stat.return_value.st_size = 1024 * 1024
         mock_prepare.return_value = (['Hello world.'], 2, [0])
-        mock_synth.return_value = ['/tmp/chunk_0000.wav']
+        mock_synth.return_value = '/tmp/single_shot.wav'
 
         await run_tts_job('test-queued', 'Hello world.', 'audio/test.mp3')
 
@@ -380,26 +386,26 @@ async def test_run_tts_job_exceeds_max_duration(mock_job_store, mock_tts_engine)
     """A job that hangs past MAX_JOB_DURATION_SECONDS must fail and release the GPU slot."""
     mock_job_store.get.return_value = {'status': 'processing'}
 
-    async def _slow_synth(*args, **kwargs):
-        await asyncio.sleep(10)  # simulate stuck synthesis
-        return []
+    async def _slow_narrate_iter(text):
+        await asyncio.sleep(10)  # simulate stuck narration — timeout fires here
+        yield text  # never reached
+
+    mock_narration = MagicMock()
+    mock_narration.narrate_iter = _slow_narrate_iter
 
     with (
-        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_chunks_auto', side_effect=_slow_synth),
-        patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
-        patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
+        patch('app.domains.job.tts_job.get_narration_strategy', return_value=mock_narration),
         patch(
             'app.domains.job.tts_job.get_effective_config',
             new_callable=AsyncMock,
             return_value=({}, {}),
         ),
+        patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
+        patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch.object(Path, 'mkdir'),
         # Set a tiny timeout so the test doesn't actually wait 2 hours
         patch('app.domains.job.tts_job.MAX_JOB_DURATION_SECONDS', 0.05),
     ):
-        mock_prepare.return_value = (['Hello world.'], 2, [0])
-
         await run_tts_job('test-timeout', 'Hello world.', 'audio/timeout.mp3')
 
         statuses = [

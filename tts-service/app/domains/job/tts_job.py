@@ -74,7 +74,6 @@ from app.domains.synthesis.service import (
     cleanup_chunk_files,
     get_executor,
     prepare_text_for_synthesis,
-    synthesize_chunks_auto,
     synthesize_single_shot_async,
 )
 from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
