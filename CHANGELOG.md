@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v2.8.16 (2026-04-19)
+
+### Bug Fixes
+
+- **tts-service**: Fix token starvation artifacts and mastering errors
+  ([`ede6329`](https://github.com/getsimpledirect/ghost-narrator/commit/ede6329170de4bb4a8ffbdf6545c9582194ebfc0))
+
+Audible disturbances in final audio traced to four independent causes:
+
+- Qwen3-TTS at 12 Hz needs ~2200 codec tokens for 400 words; 3000 left only 35% headroom at normal
+  speaking rates, clipping synthesis mid-word - Short trailing segments (single paragraph) hit the
+  same budget with no prior context to anchor a clean phoneme close - Multi-voice sub-segments
+  joined without silence trimming, letting TTS start-of-clip transients accumulate as pops at quote
+  boundaries - Mastering alimiter at 0.708 (-3.0 dBFS) sat 1.5 dB below the loudnorm TP target;
+  trailing silence also not removed before normalization
+
+Also removes prepare_text_for_synthesis and concatenate_wavs_auto from tts_job.py — both were
+  overwritten immediately after being called.
+
+
 ## v2.8.15 (2026-04-19)
 
 ### Bug Fixes
