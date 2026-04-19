@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.9.5 (2026-04-19)
+
+### Bug Fixes
+
+- **tts-engine**: Prevent per-segment torch.compile recompilation
+  ([`70b0157`](https://github.com/getsimpledirect/ghost-narrator/commit/70b01575ee2c0d114124a728c7a17cd8dd08cc4e))
+
+- Add dynamic=True to torch.compile so the compiler does not specialize on fixed tensor shapes -
+  Without this, each segment with a different input length triggers a full recompilation, adding
+  30-60s overhead per segment after the first - Qwen3-TTS code_predictor generates 15 codec tokens
+  per frame and accounts for ~71% of total synthesis time — recompilation cost dominates segment 2+
+
+
 ## v2.9.4 (2026-04-19)
 
 ### Bug Fixes
