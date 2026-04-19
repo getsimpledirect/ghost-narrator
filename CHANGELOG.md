@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v2.9.1 (2026-04-19)
+
+### Bug Fixes
+
+- **tts-service**: Add completeness check to narrate_iter
+  ([`a6392fc`](https://github.com/getsimpledirect/ghost-narrator/commit/a6392fcd9cac89ab08482def97d9d237045465a3))
+
+- ChunkedStrategy.narrate_iter skipped the Layer 4 LLM completeness check that narrate() applies on
+  HIGH_VRAM for short articles - Missing entities only visible at the full-narration level were
+  invisible on the streaming path used by tts_job.py in production - Buffer all chunk outputs before
+  yielding so the same completeness guard (HIGH_VRAM + combined words <= 4000) can run consistently
+  - Renumber duplicate Step 4 comment in tts_job.py to Step 3
+
+
 ## v2.9.0 (2026-04-19)
 
 ### Features
