@@ -27,11 +27,95 @@ from __future__ import annotations
 import functools
 import logging
 import math
+import re as _re
+import threading
 
 from pydub import AudioSegment as _AudioSegment
 
 
 logger = logging.getLogger(__name__)
+
+# Maximum audio duration for WER checking. Transcribing a full single-shot
+# 10-minute file on CPU would take ~60s — impractical. WER is most valuable
+# for per-segment checking where each segment is 30–120 seconds.
+_MAX_WER_DURATION_MS: int = 120_000
+
+# Sentinel object used to mark the ASR pipeline as unavailable after a
+# failed load attempt, so subsequent calls skip the load without retrying.
+_ASR_UNAVAILABLE = object()
+_asr_pipeline = None
+_asr_lock = threading.Lock()
+
+
+def _get_asr_pipeline():
+    """Lazy-load the Whisper base ASR pipeline (CPU, int8 quantized).
+
+    Uses the transformers library already present in the dependency tree.
+    Returns the pipeline on success, or None if the model cannot be loaded
+    (no internet, no cached weights, missing dependency). Once marked
+    unavailable, subsequent calls return None immediately without retrying.
+    """
+    global _asr_pipeline
+    if _asr_pipeline is not None:
+        return None if _asr_pipeline is _ASR_UNAVAILABLE else _asr_pipeline
+    with _asr_lock:
+        if _asr_pipeline is not None:
+            return None if _asr_pipeline is _ASR_UNAVAILABLE else _asr_pipeline
+        try:
+            from transformers import pipeline as _hf_pipeline
+
+            _asr_pipeline = _hf_pipeline(
+                'automatic-speech-recognition',
+                model='openai/whisper-base',
+                device='cpu',
+                generate_kwargs={'language': 'english'},
+            )
+            logger.info('Whisper base ASR pipeline loaded for WER quality checking')
+        except Exception as exc:
+            logger.warning('WER quality checking disabled — Whisper ASR unavailable: %s', exc)
+            _asr_pipeline = _ASR_UNAVAILABLE
+    return None if _asr_pipeline is _ASR_UNAVAILABLE else _asr_pipeline
+
+
+def _transcribe_wav(wav_path: str) -> str | None:
+    """Transcribe a WAV file with Whisper. Returns None if ASR unavailable."""
+    pipe = _get_asr_pipeline()
+    if pipe is None:
+        return None
+    try:
+        result = pipe(wav_path)
+        return result.get('text', '') if isinstance(result, dict) else None
+    except Exception as exc:
+        logger.debug('ASR transcription failed for %s: %s', wav_path, exc)
+        return None
+
+
+def _normalize_for_wer(text: str) -> str:
+    """Lowercase and strip punctuation for fair WER comparison."""
+    text = text.lower()
+    text = _re.sub(r'[^\w\s]', ' ', text)
+    text = _re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+def _word_error_rate(reference: str, hypothesis: str) -> float:
+    """Compute WER via word-level Levenshtein edit distance."""
+    ref = _normalize_for_wer(reference).split()
+    hyp = _normalize_for_wer(hypothesis).split()
+    if not ref:
+        return 0.0
+    n, m = len(ref), len(hyp)
+    # Single-row DP — O(n*m) time, O(m) space
+    dp = list(range(m + 1))
+    for i in range(1, n + 1):
+        new_dp = [i] + [0] * m
+        for j in range(1, m + 1):
+            if ref[i - 1] == hyp[j - 1]:
+                new_dp[j] = dp[j - 1]
+            else:
+                new_dp[j] = 1 + min(dp[j], new_dp[j - 1], dp[j - 1])
+        dp = new_dp
+    return dp[m] / n
 
 
 async def _quality_check_and_resynthesize(
@@ -42,15 +126,22 @@ async def _quality_check_and_resynthesize(
     loop,
     executor,
     generation_kwargs: dict | None = None,
+    wer_threshold: float = 0.10,
 ) -> list[str]:
     """Check audio quality of each chunk and re-synthesize bad ones.
 
-    HIGH_VRAM only — checks for:
-    - Excessive silence (>50% of chunk is silence)
-    - Clipping (samples at 0dBFS)
-    - Very low energy (likely failed synthesis)
+    Runs three checks in order, short-circuiting to re-synthesis on first failure:
 
-    Re-synthesizes failed chunks once, then uses original if still bad.
+    1. Duration < 100ms — almost certainly a failed synthesis.
+    2. Silence ratio > 50% — hallucinated silence (model emitted silence tokens).
+    3. WER > wer_threshold — skipped/repeated/hallucinated words detected by
+       Whisper transcription. Requires the Whisper base model (~150 MB) to be
+       cached; skipped gracefully if unavailable. Only runs on segments shorter
+       than _MAX_WER_DURATION_MS (2 minutes) to avoid excessive CPU time on
+       single-shot full-article audio.
+
+    Re-synthesizes each failing chunk once. If re-synthesis also fails the
+    checks, the re-synthesized path is used anyway — one retry is the limit.
     """
 
     checked_paths = list(chunk_wav_paths)
@@ -60,17 +151,20 @@ async def _quality_check_and_resynthesize(
         try:
             seg = _AudioSegment.from_wav(wav_path)
             duration_ms = len(seg)
+
+            # Check 1: too short
             if duration_ms < 100:
-                # Extremely short — likely failed
-                logger.warning(f'[{job_id}] Chunk {i} is only {duration_ms}ms — re-synthesizing')
+                logger.warning(
+                    '[%s] Chunk %d is only %dms — re-synthesizing', job_id, i, duration_ms
+                )
                 checked_paths[i] = await _resynthesize_chunk(
                     i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
                 )
                 resynth_count += 1
                 continue
 
-            # Check silence ratio
-            silence_threshold = -40.0  # fixed floor; seg.dBFS - 30 breaks for near-silent segments
+            # Check 2: silence ratio
+            silence_threshold = -40.0
             silence_ms = 0
             chunk_size = 50  # ms
             for j in range(0, duration_ms, chunk_size):
@@ -81,18 +175,51 @@ async def _quality_check_and_resynthesize(
 
             if silence_ratio > 0.5:
                 logger.warning(
-                    f'[{job_id}] Chunk {i} is {silence_ratio:.0%} silence — re-synthesizing'
+                    '[%s] Chunk %d is %.0f%% silence — re-synthesizing',
+                    job_id,
+                    i,
+                    silence_ratio * 100,
                 )
                 checked_paths[i] = await _resynthesize_chunk(
                     i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
                 )
                 resynth_count += 1
+                continue
+
+            # Check 3: WER — only for segments within the transcription budget
+            if (
+                i < len(chunk_texts)
+                and chunk_texts[i].strip()
+                and duration_ms <= _MAX_WER_DURATION_MS
+            ):
+                transcript = await loop.run_in_executor(executor, _transcribe_wav, wav_path)
+                if transcript is not None:
+                    wer = _word_error_rate(chunk_texts[i], transcript)
+                    if wer > wer_threshold:
+                        logger.warning(
+                            '[%s] Chunk %d WER=%.0f%% (threshold %.0f%%) — re-synthesizing',
+                            job_id,
+                            i,
+                            wer * 100,
+                            wer_threshold * 100,
+                        )
+                        checked_paths[i] = await _resynthesize_chunk(
+                            i,
+                            wav_path,
+                            chunk_texts,
+                            job_id,
+                            engine,
+                            loop,
+                            executor,
+                            generation_kwargs,
+                        )
+                        resynth_count += 1
 
         except Exception as exc:
-            logger.debug(f'[{job_id}] Quality check for chunk {i} skipped: {exc}')
+            logger.debug('[%s] Quality check for chunk %d skipped: %s', job_id, i, exc)
 
     if resynth_count > 0:
-        logger.info(f'[{job_id}] Re-synthesized {resynth_count} chunks after quality check')
+        logger.info('[%s] Re-synthesized %d chunks after quality check', job_id, resynth_count)
 
     return checked_paths
 
@@ -105,7 +232,7 @@ async def _check_segment_consistency(
     loop,
     executor,
     generation_kwargs: dict | None = None,
-    loudness_tolerance_db: float = 6.0,
+    loudness_tolerance_db: float = 3.0,
 ) -> list[str]:
     """Re-synthesize segments whose loudness deviates > tolerance_db from the median.
 

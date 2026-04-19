@@ -106,9 +106,11 @@ def master_audio(
         # - limiter: prevent clipping
         # Removed: highpass (causes harshness), equalizer (unnecessary for TTS)
         _COMPRESSOR = (
-            # threshold=0.25 ≈ -12 dBFS; lighter 1.5:1 ratio preserves speech dynamics
-            # without pumping between sentences. attack=10ms, release=100ms for transparency.
-            'acompressor=threshold=0.25:ratio=1.5:attack=10:release=100'
+            # threshold=0.25 ≈ -12 dBFS; 1.5:1 ratio preserves speech dynamics.
+            # attack=300ms catches loud transients without over-clamping voiced consonants.
+            # release=800ms prevents gain pumping on sentence pauses — the primary
+            # cause of audible pumping in speech compressors is release < 400ms.
+            'acompressor=threshold=0.25:ratio=1.5:attack=300:release=800'
         )
 
         measure_result = subprocess.run(
@@ -163,7 +165,7 @@ def master_audio(
                     'areverse,'
                     f'{_COMPRESSOR},'
                     f'{loudnorm_filter},'
-                    'alimiter=level_in=1:level_out=1:limit=0.794:attack=5:release=50:level=disabled'
+                    'alimiter=level_in=1:level_out=1:limit=0.794:attack=5:release=150:level=disabled'
                 ),
                 '-ar',
                 str(sample_rate),

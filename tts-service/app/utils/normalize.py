@@ -249,6 +249,11 @@ _ORDINAL_RE: Final = re.compile(r'\b(\d+)(st|nd|rd|th)\b', re.IGNORECASE)
 # 24/7 → "twenty-four seven"
 _24_7_RE: Final = re.compile(r'\b24/7\b')
 
+# URLs and email addresses — stripped before LLM so "https://..." strings
+# don't appear verbatim in narration (TTS would read them letter by letter).
+_URL_RE: Final = re.compile(r'https?://[^\s<>"\']+|www\.[^\s<>"\']+', re.IGNORECASE)
+_EMAIL_RE: Final = re.compile(r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b')
+
 
 def filter_non_narrable_content(text: str) -> str:
     """Strip content that is visual/interactive but nonsensical when narrated.
@@ -368,6 +373,13 @@ def normalize_for_narration(text: str) -> str:
 
     # Strip Markdown links: [text](url) -> text
     text = _MD_LINK_RE.sub(r'\1', text)
+
+    # Strip bare URLs and email addresses after Markdown link/image removal.
+    # Placed here so the full Markdown syntax is removed first — otherwise
+    # stripping the URL inside ![alt](url) leaves ![alt]() which the image
+    # regex cannot match (it requires a non-empty href).
+    text = _URL_RE.sub('', text)
+    text = _EMAIL_RE.sub('', text)
 
     # Strip Markdown bold/italic: **text** -> text
     text = _MD_BOLD_ITALIC_RE.sub(r'\2', text)

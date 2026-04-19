@@ -127,6 +127,19 @@ class TTSEngine:
                         voice_path,
                     )
 
+                # Enable cuDNN deterministic mode for reproducible synthesis.
+                # deterministic=True forces cuDNN to use the same algorithm for
+                # the same input shapes; benchmark=False stops cuDNN from running
+                # a benchmark pass (which selects non-deterministic fast paths).
+                # Both are set once at init and persist for the process lifetime.
+                try:
+                    if torch.cuda.is_available():
+                        torch.backends.cudnn.deterministic = True
+                        torch.backends.cudnn.benchmark = False
+                        logger.info('cuDNN deterministic mode enabled')
+                except Exception as _cudnn_exc:
+                    logger.warning('cuDNN determinism setup failed (non-fatal): %s', _cudnn_exc)
+
                 self._ready = True
                 logger.info('Qwen3-TTS engine ready')
             except Exception as e:
@@ -219,11 +232,17 @@ class TTSEngine:
                 seed = gen_kw.pop('seed', None)
                 if seed is not None:
                     try:
+                        import random as _random
+
+                        import numpy as _np
                         import torch as _torch
 
-                        _torch.manual_seed(int(seed))
+                        _seed_int = int(seed)
+                        _random.seed(_seed_int)
+                        _np.random.seed(_seed_int % (2**32))
+                        _torch.manual_seed(_seed_int)
                         if _torch.cuda.is_available():
-                            _torch.cuda.manual_seed_all(int(seed))
+                            _torch.cuda.manual_seed_all(_seed_int)
                     except Exception:
                         pass
                 try:

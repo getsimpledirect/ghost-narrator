@@ -62,7 +62,7 @@ AUDIO ADAPTATION (only — no content changes):
 - Spell out numbers for speech: "$1.2B" → "one point two billion dollars"
 - Convert dates: "2019-2023" → "twenty-nineteen to twenty-twenty-three"
 - Rewrite passive to active voice only
-- Split long sentences only if unreadable when spoken
+- Keep each sentence under 25 words; prefer short declarative sentences over long compound ones
 - Insert [PAUSE] and [LONG_PAUSE] for natural pacing
 - State facts directly — no hedging ("it seems", "appears to", "might")
 
