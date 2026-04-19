@@ -67,13 +67,16 @@ services:
 
   # ─── Ollama: Bundled Narration LLM ────────────────────────────────────────
   ollama:
-    image: ollama/ollama:0.20.4
+    image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
     ports:
       - "11434:11434"
     environment:
       - SHARED_DIR=/shared
+      # Raise the per-request timeout above the hardcoded 120s limit in Ollama
+      # 0.20.x — long articles (7000+ words) at 9B model speed exceed it.
+      - OLLAMA_REQUEST_TIMEOUT=600
     volumes:
       - ollama_models:/root/.ollama
       - tier_data:/shared:ro
