@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v2.10.2 (2026-04-19)
+
+### Bug Fixes
+
+- **narration**: Stream LLM responses to prevent Ollama idle timeout
+  ([`b95f5b5`](https://github.com/getsimpledirect/ghost-narrator/commit/b95f5b55b507aa8d1bfaf83cfd76bfda3a4e261b))
+
+- Ollama's HTTP server drops connections idle for more than 120 seconds; non-streaming completions
+  hold the socket silent while the model computes the full response, causing 500 on every
+  long-article request - Switched _call_llm to stream=True so tokens keep the connection alive as
+  they arrive, eliminating the idle timeout regardless of article length - Updated test helpers to
+  yield async generators matching the OpenAI streaming response shape instead of the non-streaming
+  MagicMock
+
+
 ## v2.10.1 (2026-04-19)
 
 ### Bug Fixes
