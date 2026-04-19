@@ -500,7 +500,7 @@ async def run_tts_job(
                             generation_kwargs,
                         )
 
-                    # Step 4: Skip per-chunk normalization — it causes inconsistent loudness
+                    # Step 3: Skip per-chunk normalization — it causes inconsistent loudness
                     # between chunks (single-pass loudnorm is inaccurate). Final mastering
                     # applies proper two-pass loudness normalization to the entire file.
                     await _check_status()

@@ -408,6 +408,7 @@ class ChunkedStrategy(NarrationStrategy):
         total_chunks = len(chunks)
         previous_output_tail = ''
         previous_source_tail = ''
+        outputs: list[str] = []
         for i, chunk in enumerate(chunks):
             output = await self._narrate_chunk(
                 chunk,
@@ -417,8 +418,30 @@ class ChunkedStrategy(NarrationStrategy):
                 previous_source_tail,
                 system_prompt=system_prompt,
             )
+            outputs.append(output)
             previous_output_tail = _tail_sentences(output)
             previous_source_tail = _tail_sentences(chunk)
+
+        # Layer 4: completeness check — same guard as narrate().
+        # Buffer all chunks before yielding so the full narration is available.
+        # When the check rewrites the narration, yield one combined segment;
+        # otherwise yield the original per-chunk outputs unchanged.
+        if self._tier == HardwareTier.HIGH_VRAM:
+            full_narration = '\n\n'.join(outputs)
+            _combined_words = len(text.split()) + len(full_narration.split())
+            if _combined_words <= 4000:
+                logger.info('Running LLM completeness check (HIGH_VRAM)...')
+                full_narration = await self._llm_completeness_check(text, full_narration)
+                yield full_narration
+                return
+            else:
+                logger.info(
+                    'Skipping LLM completeness check — combined word count %d exceeds '
+                    '4000-word context budget',
+                    _combined_words,
+                )
+
+        for output in outputs:
             yield output
 
 
