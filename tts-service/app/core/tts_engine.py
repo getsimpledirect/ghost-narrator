@@ -89,7 +89,7 @@ class TTSEngine:
                 try:
                     if hasattr(torch, 'compile') and torch.cuda.is_available():
                         _compiled_attrs: list[str] = []
-                        for _attr in ('talker', 'code_predictor', 'speaker_encoder'):
+                        for _attr in ('model', 'talker', 'code_predictor', 'speaker_encoder'):
                             _submod = getattr(self._model, _attr, None)
                             if isinstance(_submod, torch.nn.Module):
                                 try:
