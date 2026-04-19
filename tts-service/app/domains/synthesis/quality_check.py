@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import math
 
 from pydub import AudioSegment as _AudioSegment
 
@@ -94,6 +95,77 @@ async def _quality_check_and_resynthesize(
         logger.info(f'[{job_id}] Re-synthesized {resynth_count} chunks after quality check')
 
     return checked_paths
+
+
+async def _check_segment_consistency(
+    wav_paths: list[str],
+    chunk_texts: list[str],
+    job_id: str,
+    engine,
+    loop,
+    executor,
+    generation_kwargs: dict | None = None,
+    loudness_tolerance_db: float = 6.0,
+) -> list[str]:
+    """Re-synthesize segments whose loudness deviates > tolerance_db from the median.
+
+    Catches cases where one segment was generated at a systematically different
+    volume — a known sampling artifact in autoregressive TTS at segment boundaries
+    that is not caught by the per-chunk silence check in _quality_check_and_resynthesize.
+    A ±6 dB deviation corresponds to roughly 2× or 0.5× the perceived loudness.
+    """
+    if len(wav_paths) <= 1:
+        return list(wav_paths)
+
+    dbfs_values: list[float] = []
+    for wav_path in wav_paths:
+        try:
+            seg = _AudioSegment.from_wav(wav_path)
+            dbfs_values.append(seg.dBFS)
+        except Exception:
+            dbfs_values.append(float('nan'))
+
+    valid = [v for v in dbfs_values if not math.isnan(v)]
+    if len(valid) < 2:
+        return list(wav_paths)
+
+    sorted_valid = sorted(valid)
+    n = len(sorted_valid)
+    median_dbfs = (
+        sorted_valid[n // 2]
+        if n % 2 == 1
+        else (sorted_valid[n // 2 - 1] + sorted_valid[n // 2]) / 2
+    )
+
+    checked = list(wav_paths)
+    resynth_count = 0
+    for i, (wav_path, dbfs) in enumerate(zip(wav_paths, dbfs_values)):
+        if math.isnan(dbfs):
+            continue
+        deviation = abs(dbfs - median_dbfs)
+        if deviation > loudness_tolerance_db:
+            logger.warning(
+                '[%s] Segment %d loudness %.1f dBFS deviates %.1f dB from median %.1f — re-synthesizing',
+                job_id,
+                i,
+                dbfs,
+                deviation,
+                median_dbfs,
+            )
+            checked[i] = await _resynthesize_chunk(
+                i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
+            )
+            resynth_count += 1
+
+    if resynth_count > 0:
+        logger.info(
+            '[%s] Re-synthesized %d/%d segments for loudness consistency',
+            job_id,
+            resynth_count,
+            len(wav_paths),
+        )
+
+    return checked
 
 
 async def _resynthesize_chunk(

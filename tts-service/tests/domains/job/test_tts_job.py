@@ -435,16 +435,21 @@ async def test_run_tts_job_exceeds_max_duration(mock_job_store, mock_tts_engine)
         assert sem._value == 1  # semaphore is available
 
 
-def test_quality_check_not_gated_on_high_vram():
-    """Verify quality_check_and_resynthesize is called unconditionally."""
+def test_quality_check_covers_all_tiers():
+    """Both HIGH_VRAM and lower tiers get quality checks — just via different strategies.
+
+    HIGH_VRAM: per-segment _quality_check_and_resynthesize during synthesis +
+               _check_segment_consistency across all segments after.
+    Lower tiers: batch _quality_check_and_resynthesize after synthesis.
+
+    Verify both functions are called somewhere in tts_job.py.
+    """
     import pathlib
 
     src = pathlib.Path('app/domains/job/tts_job.py').read_text(encoding='utf-8')
-    lines = src.split('\n')
-    for i, line in enumerate(lines):
-        if 'await _quality_check_and_resynthesize' in line:
-            preceding = '\n'.join(lines[max(0, i - 10) : i])
-            assert 'HIGH_VRAM' not in preceding, (
-                'quality_check is still gated on HIGH_VRAM - remove the hardware tier guard'
-            )
-            break
+    assert 'await _quality_check_and_resynthesize(' in src, (
+        '_quality_check_and_resynthesize not called — lower tiers lose quality checking'
+    )
+    assert 'await _check_segment_consistency(' in src, (
+        '_check_segment_consistency not called — HIGH_VRAM tier loses loudness consistency check'
+    )

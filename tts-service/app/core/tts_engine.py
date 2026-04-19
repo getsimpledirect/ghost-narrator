@@ -143,6 +143,7 @@ class TTSEngine:
         voice_path_or_job_id: str | Path = '',
         job_id: str = '',
         generation_kwargs: Optional[dict] = None,
+        voice_override: Optional[str] = None,
     ) -> str:
         """Synthesize text to WAV using voice_path as reference.
 
@@ -153,7 +154,10 @@ class TTSEngine:
             generation_kwargs: Extra kwargs forwarded to generate_voice_clone
                 (temperature, repetition_penalty, top_k, top_p,
                 temperature_sub_talker, top_k_sub_talker, do_sample_sub_talker,
-                max_new_tokens). Merged on top of tier defaults at call time.
+                max_new_tokens, seed). Merged on top of tier defaults at call time.
+            voice_override: Explicit WAV path for voice conditioning (e.g. tail of
+                previous segment). Takes priority over voice_path_or_job_id and the
+                VOICE_SAMPLE_PATH default.
         """
         if not self._ready or self._model is None:
             raise TTSEngineError('Engine not initialized — call initialize() first')
@@ -161,19 +165,23 @@ class TTSEngine:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Determine voice_path from the argument
+        # Determine voice_path — voice_override (tail conditioning) wins over defaults
         from app.config import VOICE_SAMPLE_PATH
 
-        voice_path = Path(VOICE_SAMPLE_PATH)
         actual_job_id = job_id
-
-        if voice_path_or_job_id:
-            vp = Path(str(voice_path_or_job_id))
-            if vp.exists() and vp.suffix.lower() in ('.wav', '.mp3'):
-                voice_path = vp
-            else:
-                # It's a job_id string
+        if voice_override:
+            voice_path = Path(voice_override)
+            # voice_path_or_job_id is treated as job_id only when voice_override is set
+            if voice_path_or_job_id and not Path(str(voice_path_or_job_id)).exists():
                 actual_job_id = str(voice_path_or_job_id)
+        else:
+            voice_path = Path(VOICE_SAMPLE_PATH)
+            if voice_path_or_job_id:
+                vp = Path(str(voice_path_or_job_id))
+                if vp.exists() and vp.suffix.lower() in ('.wav', '.mp3'):
+                    voice_path = vp
+                else:
+                    actual_job_id = str(voice_path_or_job_id)
 
         if not voice_path.exists():
             raise VoiceSampleNotFoundError(f'Voice sample not found: {voice_path}')
@@ -187,7 +195,9 @@ class TTSEngine:
 
             with self._synthesis_lock:
                 voice_path_str = str(voice_path)
-                # Reuse cached prompt if same voice, otherwise create a new one
+                # Reuse cached prompt if same voice, otherwise create a new one.
+                # Tail-conditioning passes a fresh WAV each call — cache will miss,
+                # but create_voice_clone_prompt is fast (~0.5s) vs synthesis (~30s).
                 if (
                     voice_path_str == self._cached_voice_path
                     and self._cached_voice_prompt is not None
@@ -200,10 +210,22 @@ class TTSEngine:
                         ref_text=VOICE_SAMPLE_REF_TEXT,
                         x_vector_only_mode=use_x_vector_only,
                     )
-                    self._cached_voice_prompt = prompt
-                    self._cached_voice_path = voice_path_str
-                # Strip None values so absent optional params use model defaults
+                    # Only cache default voice — tail WAVs change every segment
+                    if not voice_override:
+                        self._cached_voice_prompt = prompt
+                        self._cached_voice_path = voice_path_str
+                # Strip None values; extract seed before forwarding to the model
                 gen_kw = {k: v for k, v in (generation_kwargs or {}).items() if v is not None}
+                seed = gen_kw.pop('seed', None)
+                if seed is not None:
+                    try:
+                        import torch as _torch
+
+                        _torch.manual_seed(int(seed))
+                        if _torch.cuda.is_available():
+                            _torch.cuda.manual_seed_all(int(seed))
+                    except Exception:
+                        pass
                 try:
                     wavs, sr = self._model.generate_voice_clone(
                         text=text,

@@ -60,9 +60,11 @@ from app.config import (
     SINGLE_SHOT_OVERLAP_MS,
 )
 from app.domains.narration.factory import get_narration_strategy
+from app.core.hardware import ENGINE_CONFIG, HardwareTier
 from app.domains.synthesis.quality import validate_audio_quality, apply_final_mastering
 from app.domains.synthesis.quality_check import (
     _quality_check_and_resynthesize,
+    _check_segment_consistency,
 )
 from app.domains.job.store import get_job_store
 from app.domains.job.notification import notify_job_completed, notify_job_failed
@@ -73,6 +75,7 @@ from app.domains.synthesis.service import (
     get_executor,
     synthesize_single_shot_async,
     synthesize_with_pauses,
+    _extract_tail_wav,
 )
 from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
 
@@ -232,6 +235,14 @@ async def run_tts_job(
         # Fetch generation config once (async Redis read) before entering thread pool
         generation_kwargs, _overrides = await get_effective_config()
 
+        # Fix seed per job — same job_id always produces the same audio on retry.
+        # The seed is popped from gen_kw inside the engine before forwarding to the
+        # model, so it never reaches generate_voice_clone as an unexpected kwarg.
+        import hashlib as _hashlib
+
+        _job_seed = int(_hashlib.sha256(job_id.encode()).hexdigest()[:8], 16) % (2**31)
+        generation_kwargs = {**generation_kwargs, 'seed': _job_seed}
+
         # Acquire GPU slot — serializes narration + synthesis + mastering.
         # One job runs its full pipeline at a time; the next job waits here.
         # Upload, cleanup, and webhook fire AFTER release so the slot is not
@@ -338,8 +349,8 @@ async def run_tts_job(
                             all_chunks = [clean_text_for_tts(full_narrated_text)]
                             logger.info(f'[{job_id}] Single-shot synthesis complete')
                         else:
-                            # Long content: split at sentence boundaries, synthesize each
-                            # segment in single-shot mode, quality-check before merging
+                            # Long content: split at paragraph boundaries, synthesize each
+                            # segment in single-shot mode with tail conditioning, then merge.
                             from app.utils.text import split_into_large_segments, clean_text_for_tts
 
                             sentence_segments = split_into_large_segments(
@@ -350,8 +361,18 @@ async def run_tts_job(
                                 f'({len(sentence_segments)} × ~{SINGLE_SHOT_SEGMENT_WORDS}-word segments)'
                             )
 
+                            # Tail conditioning: HIGH_VRAM conditions each segment on the
+                            # last 2.5s of the preceding segment, anchoring voice timbre
+                            # and speaking rate across synthesis boundaries.
+                            use_tail_conditioning = (
+                                ENGINE_CONFIG.tier == HardwareTier.HIGH_VRAM
+                                and len(sentence_segments) > 1
+                            )
+
                             segment_wavs: list[str] = []
                             segment_texts: list[str] = []
+                            tail_voice_path: Optional[str] = None
+
                             for seg_idx, segment_text in enumerate(sentence_segments):
                                 if not segment_text.strip():
                                     continue
@@ -360,13 +381,48 @@ async def run_tts_job(
                                 if not clean_seg.strip():
                                     continue
                                 segment_wav = str(job_dir / f'segment_{seg_idx:04d}.wav')
+
                                 segment_path = await synthesize_single_shot_async(
                                     text=clean_seg,
                                     output_path=segment_wav,
                                     job_id=job_id,
                                     generation_kwargs=generation_kwargs,
+                                    voice_path=tail_voice_path,
                                 )
-                                segment_wavs.append(segment_path)
+
+                                if use_tail_conditioning:
+                                    # Per-segment quality check on HIGH_VRAM so the tail
+                                    # reference is always from a known-good segment.
+                                    [checked_path] = await _quality_check_and_resynthesize(
+                                        [segment_path],
+                                        [clean_seg],
+                                        job_id,
+                                        engine,
+                                        loop,
+                                        executor,
+                                        generation_kwargs,
+                                    )
+                                    segment_wavs.append(checked_path)
+                                    # Extract tail for next segment; skip on failure (non-fatal)
+                                    try:
+                                        tail_wav = str(job_dir / f'tail_{seg_idx:04d}.wav')
+                                        tail_voice_path = await loop.run_in_executor(
+                                            executor,
+                                            _extract_tail_wav,
+                                            checked_path,
+                                            2500,
+                                            tail_wav,
+                                        )
+                                    except Exception as _tail_exc:
+                                        logger.warning(
+                                            '[%s] Tail extraction failed (non-fatal): %s',
+                                            job_id,
+                                            _tail_exc,
+                                        )
+                                        tail_voice_path = None
+                                else:
+                                    segment_wavs.append(segment_path)
+
                                 segment_texts.append(clean_seg)
                                 logger.info(
                                     f'[{job_id}] Segment {seg_idx + 1}'
@@ -376,21 +432,36 @@ async def run_tts_job(
                             if not segment_wavs:
                                 raise RuntimeError('Segment synthesis produced no audio files')
 
-                            # Quality check BEFORE merging — bad segments can be
-                            # re-synthesized independently without affecting others
                             await _check_status()
-                            logger.info(
-                                f'[{job_id}] Quality check on {len(segment_wavs)} segments...'
-                            )
-                            segment_wavs = await _quality_check_and_resynthesize(
-                                segment_wavs,
-                                segment_texts,
-                                job_id,
-                                engine,
-                                loop,
-                                executor,
-                                generation_kwargs,
-                            )
+                            if use_tail_conditioning:
+                                # Consistency check: re-synthesize any segment whose
+                                # loudness deviates > 6 dB from the median across segments.
+                                logger.info(
+                                    f'[{job_id}] Consistency check across {len(segment_wavs)} segments...'
+                                )
+                                segment_wavs = await _check_segment_consistency(
+                                    segment_wavs,
+                                    segment_texts,
+                                    job_id,
+                                    engine,
+                                    loop,
+                                    executor,
+                                    generation_kwargs,
+                                )
+                            else:
+                                # Batch quality check for lower tiers (silence/too-short detection)
+                                logger.info(
+                                    f'[{job_id}] Quality check on {len(segment_wavs)} segments...'
+                                )
+                                segment_wavs = await _quality_check_and_resynthesize(
+                                    segment_wavs,
+                                    segment_texts,
+                                    job_id,
+                                    engine,
+                                    loop,
+                                    executor,
+                                    generation_kwargs,
+                                )
 
                             if len(segment_wavs) > 1:
                                 merged_wav = await loop.run_in_executor(
