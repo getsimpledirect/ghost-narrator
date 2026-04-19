@@ -43,6 +43,7 @@ from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
 from app.utils.text import split_into_chunks, clean_text_for_tts, has_quoted_speech, split_at_quotes
+from app.domains.synthesis.concatenate import _trim_silence
 
 if TYPE_CHECKING:
     pass
@@ -182,7 +183,7 @@ def synthesize_chunk(
         # Derive silence properties from the first real segment so frame_rate,
         # channels, and sample_width match — pydub does not auto-resample on
         # concatenation, so a mismatched silent() causes audio glitches.
-        combined = AudioSegment.from_wav(sub_wav_paths[0])
+        combined = _trim_silence(AudioSegment.from_wav(sub_wav_paths[0]))
         # pydub.AudioSegment.silent() only accepts duration and frame_rate —
         # channels and sample_width must be set via chained method calls.
         breath = (
@@ -191,7 +192,7 @@ def synthesize_chunk(
             .set_sample_width(combined.sample_width)
         )
         for path in sub_wav_paths[1:]:
-            seg = AudioSegment.from_wav(path)
+            seg = _trim_silence(AudioSegment.from_wav(path))
             combined = combined + breath + seg
 
         combined.export(output_path, format='wav')

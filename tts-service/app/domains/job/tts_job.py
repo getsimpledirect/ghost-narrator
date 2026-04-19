@@ -52,7 +52,6 @@ from app.core.exceptions import (
 )
 from app.config import (
     DEVICE,
-    MAX_CHUNK_WORDS,
     MAX_JOB_DURATION_SECONDS,
     MP3_BITRATE,
     OUTPUT_DIR,
@@ -61,7 +60,6 @@ from app.config import (
     SINGLE_SHOT_OVERLAP_MS,
 )
 from app.domains.narration.factory import get_narration_strategy
-from app.domains.synthesis.concatenate import concatenate_audio_auto as concatenate_wavs_auto
 from app.domains.synthesis.quality import validate_audio_quality, apply_final_mastering
 from app.domains.synthesis.quality_check import (
     _quality_check_and_resynthesize,
@@ -73,7 +71,6 @@ from app.domains.tts_config.store import get_effective_config
 from app.domains.synthesis.service import (
     cleanup_chunk_files,
     get_executor,
-    prepare_text_for_synthesis,
     synthesize_single_shot_async,
 )
 from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
@@ -275,7 +272,6 @@ async def run_tts_job(
                     chunk_wav_paths: list[str] = []
                     all_chunks: list[str] = []
                     narrated_segments: list[str] = []
-                    chunk_pause_durations: list[int] = []
                     total_words = 0
                     narration_skipped = False
 
@@ -306,13 +302,8 @@ async def run_tts_job(
                     if not full_narrated_text.strip():
                         raise RuntimeError('Narrated text is empty')
 
-                    # Build TTS chunk list + pause durations for the concat step.
-                    all_chunks, total_words, chunk_pause_durations = prepare_text_for_synthesis(
-                        full_narrated_text, MAX_CHUNK_WORDS
-                    )
-                    logger.info(
-                        f'[{job_id}] {total_words} narrated words → {len(all_chunks)} TTS chunks'
-                    )
+                    total_words = len(full_narrated_text.split())
+                    logger.info(f'[{job_id}] {total_words} narrated words')
 
                     # ─── PHASE 2: SYNTHESIS ──────────────────────────────────────────
                     # Exactly ONE synthesis path runs based on the final narrated word
@@ -344,7 +335,6 @@ async def run_tts_job(
                                 )
                             ]
                             all_chunks = [clean_text]
-                            chunk_pause_durations = [0]
                             logger.info(f'[{job_id}] Single-shot synthesis complete')
                         else:
                             # Long content: split at sentence boundaries, synthesize each
@@ -417,7 +407,6 @@ async def run_tts_job(
 
                             # Single merged file — align metadata for concat step
                             all_chunks = [full_narrated_text]
-                            chunk_pause_durations = [0]
 
                     if not chunk_wav_paths:
                         raise RuntimeError('No audio chunks were synthesized')
@@ -448,22 +437,10 @@ async def run_tts_job(
                     )
                     normalized_wav_paths = chunk_wav_paths
 
-                    # Step 4: Concatenate WAVs with dynamic gaps into raw WAV
+                    # Step 4: Copy single WAV to raw_wav — always exactly one file at this
+                    # point (single-shot or pre-merged segments), so no concatenation needed.
                     await _check_status()
-                    try:
-                        _concat_fn = functools.partial(
-                            concatenate_wavs_auto,
-                            explicit_pause_durations=chunk_pause_durations,
-                        )
-                        await loop.run_in_executor(
-                            executor,
-                            _concat_fn,
-                            normalized_wav_paths,
-                            raw_wav,
-                            all_chunks,  # Pass chunk texts for dynamic pause detection
-                        )
-                    except Exception as exc:
-                        raise RuntimeError(f'Audio concatenation failed: {exc}') from exc
+                    shutil.copy2(normalized_wav_paths[0], raw_wav)
 
                     # Verify raw WAV was created
                     if not Path(raw_wav).exists():

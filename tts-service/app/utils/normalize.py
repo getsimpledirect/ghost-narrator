@@ -50,8 +50,26 @@ _MD_LINK_RE: Final = re.compile(r'\[([^\]]+)\]\([^)]+\)')
 _MD_HEADER_RE: Final = re.compile(r'^#+\s+', re.MULTILINE)
 _MD_BLOCKQUOTE_RE: Final = re.compile(r'^>\s+', re.MULTILINE)
 
+# Markdown horizontal rules: ---, ***, ___ on their own line (article section dividers)
+# Applied in normalize_for_narration AFTER frontmatter stripping so frontmatter
+# delimiters are removed as a block first, not as individual HR lines.
+_MD_HR_RE: Final = re.compile(r'^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$', re.MULTILINE)
+
 # Dollar amounts with SI abbreviations: $1.2B, $450M, $3T, $200K
 _DOLLAR_ABBREV_RE: Final = re.compile(r'\$(\d+(?:\.\d+)?)(B|M|T|K)\b', re.IGNORECASE)
+
+# Plain dollar amounts: $500, $29.99, $1,200 — not followed by B/M/T/K (already handled above)
+_PLAIN_DOLLAR_RE: Final = re.compile(r'\$(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)(?![BMTKbmtk\d])')
+
+# Slash-unit price suffixes: /month, /year, /user, /seat → "per month" etc.
+_PER_UNIT_RE: Final = re.compile(
+    r'/(?:month|year|user|seat|day|week|quarter|hour)\b',
+    re.IGNORECASE,
+)
+
+# Multiplier patterns: 10x, 3x, 2.5x → "10 times", "3 times"
+# \b before ensures we don't match inside words; (?![a-zA-Z]) after prevents "Xbox" matches
+_MULTIPLIER_RE: Final = re.compile(r'\b(\d+(?:\.\d+)?)x\b(?![a-zA-Z0-9])', re.IGNORECASE)
 
 # ISO 8601 dates: 2026-04-13
 _ISO_DATE_RE: Final = re.compile(r'\b(\d{4})-(\d{2})-(\d{2})\b')
@@ -123,6 +141,16 @@ _ACRONYM_REGISTRY: Final[dict[str, str]] = {
     'B2C': 'B-to-C',
     'VC': 'V-C',
     'PE': 'P-E',
+    'ROI': 'R-O-I',
+    'EBITDA': 'E-B-I-T-D-A',
+    'NPS': 'N-P-S',
+    'KPI': 'K-P-I',
+    'OKR': 'O-K-R',
+    'YoY': 'year over year',
+    'QoQ': 'quarter over quarter',
+    # HR is kept as H-R to avoid confusion with "hours" abbreviation
+    'HR': 'H-R',
+    'VP': 'V-P',
 }
 
 # Pre-compiled acronym pattern: matches whole-word occurrences only.
@@ -138,6 +166,19 @@ _MULTI_NEWLINE_RE: Final = re.compile(r'\n{3,}')
 
 # Fenced code blocks: ```...``` (possibly with language tag)
 _FENCED_CODE_RE: Final = re.compile(r'```[\s\S]*?```', re.DOTALL)
+
+# Emoji-prefixed bullet lines: common in Ghost pricing/feature tables
+# (📬 Basic Package — $29/month, 💎 Pro Plan, etc.)
+_EMOJI_BULLET_LINE_RE: Final = re.compile(
+    r'^[ \t]*[\U0001F300-\U0001FAFF\u2600-\u27BF\u2700-\u27BF].*$',
+    re.MULTILINE,
+)
+
+# Plain bullet symbol lines: • item, ◦ sub-item, ▸ item
+_SYMBOL_BULLET_LINE_RE: Final = re.compile(
+    r'^[ \t]*[•◦‣▸▪▫]\s+.+$',
+    re.MULTILINE,
+)
 
 # Inline code: `...`
 _INLINE_CODE_RE: Final = re.compile(r'`[^`\n]+`')
@@ -198,6 +239,12 @@ def filter_non_narrable_content(text: str) -> str:
 
     # CTA boilerplate lines
     text = _CTA_LINE_RE.sub('', text)
+
+    # Emoji-prefixed bullet lines (pricing tables, feature lists with emoji icons)
+    text = _EMOJI_BULLET_LINE_RE.sub('', text)
+
+    # Plain bullet symbol lines
+    text = _SYMBOL_BULLET_LINE_RE.sub('', text)
 
     # Re-collapse whitespace introduced by the removals
     text = _MULTI_NEWLINE_RE.sub('\n\n', text)
@@ -261,8 +308,12 @@ def normalize_for_narration(text: str) -> str:
     # tables, and CTAs don't inflate token count or confuse the LLM
     text = filter_non_narrable_content(text)
 
-    # Strip Markdown frontmatter
+    # Strip Markdown frontmatter first — must precede HR stripping so the
+    # frontmatter delimiters (---) are removed as a block, not as HR lines.
     text = _MD_FRONTMATTER_RE.sub('', text)
+
+    # Strip Markdown horizontal rules (article section dividers: ---, ***, ___)
+    text = _MD_HR_RE.sub('', text)
 
     # Strip Markdown images completely
     text = _MD_IMAGE_RE.sub('', text)
@@ -291,6 +342,15 @@ def normalize_for_narration(text: str) -> str:
         return f'{num} {suffix} dollars'
 
     text = _DOLLAR_ABBREV_RE.sub(_expand_dollar, text)
+
+    # Expand plain dollar amounts: $500 → 500 dollars, $29.99 → 29.99 dollars
+    text = _PLAIN_DOLLAR_RE.sub(lambda m: f'{m.group(1)} dollars', text)
+
+    # Expand slash-unit price suffixes: /month → per month
+    text = _PER_UNIT_RE.sub(lambda m: ' per ' + m.group(0)[1:].lower(), text)
+
+    # Expand multipliers: 10x → 10 times
+    text = _MULTIPLIER_RE.sub(lambda m: f'{m.group(1)} times', text)
 
     # Convert ISO dates: 2026-04-13 → April 13, 2026
     def _expand_date(m: re.Match) -> str:

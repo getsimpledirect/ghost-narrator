@@ -199,24 +199,28 @@ def test_high_vram_tts_max_new_tokens_is_4000():
     assert cfg.tts_max_new_tokens == 4000, f'Expected 4000, got {cfg.tts_max_new_tokens}'
 
 
-def test_mid_vram_tts_max_new_tokens_is_3000():
-    """MID_VRAM max_new_tokens must be 3000 (was 6000, same runaway risk)."""
+def test_mid_vram_tts_max_new_tokens_is_4500():
+    """MID_VRAM max_new_tokens must be 4500 (2× headroom for 400-word segments).
+
+    400 words ≈ 2200 codec tokens at 12 Hz; 3000 left only 35% headroom at 130 wpm,
+    causing mid-word clipping. 4500 provides 2× headroom at both speaking rates.
+    """
     from app.core.hardware import _TIER_CONFIGS
 
     cfg = _TIER_CONFIGS[HardwareTier.MID_VRAM]
-    assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
+    assert cfg.tts_max_new_tokens == 4500, f'Expected 4500, got {cfg.tts_max_new_tokens}'
 
 
-def test_low_vram_tts_max_new_tokens_is_3000():
-    """LOW_VRAM max_new_tokens must be 3000 for consistency with MID/HIGH.
+def test_low_vram_tts_max_new_tokens_is_4500():
+    """LOW_VRAM max_new_tokens must be 4500 (2× headroom for 400-word segments).
 
-    175-word chunk ≈ 969 codec tokens at 12 Hz; 3000 = 3.1× headroom —
-    sufficient for the 0.6B model on older hardware without runaway risk.
+    400 words ≈ 2200 codec tokens at 12 Hz; 3000 left only 35% headroom at 130 wpm,
+    causing mid-word clipping. 4500 provides 2× headroom at both speaking rates.
     """
     from app.core.hardware import _TIER_CONFIGS
 
     cfg = _TIER_CONFIGS[HardwareTier.LOW_VRAM]
-    assert cfg.tts_max_new_tokens == 3000, f'Expected 3000, got {cfg.tts_max_new_tokens}'
+    assert cfg.tts_max_new_tokens == 4500, f'Expected 4500, got {cfg.tts_max_new_tokens}'
 
 
 def test_all_tiers_use_temperature_03():

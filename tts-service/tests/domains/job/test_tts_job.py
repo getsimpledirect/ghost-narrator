@@ -130,11 +130,10 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
             new_callable=AsyncMock,
             return_value=({}, {}),
         ),
-        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch(
             'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
         ) as mock_synth,
-        patch('app.domains.job.tts_job.concatenate_wavs_auto') as mock_concat,
+        patch('app.domains.job.tts_job.shutil') as mock_shutil,
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
         patch(
@@ -155,9 +154,8 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
         mock_audio_segment.return_value = MagicMock()
 
         mock_stat.return_value.st_size = 1024 * 1024
-        mock_prepare.return_value = (['Hello world.', 'This is a test.'], 6, [0, 0])
+        mock_shutil.copy2.return_value = None
         mock_synth.return_value = '/tmp/single_shot.wav'
-        mock_concat.return_value = None
 
         await run_tts_job(job_id, text, storage_path)
 
@@ -212,7 +210,6 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
             new_callable=AsyncMock,
             return_value=({}, {}),
         ),
-        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch(
             'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
         ) as mock_synth,
@@ -220,7 +217,6 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
         patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
         patch.object(Path, 'mkdir'),
     ):
-        mock_prepare.return_value = (['Some text to synthesize.'], 4, [0])
         mock_synth.side_effect = SynthesisError('GPU out of memory')
 
         await run_tts_job(job_id, text, storage_path)
@@ -262,11 +258,10 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
             new_callable=AsyncMock,
             return_value=({}, {}),
         ),
-        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch(
             'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
         ) as mock_synth,
-        patch('app.domains.job.tts_job.concatenate_wavs_auto'),
+        patch('app.domains.job.tts_job.shutil') as mock_shutil,
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
         patch('app.domains.job.tts_job.get_storage_backend', return_value=failing_backend),
@@ -284,7 +279,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
         mock_audio_segment.return_value = MagicMock()
 
         mock_stat.return_value.st_size = 1024 * 1024
-        mock_prepare.return_value = (['Hello world.'], 2, [0])
+        mock_shutil.copy2.return_value = None
         mock_synth.return_value = '/tmp/single_shot.wav'
 
         await run_tts_job(job_id, text, storage_path)
@@ -352,11 +347,10 @@ async def test_run_tts_job_transitions_through_queued_status(
             new_callable=AsyncMock,
             return_value=({}, {}),
         ),
-        patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
         patch(
             'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
         ) as mock_synth,
-        patch('app.domains.job.tts_job.concatenate_wavs_auto'),
+        patch('app.domains.job.tts_job.shutil') as mock_shutil,
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
         patch(
@@ -373,7 +367,7 @@ async def test_run_tts_job_transitions_through_queued_status(
     ):
         mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
         mock_stat.return_value.st_size = 1024 * 1024
-        mock_prepare.return_value = (['Hello world.'], 2, [0])
+        mock_shutil.copy2.return_value = None
         mock_synth.return_value = '/tmp/single_shot.wav'
 
         await run_tts_job('test-queued', 'Hello world.', 'audio/test.mp3')

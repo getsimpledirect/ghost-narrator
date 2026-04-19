@@ -99,6 +99,45 @@ _SPECIAL_CHARS: Final[dict[str, str]] = {
     '\u00a0': ' ',  # non-breaking space
     '\u200b': '',  # zero-width space
     '\u2060': '',  # word joiner
+    # Arrows — common in blog posts for "X → Y" transitions
+    '\u2192': ' to ',  # →
+    '\u2190': ' from ',  # ←
+    '\u2194': ' to and from ',  # ↔
+    '\u21d2': ' leads to ',  # ⇒
+    # Bullet symbols that survive normalize_for_narration
+    '\u2022': '',  # •
+    '\u25e6': '',  # ◦
+    '\u2023': '',  # ‣
+    '\u25b8': '',  # ▸
+    # Math / comparison
+    '\u00b1': ' plus or minus ',  # ±
+    '\u00d7': ' times ',  # ×
+    '\u00f7': ' divided by ',  # ÷
+    '\u2248': ' approximately ',  # ≈
+    '\u2264': ' less than or equal to ',  # ≤
+    '\u2265': ' greater than or equal to ',  # ≥
+    '\u2260': ' not equal to ',  # ≠
+    # Degree symbol — temperature and angles
+    '\u00b0': ' degrees ',  # °
+    # Currency symbols beyond $
+    '\u20ac': ' euros ',  # €
+    '\u00a3': ' pounds ',  # £
+    '\u00a5': ' yen ',  # ¥
+    '\u20b9': ' rupees ',  # ₹
+    # Trademark / legal — strip silently
+    '\u2122': '',  # ™
+    '\u00ae': '',  # ®
+    '\u00a9': '',  # ©
+    # Fractions
+    '\u00bd': ' one half ',  # ½
+    '\u00bc': ' one quarter ',  # ¼
+    '\u00be': ' three quarters ',  # ¾
+    # Superscripts — common in metrics (m², CO₂)
+    '\u00b2': ' squared ',  # ²
+    '\u00b3': ' cubed ',  # ³
+    # Section / paragraph marks
+    '\u00a7': ' section ',  # §
+    '\u00b6': '',  # ¶
 }
 
 
@@ -429,6 +468,15 @@ def split_into_large_segments(text: str, target_words: int) -> list[str]:
 
     if current:
         segments.append('\n\n'.join(current))
+
+    # Merge trailing segments shorter than 40 words into the preceding segment.
+    # Qwen3-TTS produces codec artifacts (clicks, truncated phonemes) on very
+    # short inputs — a single paragraph at the end becomes a standalone synthesis
+    # call that clips mid-decode because there are too few tokens to close cleanly.
+    _MIN_SEGMENT_WORDS = 40
+    if len(segments) >= 2 and len(segments[-1].split()) < _MIN_SEGMENT_WORDS:
+        segments[-2] = segments[-2] + '\n\n' + segments[-1]
+        segments.pop()
 
     return segments if segments else [text]
 

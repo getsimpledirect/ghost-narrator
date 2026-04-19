@@ -69,7 +69,7 @@ async def _quality_check_and_resynthesize(
                 continue
 
             # Check silence ratio
-            silence_threshold = seg.dBFS - 30  # 30dB below average = silence
+            silence_threshold = -40.0  # fixed floor; seg.dBFS - 30 breaks for near-silent segments
             silence_ms = 0
             chunk_size = 50  # ms
             for j in range(0, duration_ms, chunk_size):

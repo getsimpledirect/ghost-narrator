@@ -95,7 +95,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=3000,
+        tts_max_new_tokens=4500,  # 400 words ≈ 2200 tokens at 12 Hz; 4500 = 2× headroom
     ),
     HardwareTier.LOW_VRAM: EngineConfig(
         tier=HardwareTier.LOW_VRAM,
@@ -104,7 +104,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_precision='fp32',  # fp16 overflows on older GPUs → inf/nan logits; 0.6B fp32 = ~1.2 GB VRAM
         llm_model='qwen3:4b',
         narration_strategy='chunked',
-        narration_chunk_words=1000,
+        narration_chunk_words=500,
         tts_chunk_words=200,  # Increased for smoother flow
         synthesis_workers=1,
         mp3_bitrate='192k',
@@ -117,7 +117,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=3000,  # 175 words ≈ 969 tokens; 3000 = 3.1× headroom
+        tts_max_new_tokens=4500,  # 400 words ≈ 2200 tokens at 12 Hz; 4500 = 2× headroom
     ),
     HardwareTier.MID_VRAM: EngineConfig(
         tier=HardwareTier.MID_VRAM,
@@ -139,7 +139,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=3000,
+        tts_max_new_tokens=4500,  # 400 words ≈ 2200 tokens at 12 Hz; 4500 = 2× headroom
     ),
     HardwareTier.HIGH_VRAM: EngineConfig(
         tier=HardwareTier.HIGH_VRAM,
