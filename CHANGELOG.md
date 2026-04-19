@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v2.9.0 (2026-04-19)
+
+### Features
+
+- **tts-service**: Add tail conditioning, seed determinism, and loudness consistency
+  ([`62990fe`](https://github.com/getsimpledirect/ghost-narrator/commit/62990fe1a0369dab11e5dda62a9369aab08b8bae))
+
+- Tail conditioning (HIGH_VRAM): each segment is conditioned on the last 2.5s of the preceding
+  segment via voice_override, anchoring timbre and speaking rate across autoregressive synthesis
+  boundaries
+
+- Seed determinism: job_id is hashed via SHA-256 to a stable 31-bit seed and set via
+  torch.manual_seed inside the synthesis lock, making retries reproduce the same audio rather than
+  rolling a new voice sample
+
+- Per-segment quality check interleaved with tail extraction on HIGH_VRAM so the tail reference is
+  always from a verified segment, not a silent one
+
+- Loudness consistency check (_check_segment_consistency): after HIGH_VRAM synthesis, segments
+  deviating > 6 dB from the median dBFS are re-synthesized, catching volume-level sampling artifacts
+  invisible to per-chunk silence check
+
+- voice_path parameter added to synthesize_single_shot/async to support tail conditioning without
+  breaking existing callers
+
+- _extract_tail_wav helper slices the last N ms of a WAV for conditioning
+
+
 ## v2.8.17 (2026-04-19)
 
 ### Bug Fixes
