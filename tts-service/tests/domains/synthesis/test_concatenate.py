@@ -127,9 +127,9 @@ class TestOverlapCrossfade:
             test_wav2 = f.name
 
         try:
-            samples1 = np.sin(np.linspace(0, 2 * np.pi, 48000)).astype(np.int16)
+            samples1 = (np.sin(np.linspace(0, 2 * np.pi, 48000)) * 16000).astype(np.int16)
             seg1 = AudioSegment(samples1.tobytes(), frame_rate=48000, sample_width=2, channels=1)
-            samples2 = np.sin(np.linspace(0, 4 * np.pi, 48000)).astype(np.int16)
+            samples2 = (np.sin(np.linspace(0, 4 * np.pi, 48000)) * 16000).astype(np.int16)
             seg2 = AudioSegment(samples2.tobytes(), frame_rate=48000, sample_width=2, channels=1)
             seg1.export(test_wav1, format='wav')
             seg2.export(test_wav2, format='wav')

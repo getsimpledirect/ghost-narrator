@@ -212,6 +212,7 @@ def concatenate_audio_with_overlap(
             raise AudioProcessingError(f'WAV file is empty: {path_str}')
         seg = AudioSegment.from_wav(path_str)
         seg = seg.set_frame_rate(48000).set_channels(2).set_sample_width(2)
+        seg = _trim_silence(seg)
         segments.append(seg)
 
     combined = segments[0]

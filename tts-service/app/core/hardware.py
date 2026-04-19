@@ -126,7 +126,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_precision='fp16',
         llm_model='qwen3:8b',
         narration_strategy='single_shot',
-        narration_chunk_words=800,  # 800 words ≈ 1200 tokens; leaves ~5942/8192 for output
+        narration_chunk_words=400,  # 400 words ≈ 600 tokens; gives ~6000+ tokens for output
         tts_chunk_words=250,  # Increased for smoother flow
         synthesis_workers=1,
         mp3_bitrate='256k',  # Higher bitrate for studio quality
@@ -148,7 +148,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_precision='bf16',  # bf16: 1.5-2x faster on Tensor Core GPUs, imperceptible quality diff
         llm_model='qwen3:8b',  # sufficient for format-conversion narration at half the VRAM cost
         narration_strategy='chunked',  # chunked enables pipelined narrate+synthesize
-        narration_chunk_words=800,  # 800 words ≈ 1200 tokens; leaves ~5942/8192 for output
+        narration_chunk_words=400,  # 400 words ≈ 600 tokens; gives ~6000+ tokens for output
         tts_chunk_words=300,  # Larger chunks = fewer boundaries = smoother flow
         synthesis_workers=1,  # GPU synthesis is serial — gpu semaphore + _synthesis_lock
         mp3_bitrate='320k',  # Studio quality

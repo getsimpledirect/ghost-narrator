@@ -278,11 +278,11 @@ class ChunkedStrategy(NarrationStrategy):
         max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
         while not validation.passed and retry_count < max_retries:
             if validation.word_ratio < _validator.CRITICAL_WORD_RATIO:
-                logger.error(
-                    'Critical truncation (%.0f%%) for chunk — skipping retries',
+                logger.warning(
+                    'Critical truncation (%.0f%%) for chunk — falling back to source text',
                     validation.word_ratio * 100,
                 )
-                break
+                return chunk
             logger.warning(
                 'Validation failed for chunk — retrying (%d/%d). Missing: %s',
                 retry_count + 1,
@@ -297,7 +297,7 @@ class ChunkedStrategy(NarrationStrategy):
             retry_count += 1
 
         if not validation.passed:
-            logger.error(
+            logger.warning(
                 'Validation failed for chunk after %d retries. Missing: %s',
                 retry_count,
                 validation.missing_entities,
@@ -469,11 +469,11 @@ class SingleShotStrategy(NarrationStrategy):
         max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
         while not validation.passed and retry_count < max_retries:
             if validation.word_ratio < _validator.CRITICAL_WORD_RATIO:
-                logger.error(
-                    'Critical truncation (%.0f%%) — skipping retries',
+                logger.warning(
+                    'Critical truncation (%.0f%%) — falling back to source text',
                     validation.word_ratio * 100,
                 )
-                break
+                return text
             logger.warning(
                 'Validation failed — retrying (%d/%d). Missing: %s',
                 retry_count + 1,
@@ -488,7 +488,7 @@ class SingleShotStrategy(NarrationStrategy):
             retry_count += 1
 
         if not validation.passed:
-            logger.error(
+            logger.warning(
                 'Validation failed after %d retries. Missing: %s',
                 retry_count,
                 validation.missing_entities,
