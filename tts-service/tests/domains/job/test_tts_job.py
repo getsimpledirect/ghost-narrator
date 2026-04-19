@@ -131,7 +131,9 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
             return_value=({}, {}),
         ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock) as mock_synth,
+        patch(
+            'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
+        ) as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto') as mock_concat,
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
@@ -211,7 +213,9 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
             return_value=({}, {}),
         ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock) as mock_synth,
+        patch(
+            'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
+        ) as mock_synth,
         patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
         patch.object(Path, 'mkdir'),
@@ -259,7 +263,9 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
             return_value=({}, {}),
         ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock) as mock_synth,
+        patch(
+            'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
+        ) as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto'),
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
@@ -347,7 +353,9 @@ async def test_run_tts_job_transitions_through_queued_status(
             return_value=({}, {}),
         ),
         patch('app.domains.job.tts_job.prepare_text_for_synthesis') as mock_prepare,
-        patch('app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock) as mock_synth,
+        patch(
+            'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
+        ) as mock_synth,
         patch('app.domains.job.tts_job.concatenate_wavs_auto'),
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),

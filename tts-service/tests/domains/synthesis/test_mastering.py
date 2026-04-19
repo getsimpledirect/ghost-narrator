@@ -57,7 +57,6 @@ class TestMasteringFunctions:
 
 def test_master_audio_filter_chain_includes_limiter():
     """master_audio must apply loudness normalization with limiter for natural sound."""
-    import subprocess
     from unittest.mock import patch, MagicMock
 
     captured_commands = []

@@ -29,7 +29,6 @@ import logging
 
 from pydub import AudioSegment as _AudioSegment
 
-from app.config import OUTPUT_DIR
 
 logger = logging.getLogger(__name__)
 

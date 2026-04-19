@@ -1,4 +1,8 @@
-from app.utils.normalize import normalize_for_narration, extract_section_map, filter_non_narrable_content
+from app.utils.normalize import (
+    normalize_for_narration,
+    extract_section_map,
+    filter_non_narrable_content,
+)
 
 
 def test_strips_html_tags():
@@ -140,6 +144,7 @@ def test_normalize_strips_markdown_syntax():
 
 
 # filter_non_narrable_content tests
+
 
 def test_filter_removes_fenced_code_blocks():
     text = 'Here is some prose.\n```python\nprint("hello")\n```\nAnd more prose.'
