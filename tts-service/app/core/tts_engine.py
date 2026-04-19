@@ -80,21 +80,37 @@ class TTSEngine:
                     dtype=dtype,
                 )
 
-                # Wrap model with torch.compile() on CUDA for 2-4× inference speedup.
-                # First call incurs a 30-60s compilation penalty; subsequent calls are fast.
-                # Skip on CPU/non-CUDA — torch.compile() has no benefit there and may error.
+                # Apply torch.compile() to Qwen3TTSModel's nn.Module sub-components.
+                # Qwen3TTSModel is a Python wrapper class, not an nn.Module itself —
+                # compiling the wrapper is a no-op. The real inference modules are
+                # talker, code_predictor, and speaker_encoder; compile each individually.
+                # First call on each sub-module incurs the 30-60s JIT penalty; all
+                # subsequent calls get the 2-4× speedup. Skip on CPU — no benefit.
                 try:
                     if hasattr(torch, 'compile') and torch.cuda.is_available():
-                        logger.info(
-                            'Compiling TTS model with torch.compile() '
-                            '(first-call penalty ~30-60s, subsequent calls 2-4× faster)...'
-                        )
-                        # Only compile the underlying PyTorch module, not the wrapper class
-                        if hasattr(self._model, 'model'):
-                            self._model.model = torch.compile(self._model.model)
+                        _compiled_attrs: list[str] = []
+                        for _attr in ('talker', 'code_predictor', 'speaker_encoder'):
+                            _submod = getattr(self._model, _attr, None)
+                            if isinstance(_submod, torch.nn.Module):
+                                try:
+                                    setattr(self._model, _attr, torch.compile(_submod))
+                                    _compiled_attrs.append(_attr)
+                                except Exception as _sub_exc:
+                                    logger.debug(
+                                        'torch.compile() on model.%s skipped: %s', _attr, _sub_exc
+                                    )
+                        if _compiled_attrs:
+                            logger.info(
+                                'torch.compile() applied to %s '
+                                '(first-call penalty ~30-60s, subsequent calls 2-4× faster)',
+                                ', '.join(_compiled_attrs),
+                            )
                         else:
-                            self._model = torch.compile(self._model)
-                        logger.info('torch.compile() complete')
+                            logger.warning(
+                                'torch.compile() skipped — no compilable nn.Module sub-modules '
+                                'found in Qwen3TTSModel (attrs: %s)',
+                                [a for a in dir(self._model) if not a.startswith('_')],
+                            )
                 except Exception as compile_exc:
                     logger.warning(
                         'torch.compile() failed (non-fatal) — using eager mode: %s',

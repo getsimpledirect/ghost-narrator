@@ -239,13 +239,28 @@ def synthesize_single_shot(
         )
 
     engine = get_tts_engine()
-    return engine.synthesize_to_file(
+    result = engine.synthesize_to_file(
         text,
         output_path,
         job_id,
         generation_kwargs=generation_kwargs,
         voice_override=voice_path,
     )
+    # Trim leading and trailing silence from the raw synthesis output.
+    # Leading silence: Qwen3-TTS sometimes emits silence tokens before the first
+    # word, causing >50% silence quality-check failures and wasted re-synthesis.
+    # Trailing silence: ensures the tail-conditioning reference (last 2.5 s of this
+    # segment) ends on speech rather than silence, preventing cascading silence
+    # across segment boundaries when the tail is used as voice_override for the
+    # next segment.
+    try:
+        seg = AudioSegment.from_wav(result)
+        trimmed = _trim_silence(seg)
+        if len(trimmed) >= 100:
+            trimmed.export(result, format='wav')
+    except Exception as _trim_exc:
+        logger.debug('[%s] Post-synthesis silence trim failed (non-fatal): %s', job_id, _trim_exc)
+    return result
 
 
 async def synthesize_single_shot_async(

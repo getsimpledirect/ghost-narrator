@@ -310,15 +310,22 @@ async def _resynthesize_chunk(
         return wav_path
 
     try:
-        # Use same temperature as original synthesis - re-synthesizing with
-        # higher temperature can cause voice inconsistency with other chunks.
-        # The quality check catches silent/garbled chunks, temperature bump is not needed.
         retry_kwargs = dict(generation_kwargs or {})
+
+        # Strip leading punctuation that causes the model to emit silence tokens
+        # before speech. Direct-quote openings (", ', ", ') and other non-word
+        # characters at the start are the most common systemic silence triggers —
+        # the model "reads" the opening punctuation as a pause cue. Stripping them
+        # gives the model a word-first entry point on the retry.
+        retry_text = chunk_texts[chunk_idx].lstrip('\'""\u2018\u2019\u201c\u201d\u2026\u2013\u2014\u2022\u00b7*#')
+        retry_text = retry_text.strip()
+        if not retry_text:
+            retry_text = chunk_texts[chunk_idx]
 
         # run_in_executor only accepts positional args; use partial to bind
         # generation_kwargs as a keyword so it doesn't collide with job_id.
         synth_fn = functools.partial(engine.synthesize_to_file, generation_kwargs=retry_kwargs)
-        await loop.run_in_executor(executor, synth_fn, chunk_texts[chunk_idx], wav_path, job_id)
+        await loop.run_in_executor(executor, synth_fn, retry_text, wav_path, job_id)
         return wav_path
     except Exception as exc:
         logger.warning(f'[{job_id}] Re-synthesis of chunk {chunk_idx} failed: {exc}')
