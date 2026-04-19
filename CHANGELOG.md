@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v2.9.4 (2026-04-19)
+
+### Bug Fixes
+
+- **tts-engine**: Add 'model' to torch.compile sub-module probe list
+  ([`ab847d3`](https://github.com/getsimpledirect/ghost-narrator/commit/ab847d3c1025586751e738bd9fff14e5df809eeb))
+
+Qwen3TTSModel exposes the underlying nn.Module as .model (standard HuggingFace convention), not
+  .talker/.code_predictor/.speaker_encoder which were guesses. The warning printed the actual
+  attribute list; 'model' was visible in it.
+
+
 ## v2.9.3 (2026-04-19)
 
 ### Bug Fixes
