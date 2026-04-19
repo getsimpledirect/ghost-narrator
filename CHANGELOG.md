@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v2.10.1 (2026-04-19)
+
+### Bug Fixes
+
+- **ollama**: Bake num_ctx into Modelfile to prevent mid-request reload
+  ([`221087e`](https://github.com/getsimpledirect/ghost-narrator/commit/221087e513fc7c5dd8aabe92fafbf29530df7631))
+
+Ollama 0.20.4 ignores OLLAMA_NUM_CTX at server startup and defaults every model to its card context
+  (4096 for qwen3.5:9b). The mismatch with the 65536 tts-service requests causes a mid-flight model
+  reload that hits Ollama's 2-minute internal timeout, returning 500 on every narration job.
+
+ollama-init.sh now writes a Modelfile with the tier-correct num_ctx baked in and creates a custom
+  model named ghost-narrator-llm. The pre-warm loads it at the right context size, so the first real
+  request finds no mismatch and no reload occurs. LLM_MODEL_NAME in docker-compose defaults to
+  ghost-narrator-llm for both tts-service and n8n.
+
+The stale num_ctx=8192 assertion in test_narration_strategy.py is also corrected to read from
+  ENGINE_CONFIG at runtime rather than a hardcoded value that diverged from the cpu_only tier
+  default.
+
+
 ## v2.10.0 (2026-04-19)
 
 ### Features
