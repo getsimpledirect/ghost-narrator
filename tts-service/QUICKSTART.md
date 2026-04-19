@@ -80,7 +80,7 @@ curl http://localhost:8020/health
   "gcs_client_active": true,
   "hardware_tier": "cpu_only",
   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-  "llm_model": "qwen3:1.7b"
+  "llm_model": "qwen3.5:2b"
 }
 ```
 

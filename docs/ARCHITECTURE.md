@@ -124,10 +124,10 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 
 | Tier | VRAM | TTS Model | LLM | Output Quality | Features |
 |---|---|---|---|---|---|
-| CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
-| Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3:4b | 192kbps, 44.1kHz | Compatible with all CUDA GPUs incl. older hardware |
-| Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3:8b | 192kbps, 44.1kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3:8b** | **256kbps, 48kHz, −14 LUFS** | **Tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
+| CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Parallel workers, any machine |
+| Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
+| Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3.5:4b (qwen3.5:9b on ≥13 GB) | 256kbps, 48kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3.5:9b (64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **Tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
 - **bf16 TTS precision** — 1.5–2x faster synthesis on Tensor Core GPUs with imperceptible quality difference
@@ -515,10 +515,10 @@ The TTS service implements a multi-stage pipeline with hardware-adaptive quality
 - Output is clean prose ready for LLM input
 
 **Stage 1: LLM Narration**
-- Preprocessed text sent to Ollama (Qwen3 1.7B–8B depending on tier)
+- Preprocessed text sent to Ollama (qwen3.5:2b–9b depending on tier)
 - LLM converts structured content (lists, tables) to spoken prose, preserving every fact verbatim
 - Per-chunk validation: word-count ratio check + named-entity preservation check with up to 2 retries per chunk
-- **HIGH_VRAM only**: second LLM completeness check verifies no facts were dropped (combined source + narration ≤ 4000 words)
+- **HIGH_VRAM only**: second LLM completeness check verifies no facts were dropped (single-shot articles ≤ 8000 words)
 
 **Stage 2: Text Preparation**
 - Determines synthesis strategy based on narrated word count:
@@ -655,9 +655,9 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 
 | Component | VRAM Usage | RAM Usage | Notes |
 |---|---|---|---|
-| Ollama (Qwen3-14B-q4, GPU) | ~9 GB | ~2 GB | HIGH_VRAM LLM for premium narration |
-| Ollama (Qwen3-8B-q4, GPU) | ~5–6 GB | ~2 GB | Mid tier LLM |
-| Ollama (Qwen3-4B-q4, GPU) | ~3 GB | ~1.5 GB | Lighter model option |
+| Ollama (qwen3.5:9b Q4_K_M, GPU) | ~6.6 GB | ~2 GB | HIGH_VRAM + MID_VRAM ≥13 GB LLM; hybrid MoE with 64K ctx on HIGH_VRAM |
+| Ollama (qwen3.5:4b Q4_K_M, GPU) | ~3.4 GB | ~1.5 GB | MID_VRAM default and LOW_VRAM LLM |
+| Ollama (qwen3.5:2b Q4_K_M, CPU) | 0 GB | ~1.7 GB | CPU_ONLY LLM |
 | Qwen3-TTS-1.7B bf16 (GPU) | ~3.4 GB | ~6 GB | HIGH_VRAM — 1.5–2x faster on Tensor Cores, imperceptible quality diff vs fp32 |
 | Qwen3-TTS-1.7B fp16 (GPU) | ~3.4 GB | ~6 GB | Mid/high tier TTS model |
 | Qwen3-TTS-0.6B fp32 (GPU) | ~1.2 GB | ~3 GB | LOW_VRAM tier — fp32 for stability on all CUDA GPUs |
@@ -681,7 +681,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 - `TTS_MODEL=qwen3-tts-0.6b` — Override auto-detected model
 - `REDIS_URL=redis://redis:6379/0` — Redis connection URL
 - `REDIS_JOB_TTL=86400` — Job retention in seconds (24 hours)
-- `OLLAMA_MODEL=qwen3:4b` — Ollama model for narration rewrite
+- `LLM_MODEL_NAME=qwen3.5:4b` — Override auto-detected Ollama model for narration rewrite
 
 ---
 

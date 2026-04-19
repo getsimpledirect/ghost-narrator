@@ -159,13 +159,14 @@ except ValueError:
 
 # Maximum wall-clock time a job may hold the GPU semaphore (seconds).
 # A job that exceeds this is killed and marked failed so the queue unblocks.
-# Default 7200 (2 h) covers even very large articles with slow hardware.
+# Default 10800 (3 h): 18-segment book chapter × ~7 min/segment + Phase 1 narration
+# = ~140 min. 3 h gives comfortable buffer for quality-check re-synthesis overhead.
 try:
     MAX_JOB_DURATION_SECONDS: Final[int] = max(
-        300, int(os.environ.get('MAX_JOB_DURATION_SECONDS', '7200'))
+        300, int(os.environ.get('MAX_JOB_DURATION_SECONDS', '10800'))
     )
 except ValueError:
-    MAX_JOB_DURATION_SECONDS: Final[int] = 7200
+    MAX_JOB_DURATION_SECONDS: Final[int] = 10800
 try:
     AUDIO_DECODE_TIMEOUT: Final[int] = max(30, int(os.environ.get('AUDIO_DECODE_TIMEOUT', '180')))
 except ValueError:

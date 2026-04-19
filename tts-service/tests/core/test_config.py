@@ -29,7 +29,7 @@ class TestConfigValues:
     """Test config values are loaded correctly."""
 
     def test_llm_timeout_default(self):
-        """Test LLM_TIMEOUT default is 300 (raised from 120 — qwen3:8b needs headroom)."""
+        """Test LLM_TIMEOUT default is 300 (raised from 120 — qwen3.5 models need headroom)."""
         from app.config import LLM_TIMEOUT
 
         assert LLM_TIMEOUT == 300.0

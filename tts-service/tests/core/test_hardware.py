@@ -38,7 +38,7 @@ def test_cpu_only_when_cuda_unavailable():
     assert config.tts_device == 'cpu'
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
     assert config.synthesis_workers == 4
-    assert config.llm_model == 'qwen3:1.7b'
+    assert config.llm_model == 'qwen3.5:2b'
     assert config.mp3_bitrate == '192k'
     assert config.sample_rate == 48000  # Studio quality for all tiers
     assert config.target_lufs == -16.0
@@ -57,7 +57,7 @@ def test_low_vram_when_6gb():
         config = get_engine_config()
     assert config.tier == HardwareTier.LOW_VRAM
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
-    assert config.llm_model == 'qwen3:4b'
+    assert config.llm_model == 'qwen3.5:4b'
     assert config.synthesis_workers == 1
 
 
@@ -90,7 +90,7 @@ def test_mid_vram_when_12gb():
         config = get_engine_config()
     assert config.tier == HardwareTier.MID_VRAM
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-1.7B-Base'
-    assert config.llm_model == 'qwen3:8b'
+    assert config.llm_model == 'qwen3.5:4b'  # default; 9b selected by hardware-probe.sh for ≥13GB
     assert config.synthesis_workers == 1
 
 
@@ -107,7 +107,8 @@ def test_high_vram_when_24gb():
         config = get_engine_config()
     assert config.tier == HardwareTier.HIGH_VRAM
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-1.7B-Base'
-    assert config.llm_model == 'qwen3:8b'
+    assert config.llm_model == 'qwen3.5:9b'
+    assert config.llm_num_ctx == 65536
     assert config.synthesis_workers == 1
     assert config.mp3_bitrate == '320k'
     assert config.sample_rate == 48000
@@ -126,7 +127,7 @@ def test_selected_tts_model_env_overrides_tier_config():
     ):
         config = get_engine_config()
     assert config.tts_model == 'org/custom-tts-model'
-    assert config.llm_model == 'qwen3:1.7b'  # unchanged — empty env var falls back
+    assert config.llm_model == 'qwen3.5:2b'  # unchanged — empty env var falls back
 
 
 def test_selected_llm_model_env_overrides_tier_config():
@@ -152,7 +153,24 @@ def test_empty_selected_model_env_falls_back_to_tier_config():
     ):
         config = get_engine_config()
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
-    assert config.llm_model == 'qwen3:1.7b'
+    assert config.llm_model == 'qwen3.5:2b'
+
+
+def test_selected_llm_num_ctx_env_overrides_tier_config():
+    """SELECTED_LLM_NUM_CTX overrides llm_num_ctx from _TIER_CONFIGS."""
+    with patch.dict(
+        os.environ,
+        {'HARDWARE_TIER': 'high_vram', 'SELECTED_LLM_NUM_CTX': '32768'},
+    ):
+        config = get_engine_config()
+    assert config.llm_num_ctx == 32768
+
+
+def test_empty_selected_llm_num_ctx_falls_back_to_tier_config():
+    """Empty SELECTED_LLM_NUM_CTX must not override — falls back to _TIER_CONFIGS default."""
+    with patch.dict(os.environ, {'HARDWARE_TIER': 'high_vram', 'SELECTED_LLM_NUM_CTX': ''}):
+        config = get_engine_config()
+    assert config.llm_num_ctx == 65536
 
 
 def test_env_override_skips_probe():
@@ -172,18 +190,19 @@ def test_invalid_env_override_falls_back_to_probe():
     assert config.tier == HardwareTier.CPU_ONLY
 
 
-def test_high_vram_llm_model_is_qwen3_8b():
-    """HIGH_VRAM must use qwen3:8b.
+def test_high_vram_llm_model_is_qwen3_5_9b():
+    """HIGH_VRAM must use qwen3.5:9b with 64K context window.
 
-    qwen3:14b consumes ~8.5 GB VRAM — combined with the 1.7B TTS model
-    (~3.5 GB) it leaves under 13 GB headroom on a 24 GB L4 for KV caches
-    and activations. qwen3:8b (~4.5 GB) delivers equivalent narration
-    quality for format-conversion tasks at half the VRAM cost.
+    qwen3.5:9b hybrid MoE (~6.6 GB) + TTS 1.7B (~3.4 GB) = ~10 GB base,
+    leaving ~12.5 GB on a 24 GB L4 for KV cache across 4 parallel slots.
+    At 64K context (15 attn layers × fp16): ~1920 MiB KV/slot × 4 = ~7.5 GB —
+    comfortably within the remaining headroom.
     """
     from app.core.hardware import _TIER_CONFIGS
 
     cfg = _TIER_CONFIGS[HardwareTier.HIGH_VRAM]
-    assert cfg.llm_model == 'qwen3:8b', f'Expected qwen3:8b, got {cfg.llm_model!r}'
+    assert cfg.llm_model == 'qwen3.5:9b', f'Expected qwen3.5:9b, got {cfg.llm_model!r}'
+    assert cfg.llm_num_ctx == 65536, f'Expected 65536, got {cfg.llm_num_ctx}'
 
 
 def test_high_vram_tts_max_new_tokens_is_4000():

@@ -195,7 +195,7 @@ Response:
   "gcs_client_active": true,
   "hardware_tier": "cpu_only",
   "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-  "llm_model": "qwen3:1.7b"
+  "llm_model": "qwen3.5:2b"
 }
 ```
 
@@ -264,16 +264,16 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | `S3_BUCKET_NAME` | - | AWS S3 bucket name (if using S3) |
 | `GCS_AUDIO_PREFIX` | `audio/articles` | Storage path prefix for uploads |
 | `N8N_CALLBACK_URL` | - | Webhook URL for job completion |
-| `MAX_JOB_DURATION_SECONDS` | `7200` | Hard wall-clock limit per job (min 300s). If a job exceeds this inside the GPU slot, the semaphore is released and the job fails with a timeout error rather than blocking the queue indefinitely. |
+| `MAX_JOB_DURATION_SECONDS` | `10800` | Hard wall-clock limit per job (min 300s). If a job exceeds this inside the GPU slot, the semaphore is released and the job fails with a timeout error rather than blocking the queue indefinitely. |
 
 ### Hardware Tiers
 
 | Tier | VRAM | TTS Model | LLM Model | Output Quality |
 |---|---|---|---|---|
-| CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | qwen3:1.7b | 192kbps, 44.1kHz |
-| Low (<10 GB) | <10 GB | Qwen3-TTS-12Hz-0.6B-Base | qwen3:4b | 192kbps, 44.1kHz |
-| Mid (10–18 GB) | 10–18 GB | Qwen3-TTS-12Hz-1.7B-Base | qwen3:8b | 192kbps, 44.1kHz |
-| High (18+ GB) | 18+ GB | Qwen3-TTS-12Hz-1.7B-Base (bf16) | qwen3:8b | 256kbps, 48kHz, −14 LUFS |
+| CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | qwen3.5:2b | 192kbps, 48kHz |
+| Low (<10 GB) | <10 GB | Qwen3-TTS-12Hz-0.6B-Base | qwen3.5:4b | 192kbps, 48kHz |
+| Mid (10–18 GB) | 10–18 GB | Qwen3-TTS-12Hz-1.7B-Base | qwen3.5:4b (9b on ≥13 GB) | 256kbps, 48kHz |
+| High (18+ GB) | 18+ GB | Qwen3-TTS-12Hz-1.7B-Base (bf16) | qwen3.5:9b (64K ctx) | 320kbps, 48kHz, −14 LUFS |
 
 ### Performance Tuning
 

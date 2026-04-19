@@ -127,6 +127,9 @@ def setup_logging(level: str = None, log_format: str = None) -> logging.Logger:
 
     logging.getLogger('uvicorn').setLevel(logging.WARNING)
     logging.getLogger('fastapi').setLevel(logging.WARNING)
+    # qwen_tts emits "X_config is None. Initializing X with default values" at INFO
+    # on every synthesize call — expected behavior, not a problem.
+    logging.getLogger('qwen_tts').setLevel(logging.WARNING)
 
     # Suppress health check polling from uvicorn access logs — these fire
     # every 30s from the Docker healthcheck and drown out real traffic.

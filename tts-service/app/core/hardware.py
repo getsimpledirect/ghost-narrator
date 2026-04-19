@@ -56,6 +56,7 @@ class EngineConfig:
     tts_device: str
     tts_precision: str  # "fp32" or "fp16"
     llm_model: str
+    llm_num_ctx: int  # Ollama context window (prompt + response tokens)
     narration_strategy: str  # "chunked" or "single_shot"
     narration_chunk_words: int  # LLM narration chunk size
     tts_chunk_words: int  # TTS synthesis chunk size
@@ -80,7 +81,8 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_model='Qwen/Qwen3-TTS-12Hz-0.6B-Base',
         tts_device='cpu',
         tts_precision='fp32',
-        llm_model='qwen3:1.7b',
+        llm_model='qwen3.5:2b',
+        llm_num_ctx=4096,
         narration_strategy='chunked',
         narration_chunk_words=500,
         tts_chunk_words=200,  # Increased for smoother flow
@@ -102,7 +104,8 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_model='Qwen/Qwen3-TTS-12Hz-0.6B-Base',
         tts_device='cuda',
         tts_precision='fp32',  # fp16 overflows on older GPUs → inf/nan logits; 0.6B fp32 = ~1.2 GB VRAM
-        llm_model='qwen3:4b',
+        llm_model='qwen3.5:4b',
+        llm_num_ctx=4096,
         narration_strategy='chunked',
         narration_chunk_words=500,
         tts_chunk_words=200,  # Increased for smoother flow
@@ -124,7 +127,10 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-Base',
         tts_device='cuda',
         tts_precision='fp16',
-        llm_model='qwen3:8b',
+        # hardware-probe.sh selects qwen3.5:9b for ≥13GB GPUs via SELECTED_LLM_MODEL;
+        # qwen3.5:4b is the safe fallback for 10-12GB GPUs where 9b would OOM.
+        llm_model='qwen3.5:4b',
+        llm_num_ctx=8192,
         narration_strategy='single_shot',
         narration_chunk_words=400,  # 400 words ≈ 600 tokens; gives ~6000+ tokens for output
         tts_chunk_words=250,  # Increased for smoother flow
@@ -146,9 +152,10 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-Base',
         tts_device='cuda',
         tts_precision='bf16',  # bf16: 1.5-2x faster on Tensor Core GPUs, imperceptible quality diff
-        llm_model='qwen3:8b',  # sufficient for format-conversion narration at half the VRAM cost
-        narration_strategy='chunked',  # chunked enables pipelined narrate+synthesize
-        narration_chunk_words=400,  # 400 words ≈ 600 tokens; gives ~6000+ tokens for output
+        llm_model='qwen3.5:9b',  # hybrid MoE; 15 attn layers → KV ~2 GB at 64K; IFEval 91.5%
+        llm_num_ctx=65536,  # 64K: KV ~1920 MiB/slot (15 layers × fp16) — fits 4 slots on 24 GB L4
+        narration_strategy='single_shot',  # qwen3.5:9b narrates whole articles ≤8000 words in one call
+        narration_chunk_words=4000,  # fallback chunk size when article > 8000 words
         tts_chunk_words=300,  # Larger chunks = fewer boundaries = smoother flow
         synthesis_workers=1,  # GPU synthesis is serial — gpu semaphore + _synthesis_lock
         mp3_bitrate='320k',  # Studio quality
@@ -203,9 +210,18 @@ def get_engine_config() -> EngineConfig:
     config = _TIER_CONFIGS[tier]
     tts_model = os.environ.get('SELECTED_TTS_MODEL', '').strip() or config.tts_model
     llm_model = os.environ.get('SELECTED_LLM_MODEL', '').strip() or config.llm_model
-    if tts_model != config.tts_model or llm_model != config.llm_model:
-        logger.info('Model overrides from env — tts: %s, llm: %s', tts_model, llm_model)
-        config = replace(config, tts_model=tts_model, llm_model=llm_model)
+    llm_num_ctx_env = os.environ.get('SELECTED_LLM_NUM_CTX', '').strip()
+    llm_num_ctx = int(llm_num_ctx_env) if llm_num_ctx_env.isdigit() else config.llm_num_ctx
+    overrides = {}
+    if tts_model != config.tts_model:
+        overrides['tts_model'] = tts_model
+    if llm_model != config.llm_model:
+        overrides['llm_model'] = llm_model
+    if llm_num_ctx != config.llm_num_ctx:
+        overrides['llm_num_ctx'] = llm_num_ctx
+    if overrides:
+        logger.info('Env overrides — %s', ', '.join(f'{k}: {v}' for k, v in overrides.items()))
+        config = replace(config, **overrides)
     return config
 
 

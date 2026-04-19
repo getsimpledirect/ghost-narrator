@@ -43,11 +43,11 @@ def get_narration_strategy():
         )
     return SingleShotStrategy(
         llm_client=client,
-        # Single shot works when input + output fits in 8192 tokens.
-        # System prompt ≈ 1050 tokens; 1 word ≈ 1.5 tokens.
-        # Max article for single shot: (8192 - 1050) / (2 × 1.5) ≈ 2380 words.
-        # Use 1200 words as a safe threshold (leaves buffer for variation).
-        fallback_threshold_words=1200 if tier == HardwareTier.MID_VRAM else 999999,
+        # Threshold: max article words before falling back to ChunkedStrategy.
+        # Formula: min(8000, int(num_ctx / 6)) — denominator = 4 tokens/word × 1.5× output buffer.
+        # MID_VRAM  (qwen3.5:4b/9b, num_ctx=8192):  min(8000, 1365) = 1365 words
+        # HIGH_VRAM (qwen3.5:9b,   num_ctx=65536):  min(8000, 10922) = 8000 words
+        fallback_threshold_words=min(8000, int(ENGINE_CONFIG.llm_num_ctx / 6)),
         fallback_chunk_words=ENGINE_CONFIG.narration_chunk_words,
         tier=tier,
         model=LLM_MODEL_NAME,

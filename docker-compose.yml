@@ -195,6 +195,7 @@ services:
       - TTS_LANGUAGE=${TTS_LANGUAGE:-auto}
       - MAX_CHUNK_WORDS=${MAX_CHUNK_WORDS:-200}
       - HARDWARE_TIER=${HARDWARE_TIER:-}
+      - SELECTED_LLM_NUM_CTX=${SELECTED_LLM_NUM_CTX:-}
       # MAX_WORKERS is used for CPU mode parallel synthesis
       - MAX_WORKERS=${MAX_WORKERS:-4}
       # Google Cloud Storage

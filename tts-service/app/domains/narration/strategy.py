@@ -31,7 +31,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
-from app.core.hardware import HardwareTier
+from app.core.hardware import ENGINE_CONFIG, HardwareTier
 from app.core.retry import retry_with_backoff
 from app.core.exceptions import NarrationError
 from app.config import LLM_TIMEOUT, LLM_COMPLETENESS_TIMEOUT, LLM_BASE_URL
@@ -165,18 +165,16 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
 
     # On Ollama endpoints: disable thinking blocks via two mechanisms:
     #   1. think: False in extra_body — API-level flag (Ollama >= 0.6.x)
-    #   2. /no_think prepended to each user message — model-level instruction that
-    #      works on ALL Ollama versions since qwen3 was trained to respect it.
+    #   2. /no_think prepended to each user message — model-level prefix that
+    #      qwen3/qwen3.5 models recognise from their chat template.
     #
-    # Why both? Older Ollama container images silently ignore think: False. When
-    # thinking is not suppressed, qwen3:8b may generate 5000-8000 thinking tokens
-    # before the narration text. Those tokens count against max_tokens=8192 and can
-    # leave as few as 59 tokens for the actual narration — producing the CRITICAL 7%
-    # word-ratio failures seen in production. Stripping <think> blocks fixes the
-    # output text but the token budget is already spent.
+    # qwen3.5 small models (≤9b) have thinking disabled by default, so both
+    # mechanisms are redundant for the current model set. They remain as
+    # defence-in-depth in case the tier is overridden to a qwen3 model that
+    # has thinking on by default, or a future model that re-enables it.
     #
-    # Also set num_ctx=8192 explicitly: Ollama defaults to 2048, which silently
-    # truncates long chunks and produces summarization-style output.
+    # Set tier-specific num_ctx: Ollama defaults to 2048, which silently
+    # truncates long articles and produces summarisation-style output.
     kwargs: dict = {}
     effective_messages = messages
     if _OLLAMA_ENDPOINT:
@@ -190,12 +188,12 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
             )
             for msg in messages
         ]
-        kwargs['extra_body'] = {'think': False, 'options': {'num_ctx': 8192}}
+        kwargs['extra_body'] = {'think': False, 'options': {'num_ctx': ENGINE_CONFIG.llm_num_ctx}}
 
     # max_tokens: set high enough to never truncate narration output. Ollama caps
     # the actual output at min(max_tokens, num_ctx - prompt_tokens), so this only
     # matters if thinking is disabled and input is small.
-    max_tokens = 8192
+    max_tokens = ENGINE_CONFIG.llm_num_ctx
 
     response = await client.chat.completions.create(
         model=model,
@@ -225,6 +223,49 @@ async def _call_llm_with_retry(
 ) -> str:
     """Call LLM with retry on transient failures. TimeoutError is not retried."""
     return await _call_llm(client, messages, model, timeout)
+
+
+async def _run_completeness_check(
+    client, model: str, source: str, narration: str, base_system_prompt: str
+) -> str:
+    """LLM-based completeness gate — returns corrected narration or original.
+
+    Asks the model to identify facts in source missing from narration, then
+    re-narrates if any are found. Used on HIGH_VRAM after single-shot narration
+    where the full article + narration fit comfortably in the 32K context window.
+    """
+    messages = get_completeness_check_prompt(source, narration)
+    try:
+        raw = await _call_llm(client, messages, model, timeout=LLM_COMPLETENESS_TIMEOUT)
+        raw = raw.strip()
+        if raw.startswith('```'):
+            raw = re.sub(r'^```(?:json)?\s*', '', raw)
+            raw = re.sub(r'\s*```$', '', raw)
+        missing = json.loads(raw)
+        if isinstance(missing, list) and missing:
+            logger.warning(
+                'LLM completeness check found %d issues: %s',
+                len(missing),
+                missing[:3],
+            )
+            fix_messages = [
+                {'role': 'system', 'content': base_system_prompt},
+                {
+                    'role': 'user',
+                    'content': (
+                        'Your previous narration was missing these items:\n'
+                        + '\n'.join(f'- {item}' for item in missing)
+                        + '\n\nRewrite the narration for this source, '
+                        f'ensuring all items above are included:\n\n{source}'
+                    ),
+                },
+            ]
+            return await _call_llm(client, fix_messages, model)
+    except json.JSONDecodeError as exc:
+        logger.debug('LLM completeness check returned invalid JSON: %s', exc)
+    except Exception as exc:
+        logger.warning('LLM completeness check failed: %s', exc)
+    return narration
 
 
 class NarrationStrategy(ABC):
@@ -259,7 +300,7 @@ class ChunkedStrategy(NarrationStrategy):
     ) -> str:
         effective_prompt = system_prompt or self._base_system_prompt
         word_count = len(chunk.split())
-        # Explicit word-count target prevents qwen3:8b from under-generating.
+        # Explicit word-count target prevents qwen3.5 models from under-generating.
         # Without this, the model sometimes outputs a brief summary (7-45% of source
         # length) despite the system prompt's "match source length" instruction.
         position_ctx = (
@@ -304,49 +345,6 @@ class ChunkedStrategy(NarrationStrategy):
             )
         return result
 
-    async def _llm_completeness_check(self, source: str, narration: str) -> str:
-        """Run LLM-based completeness verification (HIGH_VRAM only).
-
-        Returns narration with corrections if issues found, or original narration.
-        """
-        messages = get_completeness_check_prompt(source, narration)
-        try:
-            # Use longer timeout for completeness check (more complex LLM task)
-            raw = await _call_llm(
-                self._client, messages, self._model, timeout=LLM_COMPLETENESS_TIMEOUT
-            )
-            # Parse JSON array from response
-            raw = raw.strip()
-            if raw.startswith('```'):
-                raw = re.sub(r'^```(?:json)?\s*', '', raw)
-                raw = re.sub(r'\s*```$', '', raw)
-            missing = json.loads(raw)
-            if isinstance(missing, list) and missing:
-                logger.warning(
-                    'LLM completeness check found %d issues: %s',
-                    len(missing),
-                    missing[:3],
-                )
-                # Re-narrate with explicit missing items
-                fix_messages = [
-                    {'role': 'system', 'content': self._base_system_prompt},
-                    {
-                        'role': 'user',
-                        'content': (
-                            'Your previous narration was missing these items:\n'
-                            + '\n'.join(f'- {item}' for item in missing)
-                            + f'\n\nRewrite the narration for this source, '
-                            f'ensuring all items above are included:\n\n{source}'
-                        ),
-                    },
-                ]
-                return await _call_llm(self._client, fix_messages, self._model)
-        except json.JSONDecodeError as exc:
-            logger.debug('LLM completeness check returned invalid JSON: %s', exc)
-        except Exception as exc:
-            logger.warning('LLM completeness check failed: %s', exc)
-        return narration
-
     async def narrate(self, text: str) -> str:
         from app.utils.normalize import extract_section_map, normalize_for_narration
 
@@ -376,24 +374,6 @@ class ChunkedStrategy(NarrationStrategy):
             previous_source_tail = _tail_sentences(chunk)
 
         full_narration = '\n\n'.join(outputs)
-
-        # Layer 4: LLM completeness check — HIGH_VRAM only, small articles only.
-        # The check sends source + narration to the LLM in one call. With num_ctx=8192
-        # and the system prompt consuming ~200 tokens, the combined budget for source
-        # and narration is ~4000 words each. Skip for larger content to avoid silent
-        # truncation that produces garbage JSON and triggers unnecessary re-narration.
-        if self._tier == HardwareTier.HIGH_VRAM:
-            _combined_words = len(text.split()) + len(full_narration.split())
-            if _combined_words <= 4000:
-                logger.info('Running LLM completeness check (HIGH_VRAM)...')
-                full_narration = await self._llm_completeness_check(text, full_narration)
-            else:
-                logger.info(
-                    'Skipping LLM completeness check — combined word count %d exceeds '
-                    '4000-word context budget',
-                    _combined_words,
-                )
-
         return full_narration
 
     async def narrate_iter(self, text: str) -> AsyncIterator[str]:
@@ -421,25 +401,6 @@ class ChunkedStrategy(NarrationStrategy):
             outputs.append(output)
             previous_output_tail = _tail_sentences(output)
             previous_source_tail = _tail_sentences(chunk)
-
-        # Layer 4: completeness check — same guard as narrate().
-        # Buffer all chunks before yielding so the full narration is available.
-        # When the check rewrites the narration, yield one combined segment;
-        # otherwise yield the original per-chunk outputs unchanged.
-        if self._tier == HardwareTier.HIGH_VRAM:
-            full_narration = '\n\n'.join(outputs)
-            _combined_words = len(text.split()) + len(full_narration.split())
-            if _combined_words <= 4000:
-                logger.info('Running LLM completeness check (HIGH_VRAM)...')
-                full_narration = await self._llm_completeness_check(text, full_narration)
-                yield full_narration
-                return
-            else:
-                logger.info(
-                    'Skipping LLM completeness check — combined word count %d exceeds '
-                    '4000-word context budget',
-                    _combined_words,
-                )
 
         for output in outputs:
             yield output
@@ -482,9 +443,12 @@ class SingleShotStrategy(NarrationStrategy):
             return await fallback.narrate(text)
 
         system_prompt = get_system_prompt(self._tier, section_map=section_map)
+        word_count_hint = (
+            f'\n[SOURCE: ~{word_count} words → your narration must be approximately {word_count} words]'
+        )
         messages = [
             {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': text},
+            {'role': 'user', 'content': text + word_count_hint},
         ]
         result = await _call_llm_with_retry(self._client, messages, self._model)
         validation = _validator.validate(text, result)
@@ -516,4 +480,14 @@ class SingleShotStrategy(NarrationStrategy):
                 retry_count,
                 validation.missing_entities,
             )
+
+        # Completeness check for HIGH_VRAM: single-shot articles are ≤8000 words
+        # (the fallback_threshold), so source + narration ≈ 16000 words fits
+        # comfortably in the 64K context window. qwen3.5:9b processes this in ~25s.
+        if self._tier == HardwareTier.HIGH_VRAM:
+            logger.info('Running LLM completeness check (HIGH_VRAM)...')
+            result = await _run_completeness_check(
+                self._client, self._model, text, result, self._base_system_prompt
+            )
+
         return result
