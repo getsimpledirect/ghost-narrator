@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v2.9.3 (2026-04-19)
+
+### Bug Fixes
+
+- **tts-service**: Fix systematic silence, cascading tail, and torch.compile no-op
+  ([`4864c28`](https://github.com/getsimpledirect/ghost-narrator/commit/4864c28edbb75188a2140a23f53e99d156581cb6))
+
+- Fix 4 (torch.compile): Qwen3TTSModel is a Python wrapper, not an nn.Module — compiling the wrapper
+  was a silent no-op completing in ~1s with no speedup. Now probes
+  talker/code_predictor/speaker_encoder by name, compiles each nn.Module sub-component individually,
+  and logs a warning with available attributes if none are found. Achieves the intended 2-4x
+  inference speedup.
+
+- Fix 1 (leading silence): synthesize_single_shot now applies _trim_silence to the output WAV after
+  engine.synthesize_to_file returns. Qwen3-TTS emits silence tokens before the first word on some
+  inputs, producing >50% silence segments that fail the quality check and waste 5-minute retries.
+  The trim eliminates these failures before they reach the quality check loop.
+
+- Fix 5 (cascading silence): same _trim_silence call trims trailing silence from the segment output.
+  When tail conditioning extracts the last 2.5s as voice_override for the next segment, a
+  silence-ended reference conditioned the model to start the next segment with silence — producing
+  the systematic pattern of silence failures on segments 2, 3, 4... observed in production logs.
+
+- Fix 3 (smarter retry): _resynthesize_chunk now strips leading punctuation (quotes, dashes,
+  bullets, ellipsis) from the retry text. Opening with a direct-quote or non-word character is a
+  known Qwen3-TTS silence trigger; a word-first entry point on the retry gives the sampler a clean
+  start.
+
+### Documentation
+
+- **tts-service**: Sync ARCHITECTURE.md with pipeline implementation
+  ([`b36d022`](https://github.com/getsimpledirect/ghost-narrator/commit/b36d02235f2b7379e8313f5f26f1758686d03e5a))
+
+- Stage 0 (Preprocessing): document normalize_for_narration as the deterministic URL/Markdown/email
+  stripping step before LLM, not the LLM - Stage 1 (LLM Narration): replace stale prompt description
+  with accurate one (fact preservation, number spell-out, no framing, PAUSE markers); document
+  per-chunk validation and HIGH_VRAM completeness check - Stage 2 (Text Preparation): remove
+  chunk-based fallback references; document single-shot vs. segment mode split at 4000 words - Stage
+  3 (Synthesis): document tail conditioning (HIGH_VRAM); remove temperature-bump re-synthesis (was
+  never implemented that way) - Stage 4 (Quality Check): promote to all tiers; document WER
+  re-synthesis and ±3 dB loudness consistency check as HIGH_VRAM-only layers - Stage 7 (Mastering):
+  update compressor (1.5:1, attack 300 ms, release 800 ms), loudnorm linear=true, true-peak limiter
+  (release 150 ms), and TARGET_LUFS - Remove per-chunk LUFS normalization from semaphore scope
+  description - Remove outdated Ollama prompt bullets (URLs, transitions, abbreviations) - Update
+  TTS Service key features block to reflect single-shot strategy
+
+
 ## v2.9.2 (2026-04-19)
 
 ### Bug Fixes
