@@ -72,6 +72,7 @@ from app.domains.synthesis.service import (
     cleanup_chunk_files,
     get_executor,
     synthesize_single_shot_async,
+    synthesize_with_pauses,
 )
 from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
 
@@ -317,24 +318,24 @@ async def run_tts_job(
 
                     with _span('tts.synthesis'):
                         if total_words <= SINGLE_SHOT_MAX_WORDS:
-                            # Short content: one TTS call for the entire narration.
-                            # Pause markers are converted to natural punctuation cues
-                            # ([PAUSE] → '...', [LONG_PAUSE] → paragraph break) so the
-                            # model pauses with correct rhythm without splitting the audio.
+                            # Short content: synthesize with real silence at [LONG_PAUSE]
+                            # boundaries. synthesize_with_pauses splits the narrated text
+                            # at [LONG_PAUSE] markers, synthesizes each part independently,
+                            # and joins with 800ms AudioSegment.silent() — deterministic
+                            # gaps the autoregressive TTS model cannot produce reliably.
                             logger.info(f'[{job_id}] Phase 2: single-shot ({total_words} words)')
                             from app.utils.text import clean_text_for_tts
 
-                            clean_text = clean_text_for_tts(full_narrated_text)
                             single_shot_wav = str(job_dir / 'single_shot.wav')
                             chunk_wav_paths = [
-                                await synthesize_single_shot_async(
-                                    text=clean_text,
+                                await synthesize_with_pauses(
+                                    text=full_narrated_text,
                                     output_path=single_shot_wav,
                                     job_id=job_id,
                                     generation_kwargs=generation_kwargs,
                                 )
                             ]
-                            all_chunks = [clean_text]
+                            all_chunks = [clean_text_for_tts(full_narrated_text)]
                             logger.info(f'[{job_id}] Single-shot synthesis complete')
                         else:
                             # Long content: split at sentence boundaries, synthesize each

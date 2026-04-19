@@ -106,8 +106,9 @@ def master_audio(
         # - limiter: prevent clipping
         # Removed: highpass (causes harshness), equalizer (unnecessary for TTS)
         _COMPRESSOR = (
-            # threshold=0.125 ≈ -18 dBFS; release=250ms prevents audible pumping between sentences
-            'acompressor=threshold=0.125:ratio=2:attack=20:release=250'
+            # threshold=0.25 ≈ -12 dBFS; lighter 1.5:1 ratio preserves speech dynamics
+            # without pumping between sentences. attack=10ms, release=100ms for transparency.
+            'acompressor=threshold=0.25:ratio=1.5:attack=10:release=100'
         )
 
         measure_result = subprocess.run(

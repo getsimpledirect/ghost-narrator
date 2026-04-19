@@ -23,9 +23,8 @@
 """
 Text processing utilities for TTS service.
 
-Provides functions for splitting text into optimal chunks for
-TTS synthesis while maintaining sentence boundaries, and for
-determining context-aware pause durations between chunks.
+Provides functions for cleaning and segmenting text for TTS synthesis,
+and for determining context-aware pause durations between audio segments.
 """
 
 from __future__ import annotations
@@ -35,9 +34,6 @@ import re
 from typing import Final
 
 logger = logging.getLogger(__name__)
-
-# Default maximum words per chunk (larger chunks for single-shot fallback)
-DEFAULT_MAX_CHUNK_WORDS: Final[int] = 400  # Was 200 - aligned with SINGLE_SHOT_MAX_WORDS
 
 # Pause durations injected by LLM markers during narration
 PAUSE_MS: Final[int] = (
@@ -268,181 +264,12 @@ _TRANSITION_STARTERS: Final[tuple[str, ...]] = (
 )
 
 
-def split_into_chunks(text: str, max_words: int = DEFAULT_MAX_CHUNK_WORDS) -> list[str]:
-    """
-    Split narration text into TTS-optimal chunks.
-
-    Strategy:
-    - Split on paragraph boundaries first (double newline or sentence groups)
-    - Within paragraphs, group sentences into chunks of ~40-60 words
-    - Never split mid-sentence
-    - For long sentences, prefer splitting at clause boundaries (commas,
-      semicolons, em dashes) rather than arbitrary word positions
-    - Keep sentence-ending punctuation with its sentence (not the next chunk)
-    - Chunks of 40-60 words produce 8-12 second audio segments — optimal for
-      Qwen3-TTS voice consistency and natural prosody
-
-    Args:
-        text: The input text to split into chunks.
-        max_words: Maximum number of words per chunk (default: 200).
-
-    Returns:
-        A list of text chunks, each suitable for TTS synthesis.
-        Returns an empty list if input is empty/whitespace.
-    """
-    if not text or not text.strip():
-        return []
-
-    # Normalize whitespace
-    text = re.sub(r'\r\n', '\n', text)
-    text = re.sub(r'[ \t]+', ' ', text)
-
-    # Split into paragraphs
-    paragraphs = [p.strip() for p in re.split(r'\n\n+', text) if p.strip()]
-
-    chunks: list[str] = []
-
-    for para in paragraphs:
-        # Split paragraph into sentences using common sentence endings
-        # Keep the punctuation with the sentence
-        sentences = re.split(r'(?<=[.!?])\s+', para.strip())
-        sentences = [s.strip() for s in sentences if s.strip()]
-
-        current_chunk_words: list[str] = []
-        current_word_count: int = 0
-
-        for sentence in sentences:
-            sentence_words = sentence.split()
-            sentence_word_count = len(sentence_words)
-
-            # Skip empty sentences
-            if sentence_word_count == 0:
-                continue
-
-            # If adding this sentence exceeds max_words and we already have content,
-            # flush current chunk and start a new one
-            if current_word_count + sentence_word_count > max_words and current_chunk_words:
-                chunks.append(' '.join(current_chunk_words))
-                current_chunk_words = []
-                current_word_count = 0
-
-            # For very long sentences that exceed max_words alone,
-            # split at clause boundaries (commas, semicolons) for natural prosody
-            if sentence_word_count > max_words:
-                # Flush any accumulated chunk first
-                if current_chunk_words:
-                    chunks.append(' '.join(current_chunk_words))
-                    current_chunk_words = []
-                    current_word_count = 0
-
-                # Split long sentence at clause boundaries
-                clause_chunks = _split_sentence_at_clauses(sentence, max_words)
-                for clause in clause_chunks[:-1]:
-                    chunks.append(clause)
-                # Last clause becomes the start of the next chunk
-                last_clause = clause_chunks[-1]
-                current_chunk_words = last_clause.split()
-                current_word_count = len(current_chunk_words)
-                continue
-
-            current_chunk_words.extend(sentence_words)
-            current_word_count += sentence_word_count
-
-            # If this single sentence is already at/over the limit, flush immediately
-            if current_word_count >= max_words:
-                chunks.append(' '.join(current_chunk_words))
-                current_chunk_words = []
-                current_word_count = 0
-
-        # Flush remaining words at paragraph boundary only if we have enough
-        # content to justify a synthesis call. Short paragraphs (section headings,
-        # single-word labels) carry over into the next paragraph instead of becoming
-        # their own chunk — a 2-word chunk takes nearly as long to synthesize as a
-        # 300-word chunk due to model initialization overhead.
-        if current_chunk_words and current_word_count >= 15:
-            chunks.append(' '.join(current_chunk_words))
-            current_chunk_words = []
-            current_word_count = 0
-
-    # Flush whatever remains after the last paragraph
-    if current_chunk_words:
-        chunks.append(' '.join(current_chunk_words))
-
-    # Filter empty chunks
-    chunks = [c.strip() for c in chunks if c.strip()]
-
-    if not chunks:
-        # All content was filtered — return full text as one chunk and warn
-        logger.warning(
-            f'Text chunking produced no valid chunks for {len(text)}-char input; '
-            'returning as single chunk (may exceed max_words limit)'
-        )
-        return [text.strip()]
-    return chunks
-
-
-def _split_sentence_at_clauses(sentence: str, max_words: int) -> list[str]:
-    """Split a long sentence at clause boundaries (commas, semicolons).
-
-    Prefers splitting after punctuation that indicates a natural breath
-    point: commas, semicolons, em dashes, "and", "but", "or", "because".
-
-    Args:
-        sentence: A single sentence that exceeds max_words.
-        max_words: Maximum words per resulting chunk.
-
-    Returns:
-        List of clause-based chunks that together form the original sentence.
-    """
-    # Split at clause boundaries: comma, semicolon, or conjunction
-    # Keep the punctuation with the preceding clause
-    parts = re.split(r'(?<=[,;])\s+', sentence)
-    if len(parts) == 1:
-        # No clause boundaries found — split at "and", "but", "or", "because"
-        parts = re.split(
-            r'\s+(?=and\s|but\s|or\s|because\s|which\s|that\s|while\s|whereas\s)',
-            sentence,
-        )
-    if len(parts) == 1:
-        # Still no good split point — fall back to word-boundary split
-        words = sentence.split()
-        chunks = []
-        for i in range(0, len(words), max_words):
-            chunk = ' '.join(words[i : i + max_words])
-            # Add period if this chunk doesn't end with punctuation
-            if i + max_words < len(words) and chunk[-1] not in '.!?,':
-                chunk += ','
-            chunks.append(chunk)
-        return chunks
-
-    # Group clause parts into chunks of ~max_words
-    result: list[str] = []
-    current: list[str] = []
-    current_words = 0
-
-    for part in parts:
-        part_words = len(part.split())
-        if current_words + part_words > max_words and current:
-            result.append(' '.join(current))
-            current = [part]
-            current_words = part_words
-        else:
-            current.append(part)
-            current_words += part_words
-
-    if current:
-        result.append(' '.join(current))
-
-    return result or [sentence]
-
-
 def split_into_large_segments(text: str, target_words: int) -> list[str]:
     """Group paragraphs into large segments of ~target_words for segment synthesis.
 
-    Unlike split_into_chunks (designed for ≤400-word TTS chunks), this function
-    accumulates paragraphs until the target word count is reached.  A paragraph
+    Accumulates paragraphs until the target word count is reached. A paragraph
     boundary is only used as a split point when the accumulated words would exceed
-    target_words — not at every paragraph as split_into_chunks does.
+    target_words — preserving long-range prosody within each synthesized segment.
 
     Args:
         text: Full narration text.

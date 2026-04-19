@@ -151,6 +151,7 @@ _ACRONYM_REGISTRY: Final[dict[str, str]] = {
     # HR is kept as H-R to avoid confusion with "hours" abbreviation
     'HR': 'H-R',
     'VP': 'V-P',
+    'P&L': 'profit and loss',
 }
 
 # Pre-compiled acronym pattern: matches whole-word occurrences only.
@@ -207,6 +208,47 @@ _CTA_LINE_RE: Final = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# Ghost CMS kg-card divs (bookmarks, images, galleries, videos, embeds) —
+# strip entire block because they inject URLs, file paths, and metadata that
+# break narration. Applied in a loop in filter_non_narrable_content to handle
+# nested cards (e.g. a gallery card containing image cards).
+_KG_CARD_RE: Final = re.compile(
+    r'<div[^>]+\bkg-card\b[^>]*>[\s\S]*?</div>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Percentages: 12.5% → "12.5 percent"
+_PERCENT_RE: Final = re.compile(r'\b(\d+(?:\.\d+)?)%')
+
+# Ordinal numbers: 1st→first … 20th→twentieth; strip suffix for higher numbers
+# so "21st" becomes "21" which TTS reads as "twenty-one" (close enough).
+_ORDINAL_WORDS: Final[dict[int, str]] = {
+    1: 'first',
+    2: 'second',
+    3: 'third',
+    4: 'fourth',
+    5: 'fifth',
+    6: 'sixth',
+    7: 'seventh',
+    8: 'eighth',
+    9: 'ninth',
+    10: 'tenth',
+    11: 'eleventh',
+    12: 'twelfth',
+    13: 'thirteenth',
+    14: 'fourteenth',
+    15: 'fifteenth',
+    16: 'sixteenth',
+    17: 'seventeenth',
+    18: 'eighteenth',
+    19: 'nineteenth',
+    20: 'twentieth',
+}
+_ORDINAL_RE: Final = re.compile(r'\b(\d+)(st|nd|rd|th)\b', re.IGNORECASE)
+
+# 24/7 → "twenty-four seven"
+_24_7_RE: Final = re.compile(r'\b24/7\b')
+
 
 def filter_non_narrable_content(text: str) -> str:
     """Strip content that is visual/interactive but nonsensical when narrated.
@@ -223,6 +265,12 @@ def filter_non_narrable_content(text: str) -> str:
     """
     # HTML non-narrable block elements (pre/code/table/figure/etc.)
     text = _HTML_NON_NARRABLE_RE.sub('', text)
+
+    # Ghost CMS kg-card divs — strip iteratively to handle nested cards
+    prev = None
+    while prev != text:
+        prev = text
+        text = _KG_CARD_RE.sub('', text)
 
     # Fenced code blocks before markdown stripping removes the backticks
     text = _FENCED_CODE_RE.sub('', text)
@@ -351,6 +399,15 @@ def normalize_for_narration(text: str) -> str:
 
     # Expand multipliers: 10x → 10 times
     text = _MULTIPLIER_RE.sub(lambda m: f'{m.group(1)} times', text)
+
+    # Expand percentages: 12.5% → "12.5 percent"
+    text = _PERCENT_RE.sub(lambda m: f'{m.group(1)} percent', text)
+
+    # Expand ordinal numbers: 1st → first, 21st → 21 (TTS reads as "twenty-one")
+    text = _ORDINAL_RE.sub(lambda m: _ORDINAL_WORDS.get(int(m.group(1)), m.group(1)), text)
+
+    # Expand 24/7 → twenty-four seven
+    text = _24_7_RE.sub('twenty-four seven', text)
 
     # Convert ISO dates: 2026-04-13 → April 13, 2026
     def _expand_date(m: re.Match) -> str:

@@ -26,7 +26,6 @@ from unittest.mock import patch
 from app.domains.synthesis.service import (
     synthesize_chunks_sequential,
     synthesize_chunks_parallel,
-    prepare_text_for_synthesis,
     cleanup_chunk_files,
     initialize_executor,
     shutdown_executor,
@@ -65,43 +64,6 @@ class TestSynthesisService:
             )
             assert len(result) == 3
             assert mock_synth.call_count == 3
-
-    def test_prepare_text_for_synthesis(self):
-        text = (
-            'This is the first sentence. This is the second sentence. This is the third sentence.'
-        )
-        chunks, total_words, pauses = prepare_text_for_synthesis(text, max_chunk_words=200)
-        assert len(chunks) >= 1
-        assert total_words > 0
-        assert isinstance(chunks, list)
-        assert all(isinstance(c, str) for c in chunks)
-
-
-def test_prepare_text_returns_pause_durations():
-    """prepare_text_for_synthesis must return a 3-tuple with pause durations."""
-    from app.domains.synthesis.service import prepare_text_for_synthesis
-    from app.utils.text import PAUSE_MS, LONG_PAUSE_MS
-
-    text = 'First sentence here. [PAUSE] Second sentence here. [LONG_PAUSE] Third sentence.'
-    chunks, total_words, pauses = prepare_text_for_synthesis(text, max_chunk_words=50)
-
-    assert isinstance(chunks, list)
-    assert isinstance(pauses, list)
-    assert len(pauses) == len(chunks)
-    # The last segment's last chunk gets 0 (no trailing pause)
-    assert pauses[-1] == 0
-    # At least one chunk should have PAUSE_MS or LONG_PAUSE_MS
-    assert PAUSE_MS in pauses or LONG_PAUSE_MS in pauses
-
-
-def test_prepare_text_no_markers_returns_zero_pauses():
-    """Without pause markers, all pause durations are 0 (use heuristic)."""
-    from app.domains.synthesis.service import prepare_text_for_synthesis
-
-    text = 'Plain text with no pause markers whatsoever.'
-    chunks, total_words, pauses = prepare_text_for_synthesis(text, max_chunk_words=50)
-
-    assert all(p == 0 for p in pauses)
 
     def test_cleanup_chunk_files(self, tmp_path):
         job_dir = tmp_path / 'test-cleanup'

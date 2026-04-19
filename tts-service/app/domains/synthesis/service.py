@@ -32,17 +32,17 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 
 from pydub import AudioSegment
 
-from app.config import MAX_CHUNK_WORDS
 from app.core.hardware import ENGINE_CONFIG
 from app.core.exceptions import SynthesisError
 from app.core.tts_engine import get_tts_engine
-from app.utils.text import split_into_chunks, clean_text_for_tts, has_quoted_speech, split_at_quotes
+from app.utils.text import clean_text_for_tts, has_quoted_speech, split_at_quotes
 from app.domains.synthesis.concatenate import _trim_silence
 
 if TYPE_CHECKING:
@@ -457,60 +457,87 @@ async def synthesize_chunks_auto(
         )
 
 
-def prepare_text_for_synthesis(
+async def synthesize_with_pauses(
     text: str,
-    max_chunk_words: int = MAX_CHUNK_WORDS,
-) -> tuple[list[str], int, list[int]]:
-    """Prepare text for synthesis by cleaning, splitting at pause markers, and chunking.
+    output_path: str,
+    job_id: str = 'default',
+    generation_kwargs: Optional[dict] = None,
+) -> str:
+    """Synthesize narrated text, inserting real silence gaps at [LONG_PAUSE] markers.
 
-    Returns:
-        A tuple of (chunks, total_word_count, pause_after_chunk) where
-        pause_after_chunk[i] is the ms of silence to insert after chunks[i].
-        A value of 0 means "use the heuristic from get_pause_ms_after_chunk".
+    Unlike synthesize_single_shot_async (which converts [LONG_PAUSE] to paragraph
+    breaks and relies on the TTS model to pause naturally), this function splits at
+    each [LONG_PAUSE] boundary, synthesizes each part independently, then joins them
+    with 800ms AudioSegment.silent() — a deterministic gap unaffected by model
+    sampling temperature or token budget.
 
-    Raises:
-        SynthesisError: If text is empty or chunking fails.
+    [PAUSE] markers within each part are converted to commas by clean_text_for_tts.
+    Falls back to single synthesis call when no [LONG_PAUSE] markers are present.
     """
-    from app.utils.text import parse_pause_markers
-
     if not text or not text.strip():
-        raise SynthesisError('Cannot prepare empty text for synthesis')
+        raise SynthesisError('Cannot synthesize empty text', details=f'output_path={output_path}')
 
-    # Split at [PAUSE]/[LONG_PAUSE] markers first, then clean and chunk each segment
-    pause_segments = parse_pause_markers(text)
-
-    all_chunks: list[str] = []
-    pause_after_chunk: list[int] = []
-
-    for segment_text, pause_ms in pause_segments:
-        cleaned = clean_text_for_tts(segment_text)
-        seg_chunks = split_into_chunks(cleaned, max_chunk_words)
-
-        if not seg_chunks:
-            continue
-
-        # All chunks in this segment get pause_ms=0 except the last one,
-        # which gets the pause that follows this segment.
-        for chunk in seg_chunks[:-1]:
-            all_chunks.append(chunk)
-            pause_after_chunk.append(0)
-        all_chunks.append(seg_chunks[-1])
-        pause_after_chunk.append(pause_ms)
-
-    if not all_chunks:
+    if not _executor:
         raise SynthesisError(
-            'Text chunking resulted in empty chunks',
-            details=f'Original text length: {len(text)}',
+            'Executor not initialized',
+            details='Call initialize_executor() during startup',
         )
 
-    total_words = sum(len(chunk.split()) for chunk in all_chunks)
+    parts = [p.strip() for p in re.split(r'\[LONG_PAUSE\]', text, flags=re.IGNORECASE) if p.strip()]
+    if not parts:
+        raise SynthesisError('Cannot synthesize empty text', details=f'output_path={output_path}')
 
-    logger.debug(
-        f'Prepared {len(all_chunks)} chunks with {total_words} total words '
-        f'(max {max_chunk_words} words per chunk)'
-    )
+    loop = asyncio.get_running_loop()
 
-    return all_chunks, total_words, pause_after_chunk
+    if len(parts) == 1:
+        # No LONG_PAUSE markers — single synthesis call.
+        clean = clean_text_for_tts(parts[0])
+        return await loop.run_in_executor(
+            _executor, synthesize_single_shot, clean, output_path, job_id, generation_kwargs
+        )
+
+    # Multi-part path: synthesize each part, then join with 800ms silence gaps.
+    out_path = Path(output_path)
+    temp_dir = out_path.parent / f'_pauses_{out_path.stem}'
+    temp_dir.mkdir(exist_ok=True)
+    try:
+        part_wavs: list[str] = []
+        for i, part_text in enumerate(parts):
+            clean = clean_text_for_tts(part_text)
+            if not clean.strip():
+                continue
+            part_wav = str(temp_dir / f'part_{i:04d}.wav')
+            await loop.run_in_executor(
+                _executor, synthesize_single_shot, clean, part_wav, job_id, generation_kwargs
+            )
+            part_wavs.append(part_wav)
+
+        if not part_wavs:
+            raise SynthesisError(
+                'Pause-aware synthesis produced no audio parts',
+                details=f'output_path={output_path}',
+            )
+
+        if len(part_wavs) == 1:
+            shutil.copy2(part_wavs[0], output_path)
+            return output_path
+
+        combined = _trim_silence(AudioSegment.from_wav(part_wavs[0]))
+        pause_800ms = (
+            AudioSegment.silent(duration=800, frame_rate=combined.frame_rate)
+            .set_channels(combined.channels)
+            .set_sample_width(combined.sample_width)
+        )
+        for wav_path in part_wavs[1:]:
+            seg = _trim_silence(AudioSegment.from_wav(wav_path))
+            combined = combined + pause_800ms + seg
+
+        combined.export(output_path, format='wav')
+        logger.debug('[%s] Pause synthesis: %d parts → %s', job_id, len(part_wavs), output_path)
+        return output_path
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def cleanup_chunk_files(job_dir: Path, job_id: str) -> None:
