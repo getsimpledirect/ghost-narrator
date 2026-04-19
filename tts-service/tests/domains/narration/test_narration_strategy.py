@@ -35,12 +35,29 @@ from app.domains.narration.strategy import (
 )
 
 
+def _make_stream(content: str):
+    """Async generator yielding a single chunk — matches stream=True response shape."""
+    async def _gen():
+        chunk = MagicMock()
+        chunk.choices = [MagicMock()]
+        chunk.choices[0].delta.content = content
+        yield chunk
+    return _gen()
+
+
 def _make_llm_client(response: str) -> AsyncMock:
-    """Return a mock LLM client that returns `response` for any request."""
+    """Return a mock LLM client that yields `response` as a single streaming chunk."""
     client = AsyncMock()
-    choice = MagicMock()
-    choice.message.content = response
-    client.chat.completions.create.return_value = MagicMock(choices=[choice])
+
+    async def _side_effect(*args, **kwargs):
+        async def _gen():
+            chunk = MagicMock()
+            chunk.choices = [MagicMock()]
+            chunk.choices[0].delta.content = response
+            yield chunk
+        return _gen()
+
+    client.chat.completions.create.side_effect = _side_effect
     return client
 
 
@@ -126,12 +143,9 @@ async def test_chunked_strategy_uses_continuity_seed():
         'Second chunk output also with enough words to pass the ratio check.',
     ]
     client = AsyncMock()
-    choice1, choice2 = MagicMock(), MagicMock()
-    choice1.message.content = responses[0]
-    choice2.message.content = responses[1]
     client.chat.completions.create.side_effect = [
-        MagicMock(choices=[choice1]),
-        MagicMock(choices=[choice2]),
+        _make_stream(responses[0]),
+        _make_stream(responses[1]),
     ]
     strategy = ChunkedStrategy(
         llm_client=client,
@@ -255,10 +269,7 @@ async def test_chunked_strategy_no_extra_llm_call_for_section_map():
         'Second chunk narrated output with enough words to pass validation.',
     ]
     client = AsyncMock()
-    choices = [MagicMock() for _ in responses]
-    for choice, resp in zip(choices, responses):
-        choice.message.content = resp
-    client.chat.completions.create.side_effect = [MagicMock(choices=[c]) for c in choices]
+    client.chat.completions.create.side_effect = [_make_stream(r) for r in responses]
     strategy = ChunkedStrategy(
         llm_client=client,
         chunk_words=5,
@@ -278,10 +289,7 @@ async def test_chunk_position_in_user_content():
         'Second chunk narrated output with enough words to pass validation.',
     ]
     client = AsyncMock()
-    choices = [MagicMock() for _ in responses]
-    for choice, resp in zip(choices, responses):
-        choice.message.content = resp
-    client.chat.completions.create.side_effect = [MagicMock(choices=[c]) for c in choices]
+    client.chat.completions.create.side_effect = [_make_stream(r) for r in responses]
     strategy = ChunkedStrategy(
         llm_client=client,
         chunk_words=5,
@@ -302,10 +310,7 @@ async def test_section_map_from_html_appears_in_system_prompt():
         'Narrated output with enough words to pass validation check.',
     ]
     client = AsyncMock()
-    choices = [MagicMock() for _ in responses]
-    for choice, resp in zip(choices, responses):
-        choice.message.content = resp
-    client.chat.completions.create.side_effect = [MagicMock(choices=[c]) for c in choices]
+    client.chat.completions.create.side_effect = [_make_stream(r) for r in responses]
     strategy = ChunkedStrategy(
         llm_client=client,
         chunk_words=200,

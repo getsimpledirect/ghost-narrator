@@ -195,17 +195,25 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
     # matters if thinking is disabled and input is small.
     max_tokens = ENGINE_CONFIG.llm_num_ctx
 
-    response = await client.chat.completions.create(
+    # stream=True keeps the HTTP connection alive as tokens arrive, bypassing
+    # Ollama's 120-second server-side idle timeout that fires on long articles.
+    stream = await client.chat.completions.create(
         model=model,
         messages=effective_messages,
         temperature=0.3,
         max_tokens=max_tokens,
         timeout=timeout,
+        stream=True,
         **kwargs,
     )
-    if not response.choices:
+    chunks: list[str] = []
+    async for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta.content:
+            chunks.append(chunk.choices[0].delta.content)
+    content = ''.join(chunks)
+    if not content:
         raise NarrationError('LLM returned empty response with no choices')
-    return _strip_llm_artifacts(response.choices[0].message.content)
+    return _strip_llm_artifacts(content)
 
 
 # Retry wrapper for LLM calls - handles transient failures.
