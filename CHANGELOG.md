@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v2.9.2 (2026-04-19)
+
+### Bug Fixes
+
+- **tts-service**: Align pipeline with production TTS best practices
+  ([`dd501b2`](https://github.com/getsimpledirect/ghost-narrator/commit/dd501b227715696edeeb23f8132274cc251e31dc))
+
+- Add WER-based re-synthesis to quality_check using Whisper base (CPU) via the transformers pipeline
+  already in the dependency tree; detects hallucinated, skipped, and repeated words that dBFS checks
+  cannot catch; degrades gracefully if the model is unavailable (air-gapped or test env) - Tighten
+  loudness consistency threshold from 6 dB to 3 dB; at 6 dB a segment sounds twice as loud —
+  listeners notice at ±3 LU per EBU R128 - Fix compressor release time from 100ms to 800ms and
+  attack from 10ms to 300ms; 100ms release causes audible gain pumping on sentence pauses, which is
+  the primary DRC artifact in speech mastering - Fix alimiter release from 50ms to 150ms; 50ms is
+  below the minimum recommended for speech limiters and introduces inter-sample artifacts - Add full
+  PyTorch seed pattern: random.seed, numpy.random.seed, and cuDNN deterministic mode alongside the
+  existing torch.manual_seed; cuDNN deterministic is set once at engine init, not per synthesis call
+  - Add URL and email stripping to normalize_for_narration after Markdown image/link removal so bare
+  https:// strings do not reach the LLM or TTS - Add 25-word sentence length instruction to system
+  prompt so the LLM produces sentences within the range where TTS intonation modeling is reliable
+  (>30 words degrades prosody in autoregressive models)
+
+
 ## v2.9.1 (2026-04-19)
 
 ### Bug Fixes
