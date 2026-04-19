@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v2.10.0 (2026-04-19)
+
+### Features
+
+- **hardware**: Upgrade all tiers to qwen3.5 and expand HIGH_VRAM to 64K context
+  ([`9b6f2d9`](https://github.com/getsimpledirect/ghost-narrator/commit/9b6f2d9a396d9b0d483e48192962e42d999a619a))
+
+Replaces qwen3 with qwen3.5 across all hardware tiers for improved narration quality and
+  performance. HIGH_VRAM gains a 64K context window, doubling the single-shot narration threshold
+  from 4000 to 8000 words without requiring chunked fallback for long-form content.
+
+Model mapping: - CPU_ONLY: qwen3:1.7b → qwen3.5:2b (llm_num_ctx 4096) - LOW_VRAM: qwen3:4b →
+  qwen3.5:4b (llm_num_ctx 4096) - MID_VRAM: qwen3:8b → qwen3.5:4b default; hardware-probe.sh selects
+  qwen3.5:9b for GPUs ≥13 GB (10-12 GB would OOM with 9b + TTS 1.7B) - HIGH_VRAM: qwen3:8b →
+  qwen3.5:9b (llm_num_ctx 65536)
+
+Context window changes: - hardware-probe.sh writes SELECTED_LLM_NUM_CTX and OLLAMA_NUM_CTX to
+  tier.env so Ollama pre-allocates the correct KV cache at startup, preventing a model reload on the
+  first narration API call. - ollama-init.sh exports OLLAMA_NUM_CTX before ollama serve. -
+  docker-compose.yml passes SELECTED_LLM_NUM_CTX to tts-service for optional user overrides. -
+  factory.py replaces hardcoded thresholds with min(8000, llm_num_ctx/6) so the single-shot window
+  auto-scales with the configured context.
+
+Additional fixes: - Suppress qwen_tts INFO spam ("X_config is None") via logging.py. -
+  MAX_JOB_DURATION_SECONDS default raised 7200 → 10800 (3 h) to cover 18-segment book chapters
+  without timeout. - Completeness check moved from dead ChunkedStrategy path into
+  SingleShotStrategy.narrate() where HIGH_VRAM actually exercises it. - HIGH_VRAM KV_PER_SLOT
+  updated 1000 → 2000 MiB to reflect 64K context (15 attn layers × fp16 ≈ 1920 MiB/slot).
+
+
 ## v2.9.5 (2026-04-19)
 
 ### Bug Fixes
