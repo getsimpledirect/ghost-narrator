@@ -1,6 +1,40 @@
 # CHANGELOG
 
 
+## v2.8.15 (2026-04-19)
+
+### Bug Fixes
+
+- **tts-service**: Preserve content on LLM truncation and eliminate silence gaps
+  ([`76237ec`](https://github.com/getsimpledirect/ghost-narrator/commit/76237ecca8b05294206ae8c90f55d0ab52013e88))
+
+Three pipeline bugs caused unusable audio for content-dense chapters.
+
+Critical truncation fallback: when the LLM returns fewer than 25% of expected words (e.g. 3 words
+  for a 799-word pricing table chunk), the narration strategy now returns the normalized source text
+  instead of the 3-word output. Podcast narration is still preferred, but no content is silently
+  discarded when the LLM fails catastrophically.
+
+Silence gap elimination: concatenate_audio_with_overlap now calls _trim_silence() on each segment
+  before crossfading. The function already existed and was used by concatenate_audio and
+  concatenate_audio_streaming, but was missing from the overlap path — causing 1-3 second silence
+  gaps at segment boundaries that showed up as deadspace mid-article.
+
+Narration chunk size: reduced narration_chunk_words from 800 to 400 for both MID_VRAM and HIGH_VRAM
+  tiers. 800-word chunks fed entire pricing tables and email templates to the LLM as a single unit,
+  making the "match source length" instruction impossible to satisfy — triggering the critical
+  truncation path on nearly every structured-content section.
+
+Also fix the test_concatenate_audio_with_overlap_two_files test which used unscaled np.sin() casts
+  to int16, producing near-zero samples that _trim_silence correctly identified as silence and
+  emptied.
+
+### Code Style
+
+- **tts-service**: Remove unused imports and reformat long lines
+  ([`d0e7469`](https://github.com/getsimpledirect/ghost-narrator/commit/d0e7469affb3763746a06c44343f58282f03c5ba))
+
+
 ## v2.8.14 (2026-04-18)
 
 ### Bug Fixes
