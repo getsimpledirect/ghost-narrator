@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v2.8.17 (2026-04-19)
+
+### Bug Fixes
+
+- **tts-service**: Fix narration fidelity and text normalization gaps
+  ([`70ee9a9`](https://github.com/getsimpledirect/ghost-narrator/commit/70ee9a96d21ae529ab10a85651cf2233b4760e77))
+
+- Prompt rule 1 previously demanded output match input length exactly, causing the LLM to truncate
+  structured content (bullet lists, tables) rather than prose-ifying it; changed to "preserve all
+  facts" - Ghost kg-card divs injected raw URLs and bookmark metadata into the narration text
+  because only <figure> cards were stripped, not <div> variants used by newer Ghost; added
+  _KG_CARD_RE with iterative loop - Percentages (12.5%), ordinals (1st/2nd/3rd), 24/7, and P&L were
+  passed raw to TTS, producing garbled letter-by-letter output; added _PERCENT_RE, _ORDINAL_RE,
+  _24_7_RE, and P&L acronym registry entry - Compressor threshold 0.125 (-18 dBFS) activated on
+  nearly every spoken sentence, audibly pumping quieter passages; relaxed to 0.25 (-12 dBFS) with
+  1.5:1 ratio and faster attack/release - [LONG_PAUSE] markers were converted to \n\n by
+  clean_text_for_tts and relied on the autoregressive model to pause — unreliable across sampling
+  temperatures; replaced single-shot path with synthesize_with_pauses which splices 800ms
+  AudioSegment.silent() - split_into_chunks produced mid-sentence splits that caused prosody
+  discontinuities; removed the function and its _split_sentence_at_clauses helper since
+  split_into_large_segments is the correct segmentation path
+
+
 ## v2.8.16 (2026-04-19)
 
 ### Bug Fixes
