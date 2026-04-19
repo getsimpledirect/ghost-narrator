@@ -45,8 +45,8 @@ Every time you publish a post on your [Ghost](https://ghost.org/) website, this 
 
 **Key Features:**
 - Zero-shot voice cloning from a short reference audio sample
-- Professional audio mastering (-23 LUFS normalization, -16 LUFS final output)
-- Dynamic gap insertion between chunks for natural pacing
+- Professional audio mastering (EBU R128 two-pass loudnorm, −16 LUFS, speech compressor, true-peak limiter)
+- Dynamic gap insertion between segments for natural pacing
 - Streaming concatenation for memory-efficient processing of long articles (5000+ words)
 - Redis-backed job persistence with automatic fallback to in-memory storage
 - Async processing with webhook callbacks
@@ -127,16 +127,16 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | CPU only | None | Qwen3-TTS-0.6B | qwen3:1.7b | 192kbps, 44.1kHz | Parallel workers, any machine |
 | Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3:4b | 192kbps, 44.1kHz | Compatible with all CUDA GPUs incl. older hardware |
 | Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3:8b | 192kbps, 44.1kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3:8b** | **256kbps, 48kHz, −14 LUFS** | **Pipelined narrate+synthesize, multi-voice quotes, quality re-synthesis, voice pre-caching** |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3:8b** | **256kbps, 48kHz, −14 LUFS** | **Tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
 - **bf16 TTS precision** — 1.5–2x faster synthesis on Tensor Core GPUs with imperceptible quality difference
-- **qwen3:8b LLM** — sufficient for format-conversion narration at half the VRAM cost of qwen3:14b
-- **Pipelined narration+synthesis** — LLM narrates chunk N+1 while TTS synthesizes chunk N
+- **Tail conditioning** — each segment is conditioned on the last 2.5s of the preceding segment, anchoring voice timbre and speaking rate across synthesis boundaries
+- **WER-based re-synthesis** — each segment is transcribed by Whisper base (CPU) and re-synthesized if word error rate exceeds 10%; catches hallucinated, skipped, and repeated words that silence-ratio checks cannot detect
+- **Loudness consistency check** — after all segments are synthesized, any segment deviating more than ±3 dB from the median dBFS is re-synthesized; prevents volume-level drift between segments
+- **Seed determinism** — a SHA-256-derived seed is set per job (torch + numpy + random + cuDNN deterministic mode) so retries produce the same audio
 - **Pre-computed voice reference** — voice embedding cached at startup, saves 2-5s per job
-- **Multi-voice for quotes** — quoted speech is pitch-shifted for speaker differentiation
-- **Automatic quality re-synthesis** — chunks with excessive silence or clipping are automatically re-synthesized
-- **Information preservation LLM check** — second LLM call verifies no facts were dropped during narration
+- **LLM completeness check** — second LLM call verifies no facts were dropped during narration (short articles only, combined ≤ 4000 words)
 
 Detection is performed by `scripts/init/hardware-probe.sh`, which runs as a Docker init container before the other services start. It inspects `nvidia-smi` output, writes the selected tier to `tier_data:/shared/tier.env`, and exits. Both `tts-service` and `ollama` mount this volume read-only and read the tier at startup. Override with `HARDWARE_TIER=cpu_only|low_vram|mid_vram|high_vram` in `.env`.
 
@@ -160,7 +160,7 @@ flowchart TD
 1. **Webhook Receive** — n8n catches the Ghost `post.published` event
 2. **Fetch Article** — Ghost Content API returns full plaintext
 3. **Submit to TTS** — n8n sends raw article text to the TTS service
-4. **Narrate + Synthesize** — TTS service internally: (a) rewrites article to spoken narration via Ollama (removes URLs, expands abbreviations, adds transitions), (b) synthesizes audio chunks with Qwen3-TTS, normalizes LUFS, concatenates
+4. **Narrate + Synthesize** — TTS service internally: (a) deterministic preprocessing strips URLs/markdown, (b) Ollama rewrites to spoken prose preserving all facts, (c) Qwen3-TTS synthesizes audio, (d) mastering and concatenation
 5. **Upload to Storage** — MP3 uploaded to configured backend (local/GCS/S3)
 6. **Callback to n8n** — TTS service notifies n8n that audio is ready
 7. **Embed in Ghost** — n8n patches the Ghost post with an `<audio>` player
@@ -342,16 +342,17 @@ Expected response:
 - **Storage**: Local folder, Google Cloud Storage, or AWS S3
 - **Job Queue**: Redis for async job tracking with AOF persistence
 - **Synthesis Strategy**:
-  - **CPU Mode**: Parallel chunk synthesis with ThreadPoolExecutor (configurable workers)
-  - **GPU Mode**: Sequential chunk synthesis (optimal for CUDA)
-- **Audio Mastering**: LUFS normalization (-23 LUFS per chunk, -16 LUFS final output)
+  - **CPU Mode**: Parallel single-shot synthesis with ThreadPoolExecutor (configurable workers)
+  - **GPU Mode**: Sequential single-shot synthesis (optimal for CUDA memory management)
+- **Audio Mastering**: Two-pass EBU R128 loudness normalization, true-peak limiting, −16 LUFS final output
 
 **Key Features:**
 - Zero-shot voice cloning from a single reference audio file
 - Async background job processing with Redis-backed status tracking
 - Automatic fallback to in-memory storage if Redis is unavailable
-- Parallel synthesis on CPU (configurable worker count)
-- Professional audio mastering (EBU R128 loudness normalization)
+- Single-shot synthesis for articles ≤4000 words (consistent voice, no segment boundaries)
+- Segment mode with tail conditioning for longer articles (voice anchored across segment boundaries)
+- Professional audio mastering (two-pass EBU R128 loudnorm, speech compressor, true-peak limiter)
 - Exponential-backoff retry on storage uploads and n8n callbacks
 
 ---
@@ -440,13 +441,15 @@ For a typical article synthesis: ~50-60 seconds total on CPU (4 workers). Refere
 
 Ghost Narrator bundles **Ollama** for local LLM inference. Ollama runs Qwen3 models (1.7B, 4B, or 8B) and exposes an **OpenAI-compatible API** (`/v1/chat/completions`). The narration prompt instructs it to:
 
-- Convert bullet points/lists into flowing sentences
-- Remove URLs and image references
-- Add verbal transitions ("Now, here's the interesting part...")
-- Expand abbreviations (CEO → Chief Executive Officer on first use)
-- Add an engaging opening hook and closing thought
+- Convert structured content (bullet lists, tables) to flowing spoken prose
+- Preserve every fact, number, date, name, and quote verbatim — no summarisation
+- Spell out numbers and dates for speech ("$1.2B" → "one point two billion dollars")
+- Begin directly with the first sentence of the source — no introductory framing
+- Insert [PAUSE] and [LONG_PAUSE] markers for natural pacing
 
-**Why does this matter?** Articles are written to be read visually. If you feed raw article text to TTS, you get things like "Click here to read more" or "See Figure 3" being read aloud. The LLM rewrite step transforms the text into something that sounds natural as speech.
+**What happens before the LLM?** `normalize_for_narration` deterministically strips URLs, email addresses, Markdown syntax, image captions, and HTML before the text reaches Ollama. This keeps the LLM focused on content conversion rather than mechanical cleanup.
+
+**Why does this matter?** Articles are written to be read visually. If you feed raw article text to TTS, you get things like "Click here to read more" or "See Figure 3" being read aloud. The preprocessing + LLM rewrite pipeline transforms the text into something that sounds natural as speech.
 
 **External LLM override:** To use a different OpenAI-compatible API (e.g., a remote endpoint running a larger model), set `LLM_BASE_URL` in your `.env`. The bundled Ollama will be skipped in favour of your external endpoint.
 
@@ -485,7 +488,7 @@ See the [Storage Backends](#storage-backends) section for setup details.
 
 ### Job Serialization
 
-A process-wide `asyncio.Semaphore(1)` in `app/domains/job/tts_job.py` (`get_gpu_semaphore()`) serializes the GPU-bound section of each job: Steps 1–5 (LLM narration, TTS synthesis, per-chunk normalization, concatenation, final mastering). Non-GPU steps (quality validation, storage upload, cleanup, webhook notification) run outside the semaphore so the GPU slot is released as soon as the MP3 is ready.
+A process-wide `asyncio.Semaphore(1)` in `app/domains/job/tts_job.py` (`get_gpu_semaphore()`) serializes the GPU-bound section of each job: LLM narration, TTS synthesis, concatenation, and final mastering. Non-GPU steps (quality checks, storage upload, cleanup, webhook notification) run outside the semaphore so the GPU slot is released as soon as the MP3 is ready.
 
 **Why not per-chunk serialization:** `synthesize_chunks_auto` on GPU tiers processes all chunks sequentially while holding `_synthesis_lock`. Putting the semaphore around each synthesis call would still serialize at the chunk level but with much higher lock acquisition overhead. Serializing at the job level is simpler and equally correct given that the LLM narration also queues through Ollama's `OLLAMA_NUM_PARALLEL` slot pool.
 
@@ -503,66 +506,64 @@ The cap of 4 reflects the practical maximum of concurrent narration requests in 
 
 ### 6. TTS Pipeline — Audio Processing Flow
 
-The TTS service implements a sophisticated multi-stage pipeline:
+The TTS service implements a multi-stage pipeline with hardware-adaptive quality layers:
 
-**Stage 0: LLM Narration**
-- Receives raw article text from n8n
-- Sends to bundled Ollama LLM for article-to-narration conversion
-- Removes URLs, expands abbreviations, adds transitions, converts markdown to spoken form
-- Validates entity preservation (numbers, dates, names, quotes)
-- On HIGH_VRAM: runs a second LLM completeness check
+**Stage 0: Preprocessing**
+- `normalize_for_narration` deterministically strips: Markdown syntax (bold, italic, links, images), URLs, email addresses, HTML tags, smart quotes, footnote markers, and image captions
+- Spell-out for common abbreviations (Mr./Mrs./Dr./etc.) and symbols
+- `filter_non_narrable_content` removes lines with no narrable words (e.g. lines consisting only of punctuation or emoji)
+- Output is clean prose ready for LLM input
 
-**Stage 1: Text Preparation**
-- Cleans narration output (strips markdown, smart quotes, expands abbreviations)
-- Determines synthesis strategy based on content length:
-  - **≤ SINGLE_SHOT_MAX_WORDS (4000)**: Single-pass synthesis - entire text in one TTS call
-  - **> SINGLE_SHOT_MAX_WORDS**: Segment-based - splits into segments of SINGLE_SHOT_SEGMENT_WORDS (3000) words each
-- For chunk-based fallback: splits at sentence/clause boundaries (MAX_CHUNK_WORDS=200)
+**Stage 1: LLM Narration**
+- Preprocessed text sent to Ollama (Qwen3 1.7B–8B depending on tier)
+- LLM converts structured content (lists, tables) to spoken prose, preserving every fact verbatim
+- Per-chunk validation: word-count ratio check + named-entity preservation check with up to 2 retries per chunk
+- **HIGH_VRAM only**: second LLM completeness check verifies no facts were dropped (combined source + narration ≤ 4000 words)
 
-**Stage 2: Synthesis**
-- **Single-Shot Mode** (≤4000 words): Entire text synthesized in one pass - no boundaries, consistent voice
-- **Segment Mode** (>4000 words): Each segment synthesized in single-shot mode, concatenated with equal-power crossfade (SINGLE_SHOT_OVERLAP_MS=500ms)
-- **Chunk-Based Fallback**: Original independent chunk synthesis for backward compatibility
-- **CPU Mode**: Parallel synthesis using ThreadPoolExecutor (MAX_WORKERS=4 default)
-- **GPU Mode**: Sequential synthesis (optimal for CUDA memory management)
-- **HIGH_VRAM**: bf16 precision, serial synthesis (GPU slot serialized by `get_gpu_semaphore()` + `_synthesis_lock`)
+**Stage 2: Text Preparation**
+- Determines synthesis strategy based on narrated word count:
+  - **≤ SINGLE_SHOT_MAX_WORDS (4000)**: Single-shot synthesis — entire text in one TTS call
+  - **> SINGLE_SHOT_MAX_WORDS**: Segment mode — splits at sentence boundaries into segments of ≤ SINGLE_SHOT_SEGMENT_WORDS (3000) words each
+- Applies final normalization for TTS: expands numbers/dates/symbols to spoken form; strips any residual [PAUSE] markers after gap insertion
 
-**Stage 3: Quality Check (HIGH_VRAM)**
-- Checks each chunk for excessive silence, clipping, or low energy
-- Re-synthesizes failed chunks with a slight temperature bump (+0.1) to
-  avoid reproducing the same artefact with identical parameters
+**Stage 3: Synthesis**
+- **Single-shot mode** (≤ 4000 words): Entire narration synthesized in one pass — consistent voice, no segment boundaries
+- **Segment mode** (> 4000 words): Each segment synthesized in single-shot mode, concatenated with equal-power crossfade (500 ms overlap)
+  - **HIGH_VRAM only — tail conditioning**: last 2.5 s of segment N passed as `voice_override` to anchor timbre and speaking rate for segment N+1
+- **CPU mode**: Parallel synthesis via ThreadPoolExecutor (`MAX_WORKERS`, default 4)
+- **GPU mode**: Sequential synthesis (optimal for CUDA memory management)
 
-**Stage 4: LUFS Normalization**
-- Each chunk normalized to -23 LUFS (broadcast standard)
-- Skips very short chunks (<10s) — final mastering handles them
-- Parallel normalization for speed
+**Stage 4: Per-Segment Quality Check (all tiers)**
+- Silence ratio check: re-synthesize if > 40% of the segment is silence
+- Clipping check: re-synthesize if peak amplitude exceeds 0.98
+- Low energy check: re-synthesize if RMS < 0.005
+- **HIGH_VRAM only — WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, re-synthesize (catches hallucinated/skipped/repeated words that silence checks cannot detect)
+- **HIGH_VRAM only — loudness consistency**: after all segments pass quality checks, any segment deviating > ±3 dB from the median dBFS is re-synthesized; prevents volume drift between segments
 
 **Stage 5: Dynamic Gap Insertion + Crossfade**
-- Analyzes chunk endings to determine appropriate pause duration
-- 60ms crossfade at chunk boundaries eliminates clicks/pops and smooths prosodic resets
-- Trims leading/trailing silence above −35 dBFS (catches breath sounds at chunk edges)
+- Analyzes segment endings to determine appropriate pause duration
+- 60 ms crossfade at segment boundaries eliminates clicks/pops and smooths prosodic resets
+- Trims leading/trailing silence above −35 dBFS (catches breath sounds at segment edges)
 - Inserts natural-sounding gaps between sentences/paragraphs
 
 **Stage 6: Streaming Concatenation**
-- For large files (>10 chunks): Uses streaming to reduce memory usage by 80%
-- Progressive MP3 encoding prevents OOM errors on 5000+ word articles
-- Standard concatenation for small files (faster)
+- For large files (> 10 segments): streaming concatenation reduces peak memory usage by ~80%
+- Progressive MP3 encoding prevents OOM on 5000+ word articles
+- Standard in-memory concatenation for smaller files (faster)
 
 **Stage 7: Final Mastering**
-- Broadcast processing chain: compress → normalise → limit
-- Gentle speech compressor (3:1 ratio, −18 dBFS threshold) reduces dynamic
-  range so quiet passages feel present — applied before loudnorm so the
-  two-pass measurement reflects the compressed signal accurately
-- Two-pass EBU R128 loudness normalization (measure then apply)
-- Target: -16 LUFS (podcast/streaming standard), −14 LUFS on HIGH_VRAM
-- True peak limiting to -1.0 dBFS
-- Resample to 44.1kHz, 192kbps MP3 (or 48kHz 256kbps on High tier)
-- Quality validation (non-fatal, logs only)
+- Processing chain: silence trim → speech compressor → two-pass EBU R128 loudnorm → true-peak limiter
+- Silence trim: removes leading/trailing silence above −40 dBFS
+- Speech compressor: 1.5:1 ratio, −12 dBFS threshold, attack 300 ms, release 800 ms (prevents pumping on sentence pauses)
+- Two-pass EBU R128 loudnorm: first pass measures, second pass applies correction with `linear=true` (prevents AGC pumping)
+- Target: −16 LUFS (podcast/streaming standard); −14 LUFS on HIGH_VRAM (configured via `TARGET_LUFS`)
+- True-peak limiter: 0.794 linear (≈ −2 dBFS), attack 5 ms, release 150 ms
+- Export: 44.1 kHz mono MP3 at `MP3_BITRATE` (192 kbps default; 256 kbps on HIGH_VRAM)
 
 **Stage 8: Upload & Notify**
-- Upload to configured storage backend
-- Send callback webhook to n8n
-- Cleanup temporary files
+- Upload to configured storage backend (local / GCS / S3) with exponential-backoff retry
+- Send callback webhook to n8n with audio URL
+- Cleanup temporary WAV and segment files
 
 ---
 
