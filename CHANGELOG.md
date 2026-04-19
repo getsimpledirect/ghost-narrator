@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v2.10.3 (2026-04-19)
+
+### Bug Fixes
+
+- **ollama**: Upgrade to latest and set OLLAMA_REQUEST_TIMEOUT=600
+  ([`9286170`](https://github.com/getsimpledirect/ghost-narrator/commit/9286170eeef3fbacf13bc06b953619930a24714e))
+
+- Ollama 0.20.x has a hardcoded 120-second HTTP response deadline that fires before long articles
+  finish generating (7000+ words at 9B model speed takes 150-180 s), returning 500 on every
+  narration job - Upgraded from ollama/ollama:0.20.4 to ollama/ollama:latest which removes the
+  hardcoded limit (fixed in 0.21.0+) - Added OLLAMA_REQUEST_TIMEOUT=600 as defence-in-depth for the
+  same class of timeout across any future version pinned here
+
+
 ## v2.10.2 (2026-04-19)
 
 ### Bug Fixes

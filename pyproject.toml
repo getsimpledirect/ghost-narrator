@@ -1,6 +1,6 @@
 [project]
 name = "ghost-narrator"
-version = "2.10.2"
+version = "2.10.3"
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
