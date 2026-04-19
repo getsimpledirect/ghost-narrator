@@ -93,7 +93,7 @@ class TTSEngine:
                             _submod = getattr(self._model, _attr, None)
                             if isinstance(_submod, torch.nn.Module):
                                 try:
-                                    setattr(self._model, _attr, torch.compile(_submod))
+                                    setattr(self._model, _attr, torch.compile(_submod, dynamic=True))
                                     _compiled_attrs.append(_attr)
                                 except Exception as _sub_exc:
                                     logger.debug(
