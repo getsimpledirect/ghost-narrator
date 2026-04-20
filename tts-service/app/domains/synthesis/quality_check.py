@@ -30,6 +30,8 @@ import math
 import re as _re
 import threading
 
+import numpy as np
+import soundfile as _sf
 from pydub import AudioSegment as _AudioSegment
 
 
@@ -45,6 +47,98 @@ _MAX_WER_DURATION_MS: int = 120_000
 _ASR_UNAVAILABLE = object()
 _asr_pipeline = None
 _asr_lock = threading.Lock()
+
+
+def _compute_onset_rate(wav_path: str) -> float:
+    """Energy-based onset rate in onsets/second. Uses only numpy + soundfile."""
+    try:
+        data, sr = _sf.read(wav_path, dtype='float32', always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if len(data) == 0:
+            return 0.0
+        frame_size = max(1, int(sr * 0.025))
+        hop_size = max(1, int(sr * 0.010))
+        rms_frames = np.array(
+            [
+                np.sqrt(np.mean(data[i : i + frame_size] ** 2))
+                for i in range(0, len(data) - frame_size, hop_size)
+            ]
+        )
+        if len(rms_frames) < 2:
+            return 0.0
+        # Count frames where RMS rises > 3 dB (×1.41) above previous frame and > noise floor
+        onsets = np.sum((rms_frames[1:] > rms_frames[:-1] * 1.41) & (rms_frames[1:] > 0.01))
+        duration_s = len(data) / sr
+        return float(onsets) / duration_s if duration_s > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def _compute_spectral_flatness(wav_path: str) -> float:
+    """Spectral flatness (Wiener entropy) of voiced frames. 0 = tonal, 1 = noise."""
+    try:
+        data, sr = _sf.read(wav_path, dtype='float32', always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if len(data) == 0:
+            return 0.0
+        n_fft = 512
+        hop = 128
+        eps = 1e-10
+        # Manual short-time magnitude spectrum (no extra deps)
+        window = np.hanning(n_fft)
+        frames = [
+            data[i : i + n_fft] * window
+            for i in range(0, len(data) - n_fft, hop)
+            if len(data[i : i + n_fft]) == n_fft
+        ]
+        if not frames:
+            return 0.0
+        spectra = np.abs(np.fft.rfft(np.stack(frames), axis=1))  # (T, F)
+        # Keep only voiced frames (mean magnitude above noise floor)
+        voiced_mask = spectra.mean(axis=1) > 0.005
+        if not voiced_mask.any():
+            return 0.0
+        voiced = spectra[voiced_mask]  # (T_voiced, F)
+        geo_mean = np.exp(np.mean(np.log(voiced + eps), axis=1))
+        arith_mean = np.mean(voiced, axis=1)
+        flatness_per_frame = geo_mean / (arith_mean + eps)
+        return float(flatness_per_frame.mean())
+    except Exception:
+        return 0.0
+
+
+def _estimate_median_f0(wav_path: str) -> float | None:
+    """Autocorrelation-based F0 estimate (Hz). Returns None if no voiced frames."""
+    try:
+        data, sr = _sf.read(wav_path, dtype='float32', always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        frame_size = int(sr * 0.030)
+        hop_size = frame_size // 2
+        min_lag = max(1, int(sr / 500))
+        max_lag = min(len(data) // 2, int(sr / 60))
+        if max_lag <= min_lag:
+            return None
+        f0_values: list[float] = []
+        for start in range(0, len(data) - frame_size, hop_size):
+            frame = data[start : start + frame_size].astype(np.float64)
+            if np.sqrt(np.mean(frame**2)) < 0.01:
+                continue  # skip silence
+            frame -= frame.mean()
+            corr = np.correlate(frame, frame, mode='full')
+            corr = corr[len(corr) // 2 :]
+            if max_lag >= len(corr):
+                continue
+            peak_lag = min_lag + int(np.argmax(corr[min_lag:max_lag]))
+            if corr[0] > 0 and corr[peak_lag] > 0.3 * corr[0]:
+                f0_values.append(sr / peak_lag)
+        if not f0_values:
+            return None
+        return float(np.median(f0_values))
+    except Exception:
+        return None
 
 
 def _get_asr_pipeline():
