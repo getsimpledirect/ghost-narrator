@@ -144,9 +144,9 @@ The service auto-detects hardware and selects the appropriate Qwen3-TTS model:
 | Tier | VRAM | TTS Model | Output Quality |
 |---|---|---|---|
 | CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 44.1kHz |
-| Low (4–8 GB) | 4–8 GB | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 44.1kHz |
-| Mid (10–16 GB) | 10–16 GB | Qwen3-TTS-12Hz-1.7B-Base | 192kbps, 44.1kHz |
-| High (20+ GB) | 20+ GB | Qwen3-TTS-12Hz-1.7B-Base | 256kbps, 48kHz, −14 LUFS |
+| Low (<12 GB) | <12 GB | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 48kHz |
+| Mid (12–18 GB) | 12–18 GB | Qwen3-TTS-12Hz-1.7B-Base | 256kbps, 48kHz |
+| High (18+ GB) | 18+ GB | Qwen3-TTS-12Hz-1.7B-Base (bf16) | 320kbps, 48kHz, −14 LUFS |
 
 Override with `HARDWARE_TIER=cpu_only|low_vram|mid_vram|high_vram` in `.env`.
 
@@ -217,7 +217,7 @@ This is normal for CPU mode with default settings. For faster generation:
 
 2. Use GPU mode (requires NVIDIA GPU with 4GB+ VRAM):
    ```bash
-   export HARDWARE_TIER="low_vram"   # 4–8 GB VRAM
+   export HARDWARE_TIER="low_vram"   # <12 GB VRAM
    ```
 
 ### First run calibration

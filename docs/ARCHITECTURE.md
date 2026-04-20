@@ -127,7 +127,7 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Parallel workers, any machine |
 | Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
 | Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | RTX 3080 12GB+ / A10G, pipelined narrate+synthesize |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3.5:9b (64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **Tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **Tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
 - **bf16 TTS precision** — 1.5–2x faster synthesis on Tensor Core GPUs with imperceptible quality difference
@@ -655,11 +655,12 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 
 | Component | VRAM Usage | RAM Usage | Notes |
 |---|---|---|---|
-| Ollama (qwen3.5:9b Q4_K_M, GPU) | ~6.6 GB | ~2 GB | HIGH_VRAM + MID_VRAM ≥13 GB LLM; hybrid MoE with 64K ctx on HIGH_VRAM |
-| Ollama (qwen3.5:4b Q4_K_M, GPU) | ~3.4 GB | ~1.5 GB | MID_VRAM default and LOW_VRAM LLM |
+| vLLM (Qwen/Qwen3.5-9B fp8, GPU) | ~9.7 GB | ~2 GB | HIGH_VRAM LLM — fp8 quant, 64K context window |
+| vLLM (Qwen/Qwen3.5-4B fp8, GPU) | ~4.3 GB | ~2 GB | MID_VRAM LLM — fp8 quant, 8K context window |
+| Ollama (qwen3.5:4b Q4_K_M, GPU) | ~3.4 GB | ~1.5 GB | LOW_VRAM LLM |
 | Ollama (qwen3.5:2b Q4_K_M, CPU) | 0 GB | ~1.7 GB | CPU_ONLY LLM |
-| Qwen3-TTS-1.7B bf16 (GPU) | ~3.4 GB | ~6 GB | HIGH_VRAM — 1.5–2x faster on Tensor Cores, imperceptible quality diff vs fp32 |
-| Qwen3-TTS-1.7B fp16 (GPU) | ~3.4 GB | ~6 GB | Mid/high tier TTS model |
+| Qwen3-TTS-1.7B bf16 (GPU) | ~5.1 GB | ~6 GB | HIGH_VRAM — 1.5–2x faster on Tensor Cores, imperceptible quality diff vs fp32 |
+| Qwen3-TTS-1.7B fp16 (GPU) | ~5.1 GB | ~6 GB | MID_VRAM TTS model |
 | Qwen3-TTS-0.6B fp32 (GPU) | ~1.2 GB | ~3 GB | LOW_VRAM tier — fp32 for stability on all CUDA GPUs |
 | Qwen3-TTS (CPU mode) | 0 GB VRAM | ~1 GB | **Recommended for most setups** |
 | Redis | 0 GB VRAM | ~50 MB | Persistent job storage |
@@ -681,7 +682,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 - `TTS_MODEL=qwen3-tts-0.6b` — Override auto-detected model
 - `REDIS_URL=redis://redis:6379/0` — Redis connection URL
 - `REDIS_JOB_TTL=86400` — Job retention in seconds (24 hours)
-- `LLM_MODEL_NAME=qwen3.5:4b` — Override auto-detected Ollama model for narration rewrite
+- `LLM_MODEL_NAME=qwen3.5:4b` — Override auto-detected LLM model for narration rewrite (Ollama tag for cpu/low_vram; HuggingFace ID for mid/high_vram)
 
 ---
 
