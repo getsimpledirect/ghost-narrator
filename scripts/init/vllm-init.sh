@@ -84,5 +84,5 @@ if [ -n "${VLLM_QUANTIZATION:-}" ]; then
     set -- "$@" --quantization "${VLLM_QUANTIZATION}"
 fi
 
-echo "Starting: python -m vllm.entrypoints.openai.api_server $*" >&2
-exec python -m vllm.entrypoints.openai.api_server "$@"
+echo "Starting: python3 -m vllm.entrypoints.openai.api_server $*" >&2
+exec python3 -m vllm.entrypoints.openai.api_server "$@"
