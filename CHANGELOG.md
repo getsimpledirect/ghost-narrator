@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v2.11.3 (2026-04-20)
+
+### Bug Fixes
+
+- **vllm**: Increase TTS VRAM reserve to eliminate startup OOM
+  ([`fa7641a`](https://github.com/getsimpledirect/ghost-narrator/commit/fa7641afc50086e8c7c3a59c6182d2e33e366031))
+
+The GPU memory utilization formula assumed TTS needed only 3.5 GiB (bare Qwen3-TTS-1.7B bf16 weight
+  size), which caused vLLM to request 18.51 GiB — exceeding the 16.95 GiB available on a 22 GB GPU
+  after TTS loaded.
+
+Actual measured TTS runtime consumption on a 22 GB GPU is ~5.1 GiB: - Qwen3-TTS-1.7B bf16 weights:
+  ~3.4 GiB - torch.compile scratch + activation buffers: ~0.8 GiB - CUDA context + memory
+  fragmentation: ~0.9 GiB
+
+Additionally, each crashed vLLM attempt leaks ~30–40 MiB because NCCL process groups are not
+  destroyed on exit, which progressively reduces available VRAM across restarts.
+
+Changes: - `scripts/init/vllm-init.sh`: raise TTS_RESERVE_MIB from 3584 to 6144 (3.5 GiB → 6 GiB),
+  yielding GPU_UTIL ≈ 0.73 on a 22 GB GPU and requesting ~16.0 GiB — within the ~16.95 GiB
+  available. Updated comment with measured runtime data and restart-leak rationale.
+
+
 ## v2.11.2 (2026-04-20)
 
 ### Bug Fixes
