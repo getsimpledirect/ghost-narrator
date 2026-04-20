@@ -83,6 +83,7 @@ set -- \
     --default-chat-template-kwargs '{"enable_thinking": false}' \
     --gpu-memory-utilization "${GPU_UTIL}" \
     --max-num-seqs 4 \
+    --language-model-only \
     --host 0.0.0.0 \
     --port 8000
 

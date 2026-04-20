@@ -123,6 +123,9 @@ services:
     environment:
       - SHARED_DIR=/shared
       - HF_HOME=/root/.cache/huggingface
+      # More accurate CUDA graph memory accounting during KV cache profiling.
+      # Frees the ~33 MB that the old profiler over-reserved for CUDA graphs.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
     volumes:
       - vllm_models:/root/.cache/huggingface
       - tier_data:/shared:ro
