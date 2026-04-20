@@ -47,9 +47,11 @@ done
 . "$TIER_ENV"
 
 # ── Compute GPU memory utilization ────────────────────────────────────────────
-# Reserve ~3.5 GB for TTS model (Qwen3-TTS-1.7B fp16) + CUDA context overhead.
+# Reserve 6 GB for TTS model (Qwen3-TTS-1.7B bf16 ≈ 3.4 GB) + torch.compile
+# scratch + CUDA context + memory fragmentation. Measured runtime on a 22 GB
+# GPU: ~5.1 GB. Use 6 GB to leave headroom across restarts.
 # If VRAM_MIB is 0 (HARDWARE_TIER override without GPU probe), use 0.70 default.
-TTS_RESERVE_MIB=3584
+TTS_RESERVE_MIB=6144
 if [ -n "${VRAM_MIB:-}" ] && [ "${VRAM_MIB:-0}" -gt 4096 ]; then
     GPU_UTIL=$(awk "BEGIN {
         x = (${VRAM_MIB} - ${TTS_RESERVE_MIB}) / ${VRAM_MIB};
