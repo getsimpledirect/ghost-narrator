@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v2.11.0 (2026-04-20)
+
+### Features
+
+- **narration**: Migrate GPU tiers to vLLM for unlimited generation time
+  ([`fbd5ec0`](https://github.com/getsimpledirect/ghost-narrator/commit/fbd5ec03bf5dc8abebb0b2bae895ac28b8610fcb))
+
+Ollama imposes a 120-second server-side generation timeout that kills narration of long articles
+  (7000+ words at 25 tok/s = 420+ seconds). vLLM has no per-request timeout and runs 3-5x faster via
+  PagedAttention.
+
+GPU tier changes (mid_vram / high_vram): - docker-compose.yml: add vllm service (profiles: [gpu]);
+  ollama gets profiles: [cpu]; remove obsolete ollama health dep from n8n; add vllm_models volume -
+  docker-compose.gpu.yml: GPU reservation moves from ollama → vllm - scripts/init/vllm-init.sh: NEW
+  — sources tier.env, computes safe gpu-memory-utilization leaving ~3.5 GB for TTS, starts vLLM with
+  --reasoning-parser qwen3 and --default-chat-template-kwargs to disable thinking server-wide; fp8
+  quantization when set - scripts/init/hardware-probe.sh: MID/HIGH VRAM model IDs switch to
+  HuggingFace format (Qwen/Qwen3.5-4B, Qwen/Qwen3.5-9B); adds VLLM_QUANTIZATION=fp8 and VRAM_MIB to
+  tier.env; OLLAMA_NUM_PARALLEL is 0 for GPU tiers (vLLM manages its own queue) - hardware.py:
+  update _TIER_CONFIGS llm_model to HuggingFace IDs - strategy.py: add _VLLM_ENDPOINT flag; vLLM
+  gets extra_body.chat_template_kwargs.enable_thinking=False (no /no_think prefix — vLLM chat
+  template handles it server-side) - install.sh: writes COMPOSE_PROFILES and LLM_BASE_URL to .env
+  based on GPU detection; pulls correct LLM image per profile - .env.example: document
+  COMPOSE_PROFILES, fix LLM_TIMEOUT to 300s
+
+CPU / LOW_VRAM tiers continue using bundled Ollama unchanged. The Modelfile custom-model approach
+  (ghost-narrator-llm) is preserved for cpu/low-vram tiers — only GPU tiers switch backends.
+
+
 ## v2.10.4 (2026-04-20)
 
 ### Bug Fixes
