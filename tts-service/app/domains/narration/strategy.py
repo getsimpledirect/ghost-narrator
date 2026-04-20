@@ -497,8 +497,8 @@ class SingleShotStrategy(NarrationStrategy):
             )
 
         # Completeness check for HIGH_VRAM: single-shot articles are ≤8000 words
-        # (the fallback_threshold), so source + narration ≈ 16000 words fits
-        # comfortably in the 64K context window. qwen3.5:9b processes this in ~25s.
+        # (the fallback_threshold), so source + narration ≈ 20K tokens fits
+        # within the ~29K KV cache. qwen3.5:9b processes this in ~25s.
         if self._tier == HardwareTier.HIGH_VRAM:
             logger.info('Running LLM completeness check (HIGH_VRAM)...')
             result = await _run_completeness_check(
