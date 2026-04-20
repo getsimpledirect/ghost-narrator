@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v2.10.4 (2026-04-20)
+
+### Bug Fixes
+
+- **ollama**: Sync custom model name between Ollama and tts-service
+  ([`b5f66ae`](https://github.com/getsimpledirect/ghost-narrator/commit/b5f66ae0ae41972cae0335008f803967a8a95ac4))
+
+- LLM_MODEL_NAME now passed to the Ollama container so ollama-init.sh creates the Modelfile model
+  under the same name tts-service calls - If .env had LLM_MODEL_NAME=qwen3.5:9b, Ollama loaded
+  ghost-narrator-llm but tts-service sent model=qwen3.5:9b — Ollama then unloaded and reloaded the
+  raw model (no baked num_ctx) taking ~2 min → 500 on every narration request - CUSTOM_MODEL now
+  uses LLM_MODEL_NAME env var, falling back to ghost-narrator-llm if unset — both sides always agree
+  on the name - Remove unused HardwareTier import in factory.py; ruff format pass
+
+
 ## v2.10.3 (2026-04-19)
 
 ### Bug Fixes
