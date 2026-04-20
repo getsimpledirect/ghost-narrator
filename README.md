@@ -44,7 +44,7 @@ Ghost Narrator is a standalone project. It needs:
 2. **Docker** — with Docker Compose V2
 3. **A voice sample** — 5-120 seconds WAV recording of your voice
 
-That's it. The bundled Ollama LLM handles narration rewriting. Qwen3-TTS handles voice synthesis. No external APIs required.
+That's it. The bundled LLM handles narration rewriting — Ollama (CPU/low-VRAM) or vLLM (GPU). Qwen3-TTS handles voice synthesis. No external APIs required.
 
 ---
 
@@ -54,10 +54,10 @@ Ghost Narrator auto-detects your hardware and selects the right models:
 
 | Tier | VRAM | TTS Model | LLM Model | Output Quality | Key Features |
 |---|---|---|---|---|---|
-| CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Parallel workers, any machine |
-| Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
-| Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3.5:4b (9b on ≥13 GB) | 256kbps, 48kHz | Pipelined narrate+synthesize |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3.5:9b (64K ctx)** | **320kbps, 48kHz** | **Pipelined narrate+synthesize, multi-voice, quality re-synth, voice caching** |
+| CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b (Ollama) | 192kbps, 48kHz | Parallel workers, any machine |
+| Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
+| Mid | 10–18 GB | Qwen3-TTS-1.7B | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | Pipelined narrate+synthesize |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz** | **Pipelined narrate+synthesize, multi-voice, quality re-synth, voice caching** |
 
 Override with `HARDWARE_TIER=cpu_only` in `.env` if auto-detection fails.
 
@@ -69,13 +69,16 @@ Override with `HARDWARE_TIER=cpu_only` in `.env` if auto-detection fails.
 flowchart TD
     G["📝 Ghost CMS"] -->|"webhook"| N["⚡ n8n\nTrigger & Embed"]
     N -->|"raw article text"| T["🎙️ TTS Service\nNarrate + Synthesize"]
-    T -->|"LLM narration"| O["🧠 Ollama\nBundled LLM"]
+    T -->|"LLM narration"| O["🧠 Ollama\ncpu / low VRAM"]
+    T -->|"LLM narration"| V["⚡ vLLM\nmid / high VRAM"]
     O -->|"narration script"| T
+    V -->|"narration script"| T
     T -->|"MP3"| S["💾 Storage\nlocal / GCS / S3"]
     T -->|"callback"| N
     N -->|"embed player"| G
     H["🔍 Hardware Probe"] -.->|"tier.env"| T
     H -.->|"tier.env"| O
+    H -.->|"tier.env"| V
 ```
 
 ---
@@ -219,11 +222,12 @@ GCS and S3 backends are not affected — audio lives in your bucket with its own
 
 ### LLM Override
 
-Ghost Narrator bundles Ollama for narration rewriting. No external LLM needed. To override with a different OpenAI-compatible endpoint, set `LLM_BASE_URL` in `.env`:
+Ghost Narrator bundles its own LLM for narration rewriting — no external API needed. The backend is selected by `install.sh` based on your hardware. To use an external OpenAI-compatible API instead, set `LLM_BASE_URL` in `.env`:
 
 | Provider | `LLM_BASE_URL` | `LLM_MODEL_NAME` |
 |----------|------------------|--------------------|
-| Bundled Ollama (default) | `http://ollama:11434/v1` | *(auto from tier)* |
+| Bundled Ollama (cpu / low VRAM) | `http://ollama:11434/v1` | *(auto from tier)* |
+| Bundled vLLM (mid / high VRAM) | `http://vllm:8000/v1` | *(auto from tier)* |
 | OpenAI API | `https://api.openai.com/v1` | `gpt-4o-mini` |
 | Any OpenAI-compatible API | `http://host.docker.internal:PORT/v1` | model name |
 
@@ -272,14 +276,16 @@ For production deployment beyond local development:
 | TTS health check times out | First run downloads models. Wait up to 5 min. |
 | Webhooks don't trigger | Check `SERVER_EXTERNAL_IP` and firewall on port 5678. |
 | Audio not embedded in Ghost | Verify Admin API key. Check: `docker compose logs n8n` |
-| Ollama errors | Check: `docker compose logs ollama` |
+| LLM errors (cpu/low VRAM) | Check: `docker compose logs ollama` |
+| LLM errors (mid/high VRAM) | Check: `docker compose logs vllm` |
 | GPU not detected | Run `nvidia-smi`. Set `HARDWARE_TIER=mid_vram` to override. |
 
 ```bash
 # Health checks
-curl http://localhost:8020/health   # TTS Service
-curl http://localhost:5678/healthz  # n8n
-curl http://localhost:11434/api/tags # Ollama
+curl http://localhost:8020/health       # TTS Service
+curl http://localhost:5678/healthz      # n8n
+curl http://localhost:11434/api/tags    # Ollama (cpu/low VRAM)
+curl http://localhost:8000/health       # vLLM (mid/high VRAM)
 ```
 
 ---

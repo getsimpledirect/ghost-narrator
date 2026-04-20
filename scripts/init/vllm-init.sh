@@ -68,7 +68,7 @@ echo "vLLM: tier=${HARDWARE_TIER} model=${SELECTED_LLM_MODEL} max-model-len=${SE
 #   shared across the Qwen3 family; there is no separate qwen3.5 variant.
 # --default-chat-template-kwargs disables thinking server-wide so <think> tokens
 #   are never generated; per-request extra_body reinforces this.
-# --quantization and --kv-cache-dtype are added only when VLLM_QUANTIZATION is set
+# --quantization is added only when VLLM_QUANTIZATION is set
 #   (fp8 for GPU tiers; empty for CPU/low-VRAM tiers that run Ollama instead).
 set -- \
     --model "${SELECTED_LLM_MODEL}" \
