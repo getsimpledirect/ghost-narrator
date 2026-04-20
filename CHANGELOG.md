@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v2.11.7 (2026-04-20)
+
+### Performance Improvements
+
+- **vllm**: Disable multimodal encoder and enable accurate CUDA graph profiling
+  ([`1a2f9d8`](https://github.com/getsimpledirect/ghost-narrator/commit/1a2f9d8021e5c41a6793f8e1aedd2c4a27d95f68))
+
+- Add --language-model-only to vllm-init.sh: Qwen3.5-9B is detected as
+  Qwen3_5ForConditionalGeneration and triggers VIT encoder initialization, reserving ~2 GiB of VRAM
+  for encoder cache that narration never uses; this flag skips that entirely and redirects the
+  memory to decoder KV cache, raising effective context from ~25K to ~40K tokens - Add
+  VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 to vllm environment: vLLM v0.19.1 recommends this for
+  accurate CUDA graph memory accounting during KV cache allocation; previously ~33 MB was
+  over-reserved for CUDA graphs and unavailable to the KV cache
+
+
 ## v2.11.6 (2026-04-20)
 
 ### Bug Fixes
