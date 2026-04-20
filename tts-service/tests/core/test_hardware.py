@@ -62,7 +62,7 @@ def test_low_vram_when_6gb():
 
 
 def test_low_vram_when_9gb():
-    """9 GB is below the 10 GB MID_VRAM threshold."""
+    """9 GB is below the 12 GB MID_VRAM threshold."""
     with (
         patch.dict(os.environ, {'HARDWARE_TIER': ''}),
         patch('app.core.hardware.torch') as mock_torch,
@@ -71,6 +71,22 @@ def test_low_vram_when_9gb():
         mock_torch.cuda.is_available.return_value = True
         props = MagicMock()
         props.total_memory = 9 * 1024**3  # 9 GB
+        mock_torch.cuda.get_device_properties.return_value = props
+        config = get_engine_config()
+    assert config.tier == HardwareTier.LOW_VRAM
+    assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
+
+
+def test_low_vram_when_11gb():
+    """11 GB is below the 12 GB MID_VRAM threshold — new boundary after raising from 10 GB."""
+    with (
+        patch.dict(os.environ, {'HARDWARE_TIER': ''}),
+        patch('app.core.hardware.torch') as mock_torch,
+        patch('app.core.hardware._TORCH_AVAILABLE', True),
+    ):
+        mock_torch.cuda.is_available.return_value = True
+        props = MagicMock()
+        props.total_memory = 11 * 1024**3  # 11 GB
         mock_torch.cuda.get_device_properties.return_value = props
         config = get_engine_config()
     assert config.tier == HardwareTier.LOW_VRAM
@@ -196,7 +212,7 @@ def test_high_vram_llm_model_is_qwen3_5_9b():
     """HIGH_VRAM must use Qwen/Qwen3.5-9B (HuggingFace ID) with 64K context window.
 
     vLLM fp8: Qwen3.5-9B ≈ 9.7 GB weights + fp8 KV ≈ 4.8 GB at 65K tokens = 14.5 GB;
-    leaves ~6 GB headroom on 24 GB L4 alongside TTS (3.4 GB).
+    leaves ~3.5 GB headroom on 24 GB L4 alongside TTS (~5.1 GB runtime).
     """
     from app.core.hardware import _TIER_CONFIGS
 

@@ -127,7 +127,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-Base',
         tts_device='cuda',
         tts_precision='fp16',
-        # vLLM fp8: Qwen3.5-4B ≈ 4.25 GB — fits any 10–18 GB GPU alongside TTS (3.4 GB).
+        # vLLM fp8: Qwen3.5-4B ≈ 4.25 GB — fits any 12–18 GB GPU alongside TTS (~5.1 GB runtime).
         llm_model='Qwen/Qwen3.5-4B',
         llm_num_ctx=8192,
         narration_strategy='single_shot',
@@ -152,7 +152,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_device='cuda',
         tts_precision='bf16',  # bf16: 1.5-2x faster on Tensor Core GPUs, imperceptible quality diff
         # vLLM fp8: Qwen3.5-9B ≈ 9.7 GB weights + fp8 KV ≈ 4.8 GB at 65 K tokens = 14.5 GB;
-        # leaves 6 GB headroom on 24 GB L4 alongside TTS (3.4 GB).
+        # leaves ~3.5 GB headroom on 24 GB L4 alongside TTS (~5.1 GB runtime).
         llm_model='Qwen/Qwen3.5-9B',
         llm_num_ctx=65536,
         narration_strategy='single_shot',  # qwen3.5:9b narrates whole articles ≤8000 words in one call
@@ -182,7 +182,7 @@ def _probe_tier() -> HardwareTier:
     vram = torch.cuda.get_device_properties(0).total_memory
     vram_gb = vram / _GB
     logger.info('CUDA device detected — %.1f GB VRAM', vram_gb)
-    if vram_gb < 10:
+    if vram_gb < 12:
         return HardwareTier.LOW_VRAM
     if vram_gb < 18:
         return HardwareTier.MID_VRAM

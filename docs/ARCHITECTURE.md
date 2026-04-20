@@ -125,8 +125,8 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | Tier | VRAM | TTS Model | LLM | Output Quality | Features |
 |---|---|---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Parallel workers, any machine |
-| Low | <10 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
-| Mid | 10–18 GB | Qwen3-TTS-1.7B | qwen3.5:4b (qwen3.5:9b on ≥13 GB) | 256kbps, 48kHz | L4 / RTX 3060+, pipelined narrate+synthesize |
+| Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
+| Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | RTX 3080 12GB+ / A10G, pipelined narrate+synthesize |
 | **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **qwen3.5:9b (64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **Tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
@@ -647,9 +647,9 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | Tier | VRAM | Components | Total VRAM | Total RAM | Notes |
 |---|---|---|---|---|---|
 | CPU only | 0 GB | Ollama (CPU) + TTS (CPU) + n8n + Redis | 0 GB | ~4 GB | Any machine with 4+ cores |
-| Low (4–8 GB) | 4–8 GB | Ollama (GPU) + TTS-0.6B fp32 (GPU) + n8n + Redis | ~4–5 GB | ~6 GB | All CUDA GPUs; fp32 avoids fp16 overflow on older hardware |
-| Mid (10–16 GB) | 10–16 GB | Ollama (GPU) + TTS-1.7B (GPU) + n8n + Redis | ~8–12 GB | ~8 GB | L4 / RTX 3060+ |
-| High (20+ GB) | 20+ GB | Ollama 14B (GPU) + TTS-1.7B bf16 ×1 (GPU) + n8n + Redis | ~14–16 GB | ~10 GB | A100 / RTX 4090 |
+| Low (4–12 GB) | 4–12 GB | Ollama (GPU) + TTS-0.6B fp32 (GPU) + n8n + Redis | ~4–6 GB | ~6 GB | All CUDA GPUs; fp32 avoids fp16 overflow on older hardware |
+| Mid (12–18 GB) | 12–18 GB | vLLM (GPU) + TTS-1.7B fp16 (GPU) + n8n + Redis | ~10–14 GB | ~8 GB | RTX 3080 12GB+ / A10G |
+| High (18+ GB) | 18+ GB | vLLM (GPU) + TTS-1.7B bf16 (GPU) + n8n + Redis | ~15–20 GB | ~10 GB | A100 / RTX 4090 / L4 |
 
 **Component breakdown:**
 

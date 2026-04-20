@@ -54,7 +54,7 @@ else
     else
         VRAM_MIB="$_VRAM"
         echo "GPU VRAM: ${VRAM_MIB} MiB" >&2
-        if [ "$VRAM_MIB" -lt 10240 ]; then
+        if [ "$VRAM_MIB" -lt 12288 ]; then
             TIER="low_vram"
         elif [ "$VRAM_MIB" -lt 18432 ]; then
             TIER="mid_vram"

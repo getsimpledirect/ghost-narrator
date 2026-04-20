@@ -24,9 +24,13 @@
 #
 # GPU memory utilization is computed from VRAM_MIB (written by hardware-probe.sh)
 # to leave headroom for the TTS model that shares the same GPU.
-# Formula: (VRAM_MIB - 6144) / VRAM_MIB, clamped [0.60, 0.90].
+# Formula: (VRAM_MIB - 6144) / VRAM_MIB, clamped [0.45, 0.90].
 # Example: 24 GB L4 → (24576 - 6144) / 24576 ≈ 0.75
 #          18 GB GPU → (18432 - 6144) / 18432 ≈ 0.67
+#          12 GB GPU → (12288 - 6144) / 12288 = 0.50  (no clamp)
+# The 0.45 floor prevents vLLM from requesting more than free VRAM on small GPUs
+# overriding to mid_vram; normal auto-detected mid_vram starts at 12 GB so the
+# formula naturally gives ≥ 0.50 and the floor never applies.
 set -e
 
 SHARED_DIR="${SHARED_DIR:-/shared}"
@@ -55,7 +59,7 @@ TTS_RESERVE_MIB=6144
 if [ -n "${VRAM_MIB:-}" ] && [ "${VRAM_MIB:-0}" -gt 4096 ]; then
     GPU_UTIL=$(awk "BEGIN {
         x = (${VRAM_MIB} - ${TTS_RESERVE_MIB}) / ${VRAM_MIB};
-        if (x < 0.60) x = 0.60;
+        if (x < 0.45) x = 0.45;
         if (x > 0.90) x = 0.90;
         printf \"%.2f\", x
     }")
