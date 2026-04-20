@@ -1,6 +1,40 @@
 # CHANGELOG
 
 
+## v2.11.6 (2026-04-20)
+
+### Bug Fixes
+
+- **tts-service**: Correct three bugs causing failures on GPU tiers
+  ([`1f2fd98`](https://github.com/getsimpledirect/ghost-narrator/commit/1f2fd98b07edb82de63867ea7c74ac84ec970dfa))
+
+- vLLM max_tokens is output-only; sending llm_num_ctx (65536) left no room for prompt input,
+  returning HTTP 400 on every narration call - install.sh vLLM routing threshold was 10 GB but
+  hardware-probe.sh had already raised the boundary to 12 GB; 10-11 GB GPUs received vLLM config
+  with Ollama model tags in tier.env, causing load failure - ffmpeg loudnorm measure pass had a 120
+  s ceiling that fires on ~500 MB WAVs from long articles, silently activating the raw-export
+  fallback
+
+### Documentation
+
+- Sync all tier tables and component breakdown with current architecture
+  ([`871de82`](https://github.com/getsimpledirect/ghost-narrator/commit/871de8259bac97f701d841c0550033e6bf887c15))
+
+Follow-up to the hardware VRAM fixes — documentation was still referencing old boundaries, Ollama
+  for GPU tiers, and weights-only TTS VRAM figures.
+
+Changes: - `tts-service/README.md`: update tier table — low <12 GB (was <10 GB), mid 12–18 GB (was
+  10–18 GB); correct LLM column to show vLLM/HuggingFace IDs for mid (Qwen/Qwen3.5-4B) and high
+  (Qwen/Qwen3.5-9B) tiers. - `tts-service/QUICKSTART.md`: update tier table boundaries (4–8→<12,
+  10–16→12–18, 20+→18+) and output quality values to match hardware.py (192k/256k/320k at 48kHz);
+  update HARDWARE_TIER example comment. - `docs/ARCHITECTURE.md`: fix HIGH_VRAM tier row — replace
+  Ollama model name with HuggingFace vLLM ID (Qwen/Qwen3.5-9B vLLM fp8, 64K ctx); rewrite component
+  breakdown table — replace two stale Ollama GPU rows with vLLM rows for mid/high, keep Ollama only
+  for low/cpu tiers; update TTS-1.7B VRAM from ~3.4 GB (weights only) to ~5.1 GB (measured runtime)
+  for both bf16 and fp16 rows; update LLM_MODEL_NAME config note to clarify the backend format
+  difference between Ollama and vLLM tiers.
+
+
 ## v2.11.5 (2026-04-20)
 
 ### Bug Fixes
