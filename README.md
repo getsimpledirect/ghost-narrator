@@ -6,12 +6,14 @@
 
 Self-hosted AI narration for your blog. Replaces ElevenLabs (~$330/month) with a local stack that costs you electricity.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/getsimpledirect/ghost-narrator?style=flat)](https://github.com/getsimpledirect/ghost-narrator/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/getsimpledirect/ghost-narrator)](https://github.com/getsimpledirect/ghost-narrator/issues)
-[![Last Commit](https://img.shields.io/github/last-commit/getsimpledirect/ghost-narrator)](https://github.com/getsimpledirect/ghost-narrator/commits/main)
-[![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Docker](https://img.shields.io/badge/docker-compose%20v2-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://github.com/getsimpledirect/ghost-narrator/stargazers"><img src="https://img.shields.io/github/stars/getsimpledirect/ghost-narrator?style=flat" alt="GitHub Stars"></a>
+  <a href="https://github.com/getsimpledirect/ghost-narrator/issues"><img src="https://img.shields.io/github/issues/getsimpledirect/ghost-narrator" alt="GitHub Issues"></a>
+  <a href="https://github.com/getsimpledirect/ghost-narrator/commits/main"><img src="https://img.shields.io/github/last-commit/getsimpledirect/ghost-narrator" alt="Last Commit"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python"></a>
+  <a href="https://docs.docker.com/compose/"><img src="https://img.shields.io/badge/docker-compose%20v2-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
+</p>
 
 ---
 
