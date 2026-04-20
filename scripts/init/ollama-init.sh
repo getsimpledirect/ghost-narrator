@@ -71,18 +71,8 @@ else
     ollama pull "$SELECTED_LLM_MODEL"
 fi
 
-# Bake num_ctx into a custom model manifest so the model loads at the correct
-# context size on first use — no mid-request reload, no timeout.
-# Use LLM_MODEL_NAME if set (passed from docker-compose) so the custom model
-# name always matches what tts-service sends in API calls.
-CUSTOM_MODEL="${LLM_MODEL_NAME:-ghost-narrator-llm}"
-printf 'FROM %s\nPARAMETER num_ctx %s\n' \
-    "${SELECTED_LLM_MODEL}" "${OLLAMA_NUM_CTX:-4096}" > /tmp/Modelfile
-echo "Creating ${CUSTOM_MODEL} (base=${SELECTED_LLM_MODEL} num_ctx=${OLLAMA_NUM_CTX:-4096})..." >&2
-ollama create "${CUSTOM_MODEL}" -f /tmp/Modelfile
-
-echo "Pre-warming ${CUSTOM_MODEL}..." >&2
-ollama run "${CUSTOM_MODEL}" "Say: ready" >/dev/null 2>&1 || true
+echo "Pre-warming ${SELECTED_LLM_MODEL}..." >&2
+ollama run "${SELECTED_LLM_MODEL}" "Say: ready" >/dev/null 2>&1 || true
 echo "Model ready" >&2
 
 wait "$OLLAMA_PID"

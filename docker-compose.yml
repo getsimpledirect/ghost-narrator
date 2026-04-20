@@ -84,10 +84,7 @@ services:
       # Raise the per-request timeout above the hardcoded 120s limit in Ollama
       # 0.20.x — long articles (7000+ words) at 9B model speed exceed it.
       - OLLAMA_REQUEST_TIMEOUT=600
-      # Must match LLM_MODEL_NAME in tts-service/n8n — ollama-init.sh creates the
-      # custom Modelfile model under this name so tts-service can call it without
-      # triggering a model swap (which causes the 2-minute reload → 500 timeout).
-      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-ghost-narrator-llm}
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
     volumes:
       - ollama_models:/root/.ollama
       - tier_data:/shared:ro
@@ -199,7 +196,7 @@ services:
       - GENERIC_TIMEZONE=${TIMEZONE:-UTC}
       # External services (passed to workflow)
       - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
-      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-ghost-narrator-llm}
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
       - TTS_SERVICE_URL=http://tts-service:8020
       - TTS_API_KEY=${TTS_API_KEY}
       # Ghost API Keys (for fetching article content and updating posts)
@@ -267,9 +264,9 @@ services:
       - S3_AUDIO_PREFIX=${S3_AUDIO_PREFIX:-audio/articles}
       - GCS_SERVICE_ACCOUNT_KEY_PATH=${GCS_SERVICE_ACCOUNT_KEY_PATH:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
-      # ghost-narrator-llm is the Modelfile-based custom model created by ollama-init.sh
-      # with num_ctx baked in — avoids mid-request model reload and the resulting 500/timeout.
-      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-ghost-narrator-llm}
+      # Leave blank to use the hardware-tier default from ENGINE_CONFIG (e.g. qwen3.5:2b,
+      # Qwen/Qwen3.5-9B). Set explicitly only to override the tier selection.
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-}
       - SERVER_EXTERNAL_IP=${SERVER_EXTERNAL_IP:-localhost}
       - TTS_API_KEY=${TTS_API_KEY}
       - LLM_API_KEY=${LLM_API_KEY:-ollama}
