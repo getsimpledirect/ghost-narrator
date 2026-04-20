@@ -77,6 +77,10 @@ services:
       # Raise the per-request timeout above the hardcoded 120s limit in Ollama
       # 0.20.x — long articles (7000+ words) at 9B model speed exceed it.
       - OLLAMA_REQUEST_TIMEOUT=600
+      # Must match LLM_MODEL_NAME in tts-service/n8n — ollama-init.sh creates the
+      # custom Modelfile model under this name so tts-service can call it without
+      # triggering a model swap (which causes the 2-minute reload → 500 timeout).
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-ghost-narrator-llm}
     volumes:
       - ollama_models:/root/.ollama
       - tier_data:/shared:ro

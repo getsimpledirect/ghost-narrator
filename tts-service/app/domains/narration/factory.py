@@ -30,7 +30,7 @@ from app.config import LLM_MODEL_NAME, get_llm_client
 
 def get_narration_strategy():
     """Return the NarrationStrategy for the current hardware tier."""
-    from app.core.hardware import ENGINE_CONFIG, HardwareTier
+    from app.core.hardware import ENGINE_CONFIG
 
     client = get_llm_client()
     tier = ENGINE_CONFIG.tier

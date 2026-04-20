@@ -73,7 +73,9 @@ fi
 
 # Bake num_ctx into a custom model manifest so the model loads at the correct
 # context size on first use — no mid-request reload, no timeout.
-CUSTOM_MODEL="ghost-narrator-llm"
+# Use LLM_MODEL_NAME if set (passed from docker-compose) so the custom model
+# name always matches what tts-service sends in API calls.
+CUSTOM_MODEL="${LLM_MODEL_NAME:-ghost-narrator-llm}"
 printf 'FROM %s\nPARAMETER num_ctx %s\n' \
     "${SELECTED_LLM_MODEL}" "${OLLAMA_NUM_CTX:-4096}" > /tmp/Modelfile
 echo "Creating ${CUSTOM_MODEL} (base=${SELECTED_LLM_MODEL} num_ctx=${OLLAMA_NUM_CTX:-4096})..." >&2

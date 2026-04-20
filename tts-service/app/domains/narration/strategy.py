@@ -451,9 +451,7 @@ class SingleShotStrategy(NarrationStrategy):
             return await fallback.narrate(text)
 
         system_prompt = get_system_prompt(self._tier, section_map=section_map)
-        word_count_hint = (
-            f'\n[SOURCE: ~{word_count} words → your narration must be approximately {word_count} words]'
-        )
+        word_count_hint = f'\n[SOURCE: ~{word_count} words → your narration must be approximately {word_count} words]'
         messages = [
             {'role': 'system', 'content': system_prompt},
             {'role': 'user', 'content': text + word_count_hint},

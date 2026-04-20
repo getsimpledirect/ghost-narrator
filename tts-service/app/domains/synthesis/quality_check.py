@@ -317,7 +317,9 @@ async def _resynthesize_chunk(
         # characters at the start are the most common systemic silence triggers —
         # the model "reads" the opening punctuation as a pause cue. Stripping them
         # gives the model a word-first entry point on the retry.
-        retry_text = chunk_texts[chunk_idx].lstrip('\'""\u2018\u2019\u201c\u201d\u2026\u2013\u2014\u2022\u00b7*#')
+        retry_text = chunk_texts[chunk_idx].lstrip(
+            '\'""\u2018\u2019\u201c\u201d\u2026\u2013\u2014\u2022\u00b7*#'
+        )
         retry_text = retry_text.strip()
         if not retry_text:
             retry_text = chunk_texts[chunk_idx]

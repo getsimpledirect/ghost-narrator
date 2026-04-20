@@ -37,11 +37,13 @@ from app.domains.narration.strategy import (
 
 def _make_stream(content: str):
     """Async generator yielding a single chunk — matches stream=True response shape."""
+
     async def _gen():
         chunk = MagicMock()
         chunk.choices = [MagicMock()]
         chunk.choices[0].delta.content = content
         yield chunk
+
     return _gen()
 
 
@@ -55,6 +57,7 @@ def _make_llm_client(response: str) -> AsyncMock:
             chunk.choices = [MagicMock()]
             chunk.choices[0].delta.content = response
             yield chunk
+
         return _gen()
 
     client.chat.completions.create.side_effect = _side_effect
