@@ -342,18 +342,33 @@ fi
 # ─── GPU Detection ───────────────────────────────────────────────────────
 echo ""
 info "Detecting GPU..."
+GPU_DETECTED=false
+VLLM_TIER=false
+
 if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
-    GPU_DETECTED=true
-    ok "NVIDIA GPU detected — GPU compose override will be used"
+    _VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
+            | head -1 | tr -d ' ')
+    if [ -n "$_VRAM" ] && [ "$_VRAM" -eq "$_VRAM" ] 2>/dev/null && [ "$_VRAM" -gt 0 ]; then
+        GPU_DETECTED=true
+        if [ "$_VRAM" -ge 10240 ]; then
+            VLLM_TIER=true
+            ok "NVIDIA GPU detected (${_VRAM} MiB VRAM) — mid/high_vram tier, vLLM backend"
+        else
+            ok "NVIDIA GPU detected (${_VRAM} MiB VRAM) — low_vram tier, Ollama backend"
+            info "GPU accelerates TTS synthesis; Ollama handles the narration LLM"
+        fi
+    else
+        info "nvidia-smi found but returned no VRAM value — falling back to CPU mode"
+    fi
 else
-    GPU_DETECTED=false
     info "No NVIDIA GPU detected — running in CPU mode"
     echo "  (If you have a GPU, ensure nvidia-smi is available)"
 fi
 
-# Activate GPU overlay via docker-compose.override.yml symlink.
-# Docker Compose v2 automatically merges override.yml — this is more reliable
-# than COMPOSE_FILE in .env, which Compose v2 ignores for file selection.
+# GPU overlay: applied for any GPU machine — provides the CUDA base image for
+# hardware-probe (nvidia-smi needs driver userspace libs present in the container)
+# and NVIDIA device reservations for tts-service (CUDA TTS synthesis). The vllm
+# service inside the overlay only starts when COMPOSE_PROFILES=gpu.
 if [ "$GPU_DETECTED" = true ]; then
     ln -sf docker-compose.gpu.yml docker-compose.override.yml
     ok "Created docker-compose.override.yml → docker-compose.gpu.yml"
@@ -363,26 +378,25 @@ else
 fi
 
 # ─── LLM Backend Selection ────────────────────────────────────────────────────
-# GPU tiers (mid_vram / high_vram) use vLLM: no 120s server-side timeout,
-# 3-5× faster token throughput via PagedAttention, fp8 quantization.
-# CPU / low-VRAM tiers use bundled Ollama (GGUF Q4_K_M — efficient on CPU/small GPU).
+# mid_vram / high_vram (VRAM ≥ 10 GB): vLLM — no per-request timeout, 3-5× faster.
+# cpu_only / low_vram  (no GPU or < 10 GB VRAM): Ollama — GGUF Q4_K_M quantization.
 echo ""
-if [ "$GPU_DETECTED" = true ]; then
+if [ "$VLLM_TIER" = true ]; then
     _set_env "COMPOSE_PROFILES" "gpu"
     _set_env "LLM_BASE_URL" "http://vllm:8000/v1"
-    ok "GPU mode: vLLM will serve the narration LLM (COMPOSE_PROFILES=gpu)"
-    info "First start downloads the model from HuggingFace — allow 10-20 min"
+    ok "vLLM backend selected (COMPOSE_PROFILES=gpu)"
+    info "First start downloads the HuggingFace model — allow 10-20 min"
 else
     _set_env "COMPOSE_PROFILES" "cpu"
     _set_env "LLM_BASE_URL" "http://ollama:11434/v1"
-    ok "CPU mode: Ollama will serve the narration LLM (COMPOSE_PROFILES=cpu)"
+    ok "Ollama backend selected (COMPOSE_PROFILES=cpu)"
 fi
 
 # ─── Pull Docker Images ───────────────────────────────────────────────────────
 echo ""
 info "Pulling Docker images (this may take a few minutes on first run)..."
 docker compose pull redis n8n 2>/dev/null || warn "Some images failed to pull — will retry on start"
-if [ "$GPU_DETECTED" = true ]; then
+if [ "$VLLM_TIER" = true ]; then
     docker compose --profile gpu pull vllm 2>/dev/null || warn "vLLM image pull failed — will retry on start"
 else
     docker compose --profile cpu pull ollama 2>/dev/null || warn "Ollama image pull failed — will retry on start"

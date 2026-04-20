@@ -81,7 +81,7 @@ set -- \
     --port 8000
 
 if [ -n "${VLLM_QUANTIZATION:-}" ]; then
-    set -- "$@" --quantization "${VLLM_QUANTIZATION}" --kv-cache-dtype "${VLLM_QUANTIZATION}"
+    set -- "$@" --quantization "${VLLM_QUANTIZATION}"
 fi
 
 echo "Starting: python -m vllm.entrypoints.openai.api_server $*" >&2

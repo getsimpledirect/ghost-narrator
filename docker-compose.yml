@@ -10,8 +10,8 @@
 #   - vllm:   Bundled LLM for mid_vram / high_vram tiers (profile: gpu)
 #
 # LLM backend selection (set by install.sh, stored in .env):
-#   CPU / low-VRAM  →  COMPOSE_PROFILES=cpu  LLM_BASE_URL=http://ollama:11434/v1
-#   GPU / mid+high  →  COMPOSE_PROFILES=gpu  LLM_BASE_URL=http://vllm:8000/v1
+#   cpu_only / low_vram (no GPU or < 10 GB VRAM)  →  COMPOSE_PROFILES=cpu  LLM_BASE_URL=http://ollama:11434/v1
+#   mid_vram / high_vram (≥ 10 GB VRAM)           →  COMPOSE_PROFILES=gpu  LLM_BASE_URL=http://vllm:8000/v1
 #
 # Usage:
 #   docker compose up -d
@@ -36,6 +36,9 @@ services:
     restart: "no"
     environment:
       - HARDWARE_TIER=${HARDWARE_TIER:-}
+      - SELECTED_TTS_MODEL=${SELECTED_TTS_MODEL:-}
+      - SELECTED_LLM_MODEL=${SELECTED_LLM_MODEL:-}
+      - SELECTED_LLM_NUM_CTX=${SELECTED_LLM_NUM_CTX:-}
     volumes:
       - ./scripts/init/hardware-probe.sh:/scripts/hardware-probe.sh:ro
       - tier_data:/shared
