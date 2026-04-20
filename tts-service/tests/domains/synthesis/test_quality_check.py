@@ -58,9 +58,14 @@ def _make_speech_like(word_rate: float, duration_s: float, sr: int = 22050) -> n
     """Simulate speech: harmonic carrier + sinusoidal amplitude envelope.
 
     Produces audio that passes ALL acoustic gate checks (low spectral flatness
-    from harmonics, onset rate ≈ word_rate × 2, non-trivial F0).  Used for
+    from harmonics, onset rate ≈ word_rate × 1.8, non-trivial F0).  Used for
     'normal speech' test cases so the signal is not random noise (which has
     near-unity spectral flatness and would fail the flatness gate).
+
+    The envelope ``|sin(π·word_rate·t)|²`` creates onset clusters whose rate
+    scales with word_rate but is not exactly 2× due to frame-straddling in the
+    25 ms analysis window.  For word_rate ≤ 3.0 the detected onset rate stays
+    reliably below 7.0 onsets/s (normal-speech range).
     """
     t = np.linspace(0, duration_s, int(sr * duration_s), endpoint=False)
     # Harmonically rich carrier → low spectral flatness (tonal)
@@ -69,7 +74,7 @@ def _make_speech_like(word_rate: float, duration_s: float, sr: int = 22050) -> n
         + 0.6 * np.sin(2 * np.pi * 240 * t)
         + 0.3 * np.sin(2 * np.pi * 360 * t)
     )
-    # Syllable-rate envelope → controlled onset rate ≈ word_rate × 2
+    # Syllable-rate envelope → controlled onset rate ≈ word_rate × 1.8
     envelope = np.abs(np.sin(np.pi * word_rate * t)) ** 2
     return (carrier * envelope * 0.2).astype(np.float32)
 
@@ -93,10 +98,10 @@ class TestComputeOnsetRate:
         from app.domains.synthesis.quality_check import _compute_onset_rate
 
         p = str(tmp_path / 'speech.wav')
-        data = _make_rapid_noise(rate_hz=4.0, duration_s=3.0)
+        data = _make_speech_like(word_rate=2.0, duration_s=3.0)
         _write_wav(p, data)
         rate = _compute_onset_rate(p)
-        assert 1.0 < rate <= 9.0
+        assert 1.0 < rate < 7.0
 
 
 class TestComputeSpectralFlatness:
