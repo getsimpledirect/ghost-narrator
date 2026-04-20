@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v2.11.5 (2026-04-20)
+
+### Bug Fixes
+
+- **hardware**: Raise mid_vram threshold to 12 GB and lower vLLM floor clamp
+  ([`912a317`](https://github.com/getsimpledirect/ghost-narrator/commit/912a3172dac8d7053067668ae8817be45fdbba07))
+
+Two related correctness issues introduced by the TTS_RESERVE_MIB=6144 fix:
+
+1. The 0.60 minimum clamp in vllm-init.sh caused OOM on any GPU ≤ 15 GB. After raising TTS reserve
+  to 6 GB, the formula gives < 0.60 for all GPUs under 15 GB. The clamp forced vLLM to request more
+  VRAM than free (e.g. 0.60 × 12 GB = 7.2 GiB > 6.9 GiB free after TTS). Floor lowered to 0.45 — the
+  formula naturally gives ≥ 0.50 for all auto-detected mid_vram GPUs (≥ 12 GB), so the floor only
+  applies when a user manually overrides HARDWARE_TIER on an 11 GB GPU.
+
+2. The 10 GB mid_vram threshold was too low. TTS-1.7B (~5.1 GB runtime) + vLLM-4B fp8 (~4.25 GB min)
+  + KV cache exceeds 10 GB — a 10 GB GPU would pass the startup check but have < 0.25 GB for KV,
+  making the 8K context window effectively unusable for narration. 12 GB provides 1.75 GB of KV
+  headroom at mid_vram utilization, enough for full 8K context.
+
+Changes: - `scripts/init/vllm-init.sh`: lower minimum clamp from 0.60 to 0.45; update header comment
+  to document the floor and when it applies. - `scripts/init/hardware-probe.sh`: raise low→mid
+  boundary from 10240 MiB (10 GB) to 12288 MiB (12 GB). - `tts-service/app/core/hardware.py`: raise
+  Python probe threshold from 10 GB to 12 GB; update two stale "TTS (3.4 GB)" inline comments to
+  reflect measured ~5.1 GB runtime. - `tts-service/tests/core/test_hardware.py`: add
+  test_low_vram_when_11gb to pin the new boundary; update docstrings to reference the 12 GB
+  threshold; fix stale "TTS (3.4 GB)" docstring. - `README.md` + `docs/ARCHITECTURE.md`: update tier
+  VRAM range tables from <10 GB / 10–18 GB to <12 GB / 12–18 GB; correct ARCHITECTURE.md mid-tier
+  row to show vLLM (not Ollama) and current model names.
+
+
 ## v2.11.4 (2026-04-20)
 
 ### Bug Fixes
