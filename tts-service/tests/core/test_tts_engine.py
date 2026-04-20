@@ -11,3 +11,11 @@ def test_torch_compile_attempted_on_cuda(monkeypatch):
     src = inspect.getsource(eng_mod.TTSEngine.initialize)
     assert 'torch.compile' in src, 'torch.compile() call is missing from TTSEngine.initialize()'
     assert 'cuda.is_available' in src, 'CUDA availability check is missing'
+
+
+def test_chunk_exhausted_error_importable():
+    from app.core.exceptions import ChunkExhaustedError
+
+    err = ChunkExhaustedError('chunk 3 failed all retries', chunk_idx=3)
+    assert 'chunk 3' in str(err)
+    assert err.chunk_idx == 3
