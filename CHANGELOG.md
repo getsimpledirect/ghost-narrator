@@ -1,6 +1,70 @@
 # CHANGELOG
 
 
+## v2.11.1 (2026-04-20)
+
+### Bug Fixes
+
+- **install**: Correct GPU tier detection and backend selection
+  ([`733585e`](https://github.com/getsimpledirect/ghost-narrator/commit/733585eff4f32d808a5b7c694ea92d71f7495a70))
+
+Three bugs in the Ollama / vLLM setup:
+
+1. install.sh conflated GPU presence with vLLM eligibility. Any machine with an NVIDIA GPU (even 4
+  GB VRAM = low_vram tier) received COMPOSE_PROFILES=gpu and LLM_BASE_URL=http://vllm:8000/v1.
+  vllm-init.sh then tried to load the Ollama tag 'qwen3.5:4b' as a HuggingFace model, crashing
+  immediately. Fix: split into GPU_DETECTED (any GPU) and VLLM_TIER (VRAM ≥ 10 GB). The GPU overlay
+  is still applied for any GPU machine — hardware-probe needs the CUDA base image and tts-service
+  needs device reservations for CUDA TTS synthesis. COMPOSE_PROFILES=gpu is only set when
+  VLLM_TIER=true (mid/high_vram).
+
+2. vllm-init.sh passed --kv-cache-dtype fp8 alongside --quantization fp8. FP8 KV cache requires
+  hardware fp8 support (compute capability ≥ 8.9, i.e. Ada Lovelace / Hopper only). T4 (cc 7.5) and
+  A100 (cc 8.0) are common mid/high_vram cards that would fail with this flag. Weight-only fp8
+  quantization (--quantization fp8) is sufficient for VRAM reduction and runs on any CUDA GPU.
+  Removed --kv-cache-dtype.
+
+3. hardware-probe container only received HARDWARE_TIER, not the SELECTED_LLM_NUM_CTX /
+  SELECTED_LLM_MODEL / SELECTED_TTS_MODEL user overrides. hardware-probe.sh's override logic (lines
+  123-126) was silently ignored, so vllm-init.sh always used the tier-default max-model-len
+  regardless of what the user set in .env. Added the three SELECTED_* vars to hardware-probe's
+  environment block.
+
+### Documentation
+
+- Sync README and vllm-init comment with vLLM migration
+  ([`cf21c02`](https://github.com/getsimpledirect/ghost-narrator/commit/cf21c02fec29c2d1d24794f2e3f7a29c71e6c679))
+
+Update stale content following the Ollama → vLLM GPU migration:
+
+- vllm-init.sh: remove --kv-cache-dtype from comment (flag was dropped in previous commit; comment
+  still named it) - README.md hardware tier table: Mid/High rows now show HuggingFace model IDs with
+  vLLM backend label; drop the obsolete "9B on ≥13 GB" sub-tier - README.md architecture diagram:
+  add vLLM node alongside Ollama so the mid/high_vram path is visible - README.md LLM override
+  table: add vLLM row; update intro sentence to name both backends - README.md troubleshooting:
+  split Ollama row into cpu/low vs mid/high; add vLLM health check URL
+
+### Refactoring
+
+- **ollama**: Drop ghost-narrator-llm Modelfile alias
+  ([`50dcaa8`](https://github.com/getsimpledirect/ghost-narrator/commit/50dcaa8b978baf2f690f707c07783c2dfbd0259e))
+
+The custom Modelfile was created under ghost-narrator-llm to bake num_ctx into the model manifest
+  and pre-warm it, avoiding a mid-request KV cache reload. This is now redundant: OLLAMA_NUM_CTX is
+  exported before ollama serve starts (so KV is pre-allocated server-wide), and strategy.py passes
+  options.num_ctx per-request as a belt-and-suspenders override.
+
+More importantly, the alias actively breaks vLLM tiers — tts-service was calling
+  model=ghost-narrator-llm but vLLM only registered the HuggingFace ID. Removing the default from
+  docker-compose lets config.py fall through to ENGINE_CONFIG.llm_model, which resolves to the
+  correct native name for each backend (qwen3.5:2b for CPU, Qwen/Qwen3.5-9B for HIGH_VRAM, etc.).
+
+Changes: - ollama-init.sh: remove Modelfile creation; pre-warm directly on the base model tag -
+  docker-compose.yml: LLM_MODEL_NAME default changed from ghost-narrator-llm to empty for ollama,
+  n8n, and tts-service services; add comment explaining the blank-default + ENGINE_CONFIG fallback
+  contract
+
+
 ## v2.11.0 (2026-04-20)
 
 ### Features
