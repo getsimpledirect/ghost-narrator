@@ -85,7 +85,7 @@ class TestComputeOnsetRate:
 
         p = str(tmp_path / 'silence.wav')
         _write_wav(p, _make_silence(2.0))
-        assert _compute_onset_rate(p) < 1.0
+        assert _compute_onset_rate(p) == 0.0
 
     def test_rapid_noise_returns_high_rate(self, tmp_path):
         from app.domains.synthesis.quality_check import _compute_onset_rate
