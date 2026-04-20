@@ -263,7 +263,7 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | `S3_BUCKET_NAME` | - | AWS S3 bucket name (if using S3) |
 | `GCS_AUDIO_PREFIX` | `audio/articles` | Storage path prefix for uploads |
 | `N8N_CALLBACK_URL` | - | Webhook URL for job completion |
-| `MAX_JOB_DURATION_SECONDS` | `10800` | Hard wall-clock limit per job (min 300s). If a job exceeds this inside the GPU slot, the semaphore is released and the job fails with a timeout error rather than blocking the queue indefinitely. |
+| `MAX_JOB_DURATION_SECONDS` | `28800` | Hard wall-clock limit per job (min 300s). If a job exceeds this inside the GPU slot, the semaphore is released and the job fails with a timeout error rather than blocking the queue indefinitely. |
 
 ### Hardware Tiers
 
