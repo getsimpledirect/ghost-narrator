@@ -89,7 +89,7 @@ case "$TIER" in
     mid_vram)
         TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"
         # HuggingFace ID: vLLM serves the narration LLM on GPU tiers.
-        # fp8 quantization: Qwen3.5-4B ≈ 4.25 GB — fits any 10–18 GB GPU alongside TTS (~5.1 GB).
+        # fp8 quantization: Qwen3.5-4B ≈ 4.25 GB — fits any 12–18 GB GPU alongside TTS (~5.1 GB).
         LLM_MODEL="Qwen/Qwen3.5-4B"
         LLM_NUM_CTX=8192
         VLLM_QUANT="fp8"
