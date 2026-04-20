@@ -17,11 +17,17 @@ Self-hosted AI narration for your blog. Replaces ElevenLabs (~$330/month) with a
 
 ## What It Does
 
-Publish an article on Ghost CMS → Ghost Narrator automatically generates a voice-narrated audio version using your cloned voice and embeds the player in your post. No cloud TTS APIs. No per-character billing. Your voice, your hardware, your data.
+Ghost Narrator has two modes:
+
+**Auto-narration (Ghost CMS):** Publish an article → Ghost Narrator automatically generates a voice-narrated audio version using your cloned voice and embeds the player in your post.
 
 ```
 Ghost CMS (publish) → n8n (trigger) → TTS Service (narrate + synthesize) → Storage (MP3) → Ghost (embed player)
 ```
+
+**Static / arbitrary text:** Send any plain text to the TTS service directly via its REST API or the bundled `static-content-audio-pipeline.json` n8n workflow — no Ghost required. Use for books, series content, landing pages, or any text you want narrated.
+
+No cloud TTS APIs. No per-character billing. Your voice, your hardware, your data.
 
 > **Read the full story:** [You Cannot Buy What Can Only Be Built](https://founderreality.com/blog/you-cannot-buy-what-can-only-be-built) — why we built this and how it works.
 
@@ -178,7 +184,7 @@ See [`.env.example`](.env.example) for the full list.
 
 ### Using an External LLM Provider
 
-By default Ghost Narrator uses the bundled Ollama service for narration. To use an external OpenAI-compatible API:
+By default Ghost Narrator uses a bundled LLM for narration — Ollama (cpu/low VRAM tiers) or vLLM (mid/high VRAM tiers). To use an external OpenAI-compatible API instead:
 
 ```env
 LLM_BASE_URL=https://api.openai.com/v1
@@ -275,7 +281,7 @@ The `siteSlug` convention: use `'site1'`, `'site2'`, `'site3'` to match the env 
 
 For production deployment beyond local development:
 
-1. **Firewall**: Restrict access to Docker network only — don't expose Redis (port 6379) or Ollama (port 11434) to host
+1. **Firewall**: Restrict access to Docker network only — don't expose Redis (port 6379), Ollama (port 11434), or vLLM (port 8000) to host
 2. **Reverse Proxy**: Use Traefik or nginx to expose only the TTS service (port 8020) and n8n (port 5678)
 3. **SSL**: Terminate TLS at the reverse proxy, not in containers
 4. **Monitoring**: The service exposes Prometheus metrics at `/metrics` — integrate with Grafana
@@ -313,7 +319,7 @@ Ghost Narrator's code is MIT licensed — do whatever you want with it.
 - Fully permissive — commercial use allowed
 - Repo: [Qwen/Qwen3-TTS on Hugging Face](https://huggingface.co/Qwen/Qwen3-TTS)
 
-**Qwen3 LLM (default narration model)**
+**Qwen3.5 LLM (default narration model)**
 - Licensed under [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
 - Fully permissive — commercial use allowed
 

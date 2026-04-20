@@ -103,8 +103,7 @@ Create a `.env` file:
 VOICE_SAMPLE_PATH=./voices/default/reference.wav
 TTS_LANGUAGE=en
 MAX_CHUNK_WORDS=200
-SINGLE_SHOT_MAX_WORDS=4000
-SINGLE_SHOT_SEGMENT_WORDS=3000
+SINGLE_SHOT_MAX_WORDS=400
 SINGLE_SHOT_OVERLAP_MS=500
 DEVICE=cpu
 STORAGE_BACKEND=local
@@ -251,8 +250,8 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | `VOICE_SAMPLE_REF_TEXT` | *(empty)* | Transcription of the reference audio. When set, uses ICL mode (higher-quality cloning). When empty, uses x-vector-only mode (no transcription needed — default). |
 | `TTS_LANGUAGE` | `en` | BCP-47 language code |
 | `MAX_CHUNK_WORDS` | `200` | Max words per synthesis chunk |
-| `SINGLE_SHOT_MAX_WORDS` | `4000` | Max words to synthesize in single pass |
-| `SINGLE_SHOT_SEGMENT_WORDS` | `3000` | Words per segment for long content |
+| `SINGLE_SHOT_MAX_WORDS` | `400` | Max words for single-pass synthesis (fallback if VRAM probe unavailable) |
+| `SINGLE_SHOT_SEGMENT_WORDS` | *(auto)* | Words per segment — auto-probed from free VRAM at startup; override to force a fixed size |
 | `SINGLE_SHOT_OVERLAP_MS` | `500` | Overlap crossfade in milliseconds |
 | `DEVICE` | `cpu` | PyTorch device: `cpu` or `cuda` |
 | `MAX_WORKERS` | `4` | Thread pool size for parallel synthesis (CPU mode) |
@@ -398,9 +397,9 @@ docker exec -it tts-service python -c "import torch; print('OK')"
 
 ### Out of memory errors
 
-If CPU crashes with OOM:
-- Use single-shot synthesis: `SINGLE_SHOT_MAX_WORDS=4000` (more memory efficient)
-- Reduce `MAX_CHUNK_WORDS` to 150 (if not using single-shot mode)
+If the service crashes with OOM:
+- Reduce `MAX_CHUNK_WORDS` to 150 to shrink per-chunk memory
+- Set `SINGLE_SHOT_SEGMENT_WORDS=200` to force smaller synthesis segments
 - Increase system swap space
 - Use GPU mode if available
 
@@ -410,7 +409,7 @@ If CPU crashes with OOM:
 - Set `VOICE_SAMPLE_REF_TEXT` to the transcription of your reference audio — enables ICL mode (significantly better voice cloning than x-vector-only)
 - Use `HARDWARE_TIER=high_vram` if your GPU supports it — bf16 precision, larger LLM, quality re-synthesis
 - Ensure language matches reference voice
-- **Enable single-shot synthesis** for studio-quality seamless audio: `SINGLE_SHOT_MAX_WORDS=4000`
+- Use `HARDWARE_TIER=mid_vram` or higher — larger TTS model and automatic VRAM-probed segment sizing improve coherence
 
 ### Jobs lost after restart
 
@@ -565,4 +564,5 @@ Built with:
 - [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) - Voice cloning model
 - [FastAPI](https://fastapi.tiangolo.com/) - API framework
 - [pydub](https://github.com/jiaaro/pydub) - Audio processing
-- [Ollama](https://ollama.com/) - Bundled LLM inference
+- [Ollama](https://ollama.com/) - Bundled LLM inference (cpu/low VRAM tiers)
+- [vLLM](https://github.com/vllm-project/vllm) - High-throughput LLM serving (mid/high VRAM tiers)

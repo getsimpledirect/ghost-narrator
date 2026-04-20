@@ -130,8 +130,7 @@ Set these before running if you want to customize:
 ```bash
 export TTS_LANGUAGE="en"           # Language code (en, es, fr, de, etc.)
 export MAX_CHUNK_WORDS="200"       # Max words per synthesis chunk
-export SINGLE_SHOT_MAX_WORDS="4000"      # Max words for single-pass synthesis
-export SINGLE_SHOT_SEGMENT_WORDS="3000"  # Words per segment for long content
+export SINGLE_SHOT_MAX_WORDS="400"       # Max words for single-pass synthesis (fallback if VRAM probe unavailable)
 export SINGLE_SHOT_OVERLAP_MS="500"     # Overlap crossfade between segments
 export HARDWARE_TIER="cpu_only"    # Override auto-detection: cpu_only, low_vram, mid_vram, high_vram
 export MAX_WORKERS="4"             # Thread pool size for parallel synthesis
@@ -143,7 +142,7 @@ The service auto-detects hardware and selects the appropriate Qwen3-TTS model:
 
 | Tier | VRAM | TTS Model | Output Quality |
 |---|---|---|---|
-| CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 44.1kHz |
+| CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 48kHz |
 | Low (<12 GB) | <12 GB | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 48kHz |
 | Mid (12–18 GB) | 12–18 GB | Qwen3-TTS-12Hz-1.7B-Base | 256kbps, 48kHz |
 | High (18+ GB) | 18+ GB | Qwen3-TTS-12Hz-1.7B-Base (bf16) | 320kbps, 48kHz, −14 LUFS |
