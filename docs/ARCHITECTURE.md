@@ -1,6 +1,6 @@
 # Ghost Narrator — Complete Architecture & Setup Guide
 
-> **Automated voice-narrated audio from your Ghost CMS articles, powered by Qwen3-TTS voice cloning and bundled Ollama LLM inference.**
+> **Automated voice-narrated audio from your Ghost CMS articles or any plain text, powered by Qwen3-TTS voice cloning and bundled Qwen3.5 LLM inference (Ollama on CPU/low VRAM, vLLM on mid/high VRAM).**
 
 ---
 
@@ -31,22 +31,43 @@
 
 ## What This Pipeline Does
 
-Every time you publish a post on your [Ghost](https://ghost.org/) website, this pipeline automatically:
+Ghost Narrator has two operating modes:
+
+### Mode 1: Ghost CMS Auto-Narration
+Every time you publish a post on your [Ghost](https://ghost.org/) website, the pipeline automatically:
 
 1. **Detects** the new article via a Ghost webhook
 2. **Fetches** the full article text using the Ghost Content API
 3. **Submits** the raw article text to the TTS service
-4. **Narrates** — the TTS service rewrites the article into podcast-style narration using **Ollama** (bundled Qwen3 model)
+4. **Narrates** — the TTS service rewrites the article into podcast-style narration using **Qwen3.5** (via Ollama on cpu/low VRAM, or vLLM on mid/high VRAM)
 5. **Synthesises** audio using **Qwen3-TTS** with your **cloned voice** (from your reference sample)
    - **CPU Mode**: Parallel synthesis with configurable workers (default: 4 workers, ~50-60s for 2000 words)
    - **GPU Mode**: Sequential synthesis (~20-30s for 2000 words)
 6. **Uploads** the MP3 to your configured **storage backend** (local, GCS, or S3) at a predictable path
 7. **Embeds** an HTML5 audio player back into the Ghost post (optional)
 
+### Mode 2: Static / Arbitrary Text Narration
+The TTS service accepts any plain text via its REST API or via the bundled `static-content-audio-pipeline.json` n8n workflow. Use this for:
+- Book chapters, series content, or landing page copy
+- Backfilling audio for content hosted outside Ghost
+- Any text-to-speech job that should not trigger a Ghost embed
+
+```bash
+# Direct API call
+curl -X POST http://localhost:8020/tts/generate \
+  -H "Authorization: Bearer $TTS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Your content here.", "job_id": "my-book-chapter-1"}'
+```
+
+Or POST to `http://YOUR_IP:5678/webhook/static-content-audio` with `plain_text`, `job_id`, and `storage_path` fields — the workflow handles submission, polling, and storage without touching Ghost.
+
 **Key Features:**
 - Zero-shot voice cloning from a short reference audio sample
-- Professional audio mastering (EBU R128 two-pass loudnorm, −16 LUFS, speech compressor, true-peak limiter)
-- Dynamic gap insertion between segments for natural pacing
+- Qwen3.5 LLM narration rewriting — better factual preservation and instruction-following than Qwen3
+- Professional audio mastering (EBU R128 two-pass loudnorm, −16 LUFS target, speech compressor, true-peak limiter)
+- VRAM-probed segment sizing — optimal words-per-segment auto-calculated from free VRAM at startup
+- torch.compile() acceleration on GPU — first-call JIT penalty (~30-60s), then 2-4× faster synthesis
 - Streaming concatenation for memory-efficient processing of long articles (5000+ words)
 - Redis-backed job persistence with automatic fallback to in-memory storage
 - Async processing with webhook callbacks
@@ -163,7 +184,7 @@ flowchart TD
 1. **Webhook Receive** — n8n catches the Ghost `post.published` event
 2. **Fetch Article** — Ghost Content API returns full plaintext
 3. **Submit to TTS** — n8n sends raw article text to the TTS service
-4. **Narrate + Synthesize** — TTS service internally: (a) deterministic preprocessing strips URLs/markdown, (b) Ollama rewrites to spoken prose preserving all facts, (c) Qwen3-TTS synthesizes audio, (d) mastering and concatenation
+4. **Narrate + Synthesize** — TTS service internally: (a) deterministic preprocessing strips URLs/markdown, (b) Qwen3.5 LLM (Ollama on cpu/low VRAM, vLLM on mid/high VRAM) rewrites to spoken prose preserving all facts, (c) Qwen3-TTS synthesizes audio with VRAM-probed segment sizing, (d) mastering and concatenation
 5. **Upload to Storage** — MP3 uploaded to configured backend (local/GCS/S3)
 6. **Callback to n8n** — TTS service notifies n8n that audio is ready
 7. **Embed in Ghost** — n8n patches the Ghost post with an `<audio>` player
@@ -310,10 +331,10 @@ Before deploying to production:
 - [ ] Docker Desktop allocated 8GB+ RAM
 - [ ] 20GB+ free disk space available
 - [ ] Stable internet connection for initial build
-- [ ] Firewall allows ports: 5678 (n8n), 8020 (TTS), 6379 (Redis), 11434 (Ollama)
+- [ ] Firewall allows ports: 5678 (n8n), 8020 (TTS), 6379 (Redis), 11434 (Ollama, cpu/low VRAM) or 8000 (vLLM, mid/high VRAM)
 - [ ] Ghost webhook URLs configured in Ghost admin
 - [ ] Storage backend configured (local, GCS, or S3)
-- [ ] Ollama service running and accessible at configured URL
+- [ ] LLM service running — Ollama (`docker compose logs ollama`) or vLLM (`docker compose logs vllm`)
 
 ### Verifying Successful Build
 
@@ -378,7 +399,7 @@ Expected response:
 **Workflows:**
 1. **ghost-audio-pipeline.json**: Main trigger workflow (Ghost webhook → fetch article → submit to TTS)
 2. **ghost-audio-callback.json**: Callback embedder workflow (TTS complete → Ghost update)
-3. **static-content-audio-pipeline.json**: Static content workflow (manual webhook → submit to TTS, no Ghost embed)
+3. **static-content-audio-pipeline.json**: Arbitrary text workflow — accepts `POST /webhook/static-content-audio` with `plain_text`, `job_id`, and `storage_path` fields; submits to TTS service and handles storage without any Ghost interaction. Use for book chapters, series content, or any non-Ghost text source.
 
 ---
 
@@ -422,10 +443,12 @@ The TTS service uses a `JobStore` abstraction layer that automatically falls bac
 3. **Audio Decoding**: DAC decoder synthesizes final audio from semantic tokens with your cloned voice
 
 **Implementation approach:** Native Python API via the `qwen-tts` package:
-1. Reference audio loaded once at startup and cached in memory (pre-computed voice embedding)
-2. Each synthesis call uses the cached reference — no per-job file I/O for voice loading
-3. Audio generated directly to WAV via `model.synthesize()` and `model.save_wav()`
-4. Thread-safe with synthesis lock for GPU memory management
+1. Reference audio loaded once at startup via `create_voice_clone_prompt()` — ICL mode when `VOICE_SAMPLE_REF_TEXT` is set, x-vector-only mode otherwise
+2. The pre-computed voice prompt is cached in memory; each synthesis call uses the cache — no per-job reference re-encoding
+3. Audio generated via `generate_voice_clone(text, voice_clone_prompt=prompt)` → WAV written with `soundfile.write()`
+4. **torch.compile()** applied to sub-modules (`talker`, `code_predictor`, `speaker_encoder`) on GPU at startup — first call incurs a 30-60s JIT compilation; all subsequent calls are 2-4× faster
+5. **Automatic fp16 → fp32 fallback** — if logits produce NaN/inf on an older GPU (common with fp16 on pre-Ampere hardware), the model is transparently recast to fp32 and the segment is retried
+6. Thread-safe with synthesis lock (`_synthesis_lock`) for GPU memory management; `_cancelled_jobs` set enables mid-job cancellation
 
 **Performance Characteristics:**
 - **Initialization**: 30-60 seconds (one-time reference encoding + transcription)
@@ -440,21 +463,35 @@ For a typical article synthesis: ~50-60 seconds total on CPU (4 workers). Refere
 
 ---
 
-### 3. Ollama — The Script Writer
+### 3. Ollama / vLLM — The Script Writer
 
-Ghost Narrator bundles **Ollama** for local LLM inference. Ollama runs Qwen3 models (1.7B, 4B, or 8B) and exposes an **OpenAI-compatible API** (`/v1/chat/completions`). The narration prompt instructs it to:
+Ghost Narrator bundles a **Qwen3.5 LLM** for narration rewriting. The backend is selected automatically by hardware tier:
 
+| Tier | LLM Backend | Model | Context |
+|---|---|---|---|
+| cpu_only | Ollama | qwen3.5:2b (Q4_K_M) | 4K tokens |
+| low_vram | Ollama | qwen3.5:4b (Q4_K_M) | 4K tokens |
+| mid_vram | vLLM (fp8) | Qwen/Qwen3.5-4B | 8K tokens |
+| high_vram | vLLM (fp8) | Qwen/Qwen3.5-9B | 64K tokens |
+
+**Why Qwen3.5 over Qwen3?** Qwen3.5 brings measurably better instruction-following and factual preservation — the two properties that matter most for narration. It is less likely to hallucinate, drop facts, or rephrase quoted material, which directly reduces how often the LLM completeness checker has to retry a chunk.
+
+The narration prompt instructs the LLM to:
 - Convert structured content (bullet lists, tables) to flowing spoken prose
 - Preserve every fact, number, date, name, and quote verbatim — no summarisation
 - Spell out numbers and dates for speech ("$1.2B" → "one point two billion dollars")
 - Begin directly with the first sentence of the source — no introductory framing
 - Insert [PAUSE] and [LONG_PAUSE] markers for natural pacing
 
-**What happens before the LLM?** `normalize_for_narration` deterministically strips URLs, email addresses, Markdown syntax, image captions, and HTML before the text reaches Ollama. This keeps the LLM focused on content conversion rather than mechanical cleanup.
+**What happens before the LLM?** `normalize_for_narration` deterministically strips URLs, email addresses, Markdown syntax, image captions, and HTML before the text reaches the LLM. This keeps the model focused on content conversion rather than mechanical cleanup.
 
 **Why does this matter?** Articles are written to be read visually. If you feed raw article text to TTS, you get things like "Click here to read more" or "See Figure 3" being read aloud. The preprocessing + LLM rewrite pipeline transforms the text into something that sounds natural as speech.
 
-**External LLM override:** To use a different OpenAI-compatible API (e.g., a remote endpoint running a larger model), set `LLM_BASE_URL` in your `.env`. The bundled Ollama will be skipped in favour of your external endpoint.
+**Ollama** (`http://ollama:11434/v1`) runs on cpu and low VRAM tiers, using quantized GGUF models pulled at startup. `OLLAMA_NUM_PARALLEL` is computed by `hardware-probe.sh` from free VRAM budget.
+
+**vLLM** (`http://vllm:8000/v1`) runs on mid and high VRAM tiers, serving the full BF16/fp8 HuggingFace model with OpenAI-compatible API. vLLM manages its own request queue via `--max-num-seqs` — Ollama is not started on these tiers.
+
+**External LLM override:** To use a different OpenAI-compatible API (e.g. a remote endpoint), set `LLM_BASE_URL` and `LLM_MODEL_NAME` in your `.env`. Both the bundled Ollama and vLLM are bypassed.
 
 ---
 
@@ -518,7 +555,7 @@ The TTS service implements a multi-stage pipeline with hardware-adaptive quality
 - Output is clean prose ready for LLM input
 
 **Stage 1: LLM Narration**
-- Preprocessed text sent to Ollama (qwen3.5:2b–9b depending on tier)
+- Preprocessed text sent to Qwen3.5 LLM — Ollama (cpu/low VRAM) or vLLM (mid/high VRAM)
 - LLM converts structured content (lists, tables) to spoken prose, preserving every fact verbatim
 - Per-chunk validation: word-count ratio check + named-entity preservation check with up to 2 retries per chunk
 - **HIGH_VRAM only**: second LLM completeness check verifies no facts were dropped (single-shot articles ≤ 8000 words)
@@ -562,7 +599,7 @@ The TTS service implements a multi-stage pipeline with hardware-adaptive quality
 - Two-pass EBU R128 loudnorm: first pass measures, second pass applies correction with `linear=true` (prevents AGC pumping)
 - Target: −16 LUFS (podcast/streaming standard); −14 LUFS on HIGH_VRAM (configured via `TARGET_LUFS`)
 - True-peak limiter: 0.794 linear (≈ −2 dBFS), attack 5 ms, release 150 ms
-- Export: 44.1 kHz mono MP3 at `MP3_BITRATE` (192 kbps default; 256 kbps on HIGH_VRAM)
+- Export: 48 kHz mono MP3 at `MP3_BITRATE` (192 kbps cpu/low VRAM; 256 kbps mid VRAM; 320 kbps high VRAM)
 
 **Stage 8: Upload & Notify**
 - Upload to configured storage backend (local / GCS / S3) with exponential-backoff retry
@@ -696,17 +733,17 @@ Services must start in a specific order to satisfy dependencies:
 
 ```
 1. Redis          (no dependencies)
-2. Ollama         (no dependencies, but pulls model on first start)
+2. Ollama or vLLM (no dependencies — Ollama on cpu/low VRAM; vLLM on mid/high VRAM)
 3. TTS Service    (depends on Redis)
-4. n8n            (depends on TTS Service, Ollama)
+4. n8n            (depends on TTS Service, Ollama/vLLM)
 ```
 
 `docker compose up -d` handles this automatically via Docker Compose `depends_on` directives. If starting manually:
 
 ```bash
 docker compose up -d redis
-docker compose up -d ollama
-# Wait for Ollama to pull model (~2 min first time)
+docker compose up -d ollama   # cpu/low VRAM — waits ~2 min for model pull
+# or: docker compose up -d vllm  # mid/high VRAM
 docker compose up -d tts-service
 docker compose up -d n8n
 ```
@@ -746,7 +783,7 @@ ghost-narrator/
 ├── scripts/
 │   ├── init/
 │   │   ├── hardware-probe.sh      # Init container: GPU detection → tier_data/tier.env
-│   │   └── ollama-init.sh         # Init: reads tier.env, pulls correct Qwen3 model
+│   │   └── ollama-init.sh         # Init: reads tier.env, pulls correct Qwen3.5 model
 │   ├── setup-storage.sh           # Storage backend setup (GCS/S3)
 │   ├── validate-build.sh          # End-to-end smoke test
 │   ├── backfill-audio.sh          # Backfill audio for existing posts (Linux/macOS)
@@ -903,7 +940,7 @@ In n8n UI → **Settings** → **Credentials**:
 **Storage credential (if using GCS/S3):**
 - Configure based on your `STORAGE_BACKEND` setting
 
-**Note on LLM URL:** In the "Convert to Narration" node, the default URL is `http://ollama:11434/v1/chat/completions` (bundled Ollama). To override, set `LLM_BASE_URL` in your `.env`.
+**Note on LLM URL:** The workflow uses `LLM_BASE_URL` from `.env` — `http://ollama:11434/v1` on cpu/low VRAM tiers and `http://vllm:8000/v1` on mid/high VRAM tiers. This is set automatically by `install.sh`. To override with an external API, set `LLM_BASE_URL` in your `.env`.
 
 ### Step 7: Set Environment Variables in n8n Workflow
 
@@ -1417,7 +1454,8 @@ The script will list every post that needs audio along with the estimated proces
 | Compute | Existing | Your machine or VM |
 | n8n | $0 | Open source, runs in Docker |
 | Qwen3-TTS | $0 | Open source, runs locally |
-| Ollama + Qwen3 | $0 | Bundled, runs locally |
+| Ollama + Qwen3.5 (cpu/low VRAM) | $0 | Bundled, runs locally |
+| vLLM + Qwen3.5 (mid/high VRAM) | $0 | Bundled, runs locally |
 | Storage (local) | $0 | Files on disk |
 | Storage (GCS) | ~$0.02/GB/month | 1000 articles × 5MB avg = 5GB = $0.10/month |
 | Storage (S3) | ~$0.023/GB/month | Similar to GCS |
