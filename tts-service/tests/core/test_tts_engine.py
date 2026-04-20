@@ -17,5 +17,5 @@ def test_chunk_exhausted_error_importable():
     from app.core.exceptions import ChunkExhaustedError
 
     err = ChunkExhaustedError('chunk 3 failed all retries', chunk_idx=3)
-    assert 'chunk 3' in str(err)
+    assert 'chunk_idx=3' in str(err)
     assert err.chunk_idx == 3

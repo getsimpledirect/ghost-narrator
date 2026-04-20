@@ -164,7 +164,10 @@ class JobCancelledError(TTSServiceError):
 
 
 class ChunkExhaustedError(SynthesisError):
-    """Raised when a chunk fails all retry attempts after quality validation."""
+    """Raised when a chunk fails all retry attempts after quality validation.
+
+    chunk_idx: zero-based index of the exhausted chunk in the synthesis batch.
+    """
 
     def __init__(self, message: str, chunk_idx: int) -> None:
         self.chunk_idx = chunk_idx
