@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v2.11.2 (2026-04-20)
+
+### Bug Fixes
+
+- **vllm,install**: Fix python3 binary and restructure installer flow
+  ([`5da727e`](https://github.com/getsimpledirect/ghost-narrator/commit/5da727ecc1136ca98d7f87dcb2862c5f9ee41e89))
+
+vllm-init.sh: - Replace `python` with `python3` — the vllm/vllm-openai image follows Debian
+  convention and does not provide a python symlink; every container start was exiting with code 127
+  before the API server could launch, causing the service to restart in a tight loop
+
+install.sh: - Move GPU detection and LLM backend selection before the "Configure .env now?" prompt
+  so the hardware tier override question shows the auto-detected tier as context - Split
+  GPU_DETECTED (any NVIDIA GPU → apply docker-compose.gpu.yml overlay for CUDA TTS) from VLLM_TIER
+  (>=10240 MiB VRAM → vLLM backend) — low_vram machines now get the CUDA overlay without being
+  routed to vLLM - Move storage backend, voice sample, and voice reference text prompts inside the
+  configure block so re-run users on an existing .env skip all interaction when answering N - Run
+  legacy voice migration (voices/ → voices/default/) and voice directory creation unconditionally
+  before the prompt so they are never skipped on re-runs
+
+
 ## v2.11.1 (2026-04-20)
 
 ### Bug Fixes
