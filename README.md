@@ -7,6 +7,11 @@
 Self-hosted AI narration for your blog. Replaces ElevenLabs (~$330/month) with a local stack that costs you electricity.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/getsimpledirect/ghost-narrator?style=flat)](https://github.com/getsimpledirect/ghost-narrator/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/getsimpledirect/ghost-narrator)](https://github.com/getsimpledirect/ghost-narrator/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/getsimpledirect/ghost-narrator)](https://github.com/getsimpledirect/ghost-narrator/commits/main)
+[![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/docker-compose%20v2-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
 ---
 
@@ -30,8 +35,8 @@ Ghost CMS (publish) → n8n (trigger) → TTS Service (narrate + synthesize) →
 | Per-character billing | Yes | No |
 | Voice cloning | Yes | Yes (5-120s voice sample) |
 | Data privacy | Cloud | 100% local |
-| Latency | Fast | ~2-5 min per article |
-| Quality | Excellent | Good (some trade-offs) |
+| Latency | Fast | ~5-30 min (GPU) / longer on CPU |
+| Quality | Excellent | Good to excellent (depends on tier) |
 | Effort to set up | Sign up | ~1 hour |
 
 ---
@@ -56,8 +61,8 @@ Ghost Narrator auto-detects your hardware and selects the right models:
 |---|---|---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b (Ollama) | 192kbps, 48kHz | Parallel workers, any machine |
 | Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
-| Mid | 12–18 GB | Qwen3-TTS-1.7B | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | Pipelined narrate+synthesize |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz** | **Pipelined narrate+synthesize, multi-voice, quality re-synth, voice caching** |
+| Mid | 12–18 GB | Qwen3-TTS-1.7B | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | Pipelined narrate+synthesize, VRAM-probed segments (up to 650 words) |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz** | **Pipelined narrate+synthesize, VRAM-probed segments (up to 650 words), multi-voice, quality re-synth, voice caching** |
 
 Override with `HARDWARE_TIER=cpu_only` in `.env` if auto-detection fails.
 
@@ -103,20 +108,29 @@ flowchart TD
 ## Quick Start
 
 ```bash
-# Clone
 git clone https://github.com/getsimpledirect/ghost-narrator.git
 cd ghost-narrator
 
-# Install (interactive — configures .env, storage, voice sample, Docker images)
+# Interactive setup — configures .env, storage, voice sample, and starts services
 ./install.sh
-
-# Start
-docker compose up -d
 ```
+
+**GPU users:** `install.sh` auto-detects your GPU and uses `docker-compose.gpu.yml`. To start manually with GPU: `docker compose -f docker-compose.gpu.yml up -d`
+
+After startup, import the n8n workflows:
+1. Open `http://YOUR_VM_IP:5678` → log in
+2. **Workflows → Import from File** → upload `n8n/workflows/ghost-audio-pipeline.json`
+3. Repeat for `n8n/workflows/ghost-audio-callback.json`
 
 Then configure your Ghost site to send webhooks to:
 ```
 http://YOUR_VM_IP:5678/webhook/ghost-published
+```
+
+Verify everything is running:
+```bash
+curl http://localhost:8020/health/ready   # TTS engine ready
+curl http://localhost:5678/healthz        # n8n healthy
 ```
 
 Publish an article. Ghost Narrator handles the rest.
@@ -155,8 +169,8 @@ Publish an article. Ghost Narrator handles the rest.
 | `S3_BUCKET_NAME` | S3 bucket for audio | *(local if unset)* |
 | `MAX_WORKERS` | Parallel workers (CPU mode) | `4` |
 | `MAX_CHUNK_WORDS` | Words per TTS chunk | `200` |
-| `SINGLE_SHOT_MAX_WORDS` | Max words for single-pass synthesis | `4000` |
-| `SINGLE_SHOT_SEGMENT_WORDS` | Words per segment for long content | `3000` |
+| `SINGLE_SHOT_MAX_WORDS` | Max words for single-pass synthesis | `400` |
+| `SINGLE_SHOT_SEGMENT_WORDS` | Words per segment — overrides automatic VRAM-probed sizing | *(auto)* |
 | `SINGLE_SHOT_OVERLAP_MS` | Overlap crossfade between segments (ms) | `500` |
 | `GHOST_SITE2_URL` | Second Ghost site | *(single site)* |
 
