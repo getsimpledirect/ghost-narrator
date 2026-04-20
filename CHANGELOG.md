@@ -1,6 +1,101 @@
 # CHANGELOG
 
 
+## v2.12.1 (2026-04-20)
+
+### Bug Fixes
+
+- **tts-service**: Raise MAX_JOB_DURATION_SECONDS default from 3 h to 8 h
+  ([`c3c48f9`](https://github.com/getsimpledirect/ghost-narrator/commit/c3c48f99be37a9694cd0a13cb3033a18c251acc3))
+
+tts-service/app/config.py: - Default raised 10800 → 28800 (3 h → 8 h) - Updated comment: reflects
+  real observed timing — 6000-word book chapter synthesizes ~10 × 650-word segments at ~19
+  min/segment ≈ 3.2 h, leaving headroom for Phase 1 narration and quality-check re-synthesis
+
+tts-service/README.md: - Config table default updated: 10800 → 28800
+
+### Documentation
+
+- Fix stale config values and LLM references across docs
+  ([`d60bd97`](https://github.com/getsimpledirect/ghost-narrator/commit/d60bd97b739784777763d006a8b2b1c9578f660e))
+
+README.md: - Fix "Using an External LLM Provider" intro: now correctly states Ollama handles cpu/low
+  VRAM tiers and vLLM handles mid/high VRAM tiers - Add vLLM port 8000 to Production Deployment
+  firewall checklist - Rename "Qwen3 LLM" → "Qwen3.5 LLM" in Licensing section
+
+tts-service/README.md: - Fix SINGLE_SHOT_MAX_WORDS default: 4000 → 400 in local dev .env example and
+  config table - Remove SINGLE_SHOT_SEGMENT_WORDS from local dev .env example (auto-probed) - Update
+  SINGLE_SHOT_SEGMENT_WORDS config table description: default now shown as *(auto)* with VRAM probe
+  explanation - Fix OOM troubleshooting: remove wrong "SINGLE_SHOT_MAX_WORDS=4000" advice; replace
+  with actionable segment-size and chunk-size guidance - Fix poor audio troubleshooting: remove
+  misleading "SINGLE_SHOT_MAX_WORDS=4000" tip; replace with hardware tier upgrade recommendation -
+  Credits: add vLLM as bundled LLM backend for mid/high VRAM tiers
+
+tts-service/QUICKSTART.md: - Fix SINGLE_SHOT_MAX_WORDS env example: "4000" → "400" - Remove
+  SINGLE_SHOT_SEGMENT_WORDS env example line (auto-probed at runtime) - Fix CPU-only hardware tier
+  table: "44.1kHz" → "48kHz"
+
+- **architecture**: Fix stale LLM references and document static content pipeline
+  ([`a1b59d0`](https://github.com/getsimpledirect/ghost-narrator/commit/a1b59d01f547abcf0b325ceac0c3e23e75338526))
+
+Qwen3.5 / vLLM coverage: - Fix document header and all prose still saying "Qwen3 model" or "Ollama"
+  only; Qwen3.5 is the LLM family used across all tiers - Expand Ollama section into "Ollama / vLLM
+  — The Script Writer" with a tier lookup table, explanation of when each backend runs, and why
+  Qwen3.5 improved narration quality (better factual preservation, fewer hallucinations) - Stage 1
+  LLM narration: clarify Ollama (cpu/low VRAM) vs vLLM (mid/high VRAM) - Narration Pipeline step 4:
+  remove "Ollama only" wording - Service startup sequence: add vLLM as the GPU-tier alternative to
+  Ollama - Step 6 n8n credentials: correct LLM_BASE_URL note for both backends - Production
+  checklist: add vLLM port 8000, fix Ollama-only service check - Cost table: split "Ollama + Qwen3"
+  into separate Ollama and vLLM rows
+
+Static content pipeline: - What This Pipeline Does: split into Mode 1 (Ghost) and Mode 2
+  (static/arbitrary text) with a curl example and explanation of the static-content-audio n8n
+  workflow - Component Deep Dive workflows list: document static-content-audio-pipeline.json fields
+  and use cases (book chapters, series content, non-Ghost sources)
+
+Qwen3-TTS implementation details: - Implementation approach section: replace inaccurate
+  model.synthesize() / save_wav() references with accurate generate_voice_clone() +
+  soundfile.write() API - Document torch.compile() sub-module compilation (talker, code_predictor,
+  speaker_encoder) and the 30-60s first-call JIT penalty / 2-4x speedup - Document automatic
+  fp16→fp32 fallback on NaN/inf logits
+
+Correctness fixes: - Stage 7 export: 44.1 kHz → 48 kHz (matches all tier configs); 256 kbps
+  HIGH_VRAM → 320 kbps (matches hardware.py HIGH_VRAM mp3_bitrate='320k') - ollama-init.sh directory
+  entry: Qwen3 → Qwen3.5
+
+- **hardware**: Fix stale 10 GB comment in hardware-probe.sh
+  ([`417d09f`](https://github.com/getsimpledirect/ghost-narrator/commit/417d09f24810fe84bc6ef68521e5bb03a93173dd))
+
+- Line 92: "10–18 GB" → "12–18 GB" to match the mid_vram threshold raised in a previous fix (< 12288
+  MiB → low_vram)
+
+- **readme**: Center badge row using HTML alignment
+  ([`bc22027`](https://github.com/getsimpledirect/ghost-narrator/commit/bc2202757ca35cc33c1681802cdd7343f7a74cf5))
+
+- README.md: wrap all six shield badges in <p align="center"> so they render centered beneath the
+  banner image, matching GitHub's HTML rendering behaviour
+
+- **readme,architecture**: Sync docs with dynamic VRAM probe implementation
+  ([`e909065`](https://github.com/getsimpledirect/ghost-narrator/commit/e90906596bed515e2628db044dfdfa0764fda787))
+
+README.md: - Add GitHub Stars, Issues, Last Commit, Python 3.11+, Docker Compose v2 badges - Fix
+  latency row: ~2-5 min → ~5-30 min (GPU) / longer on CPU - Fix quality row: Good (some trade-offs)
+  → Good to excellent (depends on tier) - Add VRAM-probed segments (up to 650 words) to Mid and High
+  tier feature columns - Fix SINGLE_SHOT_MAX_WORDS default: 4000 → 400 - Fix
+  SINGLE_SHOT_SEGMENT_WORDS: stale 3000 default → *(auto)* with probe note - Quick Start: remove
+  redundant docker compose up -d (install.sh already starts) - Quick Start: add GPU compose variant
+  note - Quick Start: add n8n workflow import steps (was entirely missing) - Quick Start: add health
+  check verification commands
+
+ARCHITECTURE.md: - Add vLLM node to architecture overview diagram (was missing for mid/high VRAM) -
+  Add VRAM-probed segments to Mid and High tier feature columns - Replace stale single-shot ≤4000
+  words description with seg_words probe logic - Stage 2: replace
+  SINGLE_SHOT_MAX_WORDS(4000)/SEGMENT_WORDS(3000) with seg_words and document the probe formula -
+  Stage 3: replace hardcoded 4000-word thresholds with seg_words - Troubleshooting: replace wrong
+  SINGLE_SHOT_MAX_WORDS=4000 tuning advice with SINGLE_SHOT_SEGMENT_WORDS=200 and remove stale OOM
+  entry
+
+
 ## v2.12.0 (2026-04-20)
 
 ### Documentation
