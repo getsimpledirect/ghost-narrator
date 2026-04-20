@@ -16,81 +16,319 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Generate Release Notes
-        id: changelog
+      - name: Extract version info
+        id: version
         run: |
-          CURRENT_TAG="v${{ steps.version.outputs.VERSION }}"
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | sed 's/^v//')
-          
-          # Create temp files for each category
-          touch features.txt bugfixes.txt performance.txt docs.txt other.txt
-          
-          # Categorize commits using a script that writes to temp files
-          while IFS= read -r line; do
-            case "$line" in
-              feat*|feat!*) echo "$line" >> features.txt ;;
-              fix*|fix!*) echo "$line" >> bugfixes.txt ;;
-              perf*) echo "$line" >> performance.txt ;;
-              docs*) echo "$line" >> docs.txt ;;
-              *) echo "$line" >> other.txt ;;
-            esac
-          done < <(git log "v$PREV_TAG..HEAD" --format="* %s (%h)" --no-merges || true)
-          
-          # Build release notes
-          {
-            echo "## What's Changed"
-            echo ""
-            
-            # Features
-            if [ -s features.txt ]; then
-              echo "### ✨ Features"
-              cat features.txt
-              echo ""
-            fi
-            
-            # Bug Fixes
-            if [ -s bugfixes.txt ]; then
-              echo "### 🐛 Bug Fixes"
-              cat bugfixes.txt
-              echo ""
-            fi
-            
-            # Performance
-            if [ -s performance.txt ]; then
-              echo "### ⚡ Performance"
-              cat performance.txt
-              echo ""
-            fi
-            
-            # Docs
-            if [ -s docs.txt ]; then
-              echo "### 📝 Documentation"
-              cat docs.txt
-              echo ""
-            fi
-            
-            # Other
-            if [ -s other.txt ]; then
-              echo "### 🔧 Other Changes"
-              cat other.txt
-              echo ""
-            fi
-            
-            echo "---"
-            echo "*Full Changelog*: https://github.com/${{ github.repository }}/compare/v$PREV_TAG...$CURRENT_TAG"
-          } > release_notes.md
-          
-          cat release_notes.md
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${CURRENT_TAG#v}"
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          echo "VERSION=$VERSION"         >> "$GITHUB_OUTPUT"
+          echo "CURRENT_TAG=$CURRENT_TAG" >> "$GITHUB_OUTPUT"
+          echo "PREV_TAG=$PREV_TAG"       >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes and title
+        run: |
+          python3 - <<'PYEOF'
+          import re, os, sys
+          from datetime import date
+
+          version  = os.environ["VERSION"]
+          prev_tag = os.environ.get("PREV_TAG", "")
+          repo     = os.environ["REPO"]
+          today    = date.today().strftime("%Y-%m-%d")
+
+          # ── Extract this version's section from CHANGELOG.md ──────────────────
+          with open("CHANGELOG.md") as f:
+              content = f.read()
+
+          pattern = rf"(## v{re.escape(version)}.*?)(?=\n## v|\Z)"
+          match   = re.search(pattern, content, re.DOTALL)
+          if not match:
+              print(f"WARNING: No CHANGELOG entry for v{version}", file=sys.stderr)
+              changelog = f"## v{version}\n\nNo changelog entry available."
+          else:
+              changelog = match.group(1).strip()
+
+          # ── Maps ──────────────────────────────────────────────────────────────
+          SECTION_MAP = {
+              "Breaking Changes":        ("💥", "Breaking Changes"),
+              "Bug Fixes":               ("🐛", "Bug Fixes"),
+              "Features":                ("✨", "Features"),
+              "Feature":                 ("✨", "Features"),
+              "Performance Improvements":("⚡", "Performance"),
+              "Documentation":           ("📚", "Documentation Updates"),
+              "Refactoring":             ("🔧", "Refactoring"),
+              "Chores":                  ("🔧", "Other Changes"),
+              "Reverts":                 ("↩️", "Reverts"),
+          }
+
+          PRIORITY = [
+              "Breaking Changes", "Bug Fixes", "Features",
+              "Performance Improvements", "Documentation",
+              "Refactoring", "Chores", "Reverts",
+          ]
+
+          SECTION_ACTION = {
+              "Breaking Changes":        "Breaking Changes",
+              "Bug Fixes":               "Fixes",
+              "Features":                "Improvements",
+              "Performance Improvements":"Performance",
+              "Documentation":           "Documentation Updates",
+              "Refactoring":             "Refactoring",
+              "Chores":                  "Updates",
+              "Reverts":                 "Reverts",
+          }
+
+          SCOPE_READABLE = {
+              "tts-service": "TTS Service",
+              "tts":         "TTS Service",
+              "hardware":    "Hardware",
+              "install":     "Install",
+              "n8n":         "n8n",
+              "vllm":        "vLLM",
+              "ollama":      "Ollama",
+              "gcs":         "Storage",
+              "s3":          "Storage",
+              "redis":       "Redis",
+              "storage":     "Storage",
+              "narration":   "Narration",
+              "synthesis":   "Synthesis",
+              "architecture":"Architecture",
+              "config":      "Configuration",
+              "readme":      "README",
+              "docs":        "Documentation",
+              "api":         "API",
+              "auth":        "Auth",
+              "ci":          "CI",
+              "security":    "Security",
+              "voices":      "Voices",
+              "docker":      "Docker",
+              "ghost":       "Ghost",
+          }
+
+          # ── Parse ### sections, stripping PSR hash-link lines ─────────────────
+          HASH_LINK = re.compile(r"^\s*\(\[`[0-9a-f]+`\]\(https?://[^\)]+\)\)\s*$")
+
+          sections: dict[str, str] = {}
+          current_section: str | None = None
+          current_lines:   list[str]  = []
+
+          for line in changelog.split("\n"):
+              if line.startswith("### "):
+                  if current_section is not None:
+                      sections[current_section] = "\n".join(current_lines).strip()
+                  current_section = line[4:].strip()
+                  current_lines   = []
+              elif current_section is not None and not HASH_LINK.match(line):
+                  current_lines.append(line)
+
+          if current_section is not None:
+              sections[current_section] = "\n".join(current_lines).strip()
+
+          sections = {k: v for k, v in sections.items() if v.strip()}
+
+          # ── Collect all scopes touched in this release ─────────────────────────
+          SCOPE_RE = re.compile(r"\*\*([a-z][a-z0-9\-]+)\*\*:")
+          scopes_all: set[str] = set(SCOPE_RE.findall(changelog))
+
+          # ── Auto-detect configuration default changes ─────────────────────────
+          CFG_RE = re.compile(
+              r"`([A-Z][A-Z0-9_]{3,})`[^`\n]*?(\d[\dhmsk]*)\s*[→>]+\s*(\d[\dhmsk]*)"
+          )
+          config_rows: list[tuple[str, str, str]] = []
+          seen_vars:   set[str] = set()
+          for line in changelog.split("\n"):
+              for m in CFG_RE.finditer(line):
+                  var, old, new = m.group(1), m.group(2), m.group(3)
+                  if var not in seen_vars:
+                      config_rows.append((var, old, new))
+                      seen_vars.add(var)
+
+          # ── Determine dominant section ─────────────────────────────────────────
+          dominant = next(
+              (s for s in PRIORITY if s in sections),
+              next(iter(sections), "Documentation"),
+          )
+          dominant_emoji, _ = SECTION_MAP.get(dominant, ("🔧", dominant))
+
+          # ── Build descriptive release title ───────────────────────────────────
+          seen_readable: set[str] = set()
+          scopes_readable: list[str] = []
+          for raw in SCOPE_RE.findall(changelog):
+              readable = SCOPE_READABLE.get(raw, raw.replace("-", " ").title())
+              if readable not in seen_readable:
+                  seen_readable.add(readable)
+                  scopes_readable.append(readable)
+          scopes_readable = scopes_readable[:2]
+
+          action = SECTION_ACTION.get(dominant, "Updates")
+
+          if dominant == "Breaking Changes":
+              desc_title = "Breaking Changes"
+          elif scopes_readable:
+              desc_title = f"{' & '.join(scopes_readable)} {action}"
+          elif len(sections) > 1:
+              labels = []
+              for s in PRIORITY:
+                  if s in sections:
+                      _, lbl = SECTION_MAP.get(s, ("🔧", s))
+                      labels.append(lbl)
+                      if len(labels) == 2:
+                          break
+              desc_title = " & ".join(labels)
+          elif dominant == "Documentation" and config_rows:
+              desc_title = "Documentation & Configuration"
+          else:
+              desc_title = action
+
+          release_name = f"v{version} {dominant_emoji} {desc_title}"
+
+          # ── Determine semver release type ─────────────────────────────────────
+          parts = version.split(".")
+          if len(parts) == 3 and parts[1] == "0" and parts[2] == "0":
+              release_type = "major"
+          elif len(parts) >= 2 and parts[-1] == "0":
+              release_type = "minor"
+          else:
+              release_type = "patch"
+
+          # ── Build overview sentence ────────────────────────────────────────────
+          focus_labels = []
+          for s in PRIORITY:
+              if s in sections:
+                  _, lbl = SECTION_MAP.get(s, ("🔧", s))
+                  focus_labels.append(f"**{lbl.lower()}**")
+          if len(focus_labels) > 1:
+              overview = (
+                  f"This {release_type} release covers "
+                  + ", ".join(focus_labels[:-1])
+                  + f", and {focus_labels[-1]}."
+              )
+          elif focus_labels:
+              overview = f"This {release_type} release covers {focus_labels[0]}."
+          else:
+              overview = f"This {release_type} release contains maintenance updates."
+
+          if config_rows:
+              overview += (
+                  " Key configuration defaults have changed — review the "
+                  "*Configuration Changes* section below if you manage custom `.env` files."
+              )
+
+          # ── Dynamic "What's Unchanged" ─────────────────────────────────────────
+          # Each entry: (trigger_scopes, bullet_text)
+          # A bullet is included only when NONE of its trigger scopes appear in
+          # this release, meaning that subsystem was not touched.
+          UNCHANGED_CANDIDATES = [
+              ({"api"},                    "No breaking REST API changes"),
+              ({"n8n"},                    "No modifications to n8n workflow schemas"),
+              ({"n8n", "ghost"},           "Ghost CMS integration behaviour unchanged"),
+              ({"config", "env"},          "All existing `.env` variable names remain supported"),
+              ({"redis", "store"},         "Redis job store format unchanged"),
+              ({"gcs", "s3", "storage"},   "Storage backend interfaces (local / GCS / S3) unchanged"),
+              ({"docker"},                 "Docker Compose service names and ports unchanged"),
+              ({"hardware"},               "Hardware tier names and VRAM thresholds unchanged"),
+              ({"voices"},                 "Voice profile API and directory structure unchanged"),
+          ]
+
+          unchanged_bullets = [
+              label
+              for triggers, label in UNCHANGED_CANDIDATES
+              if not (triggers & scopes_all)
+          ]
+
+          # ── Assemble release notes ─────────────────────────────────────────────
+          compare_url = (
+              f"https://github.com/{repo}/compare/{prev_tag}...v{version}"
+              if prev_tag
+              else f"https://github.com/{repo}/releases/tag/v{version}"
+          )
+
+          out: list[str] = []
+
+          out += [f"# v{version} ({today})", "", "---", ""]
+
+          # Overview
+          out += ["## 📋 Overview", "", overview, ""]
+          if config_rows:
+              out += [
+                  "> ⚠️ **Action Required**: Review the *Configuration Changes* "
+                  "section below if you manage custom `.env` files or deployment scripts.",
+                  "",
+              ]
+          out += ["---", ""]
+
+          # Content sections (only those with content, in priority order)
+          for psr_name in PRIORITY:
+              if psr_name not in sections:
+                  continue
+              emoji, label = SECTION_MAP.get(psr_name, ("🔧", psr_name))
+              out += [f"## {emoji} {label}", "", sections[psr_name], "", "---", ""]
+
+          # Configuration Changes table (only when changes detected)
+          if config_rows:
+              out += ["## ⚙️ Configuration Changes", ""]
+              out += ["| Parameter | Previous Default | New Default | Notes |"]
+              out += ["|-----------|-----------------|-------------|-------|"]
+              for var, old, new in config_rows:
+                  out += [f"| `{var}` | `{old}` | `{new}` | |"]
+              out += [
+                  "",
+                  "> 💡 **Migration Tip**: If you previously pinned any of these values "
+                  "in `.env`, verify the new defaults suit your workload before removing "
+                  "your override.",
+                  "",
+                  "---",
+                  "",
+              ]
+
+          # What's Unchanged (dynamic, always present)
+          if unchanged_bullets:
+              out += ["## 🔍 What's Unchanged", ""]
+              for bullet in unchanged_bullets:
+                  out += [f"- {bullet}"]
+              out += ["", "---", ""]
+
+          # Links
+          out += ["## 🔗 Links", ""]
+          if prev_tag:
+              out += [f"- [Full Changelog: {prev_tag}...v{version}]({compare_url})"]
+          else:
+              out += [f"- [Release: v{version}]({compare_url})"]
+          out += [""]
+
+          with open("release_notes.md", "w") as f:
+              f.write("\n".join(out))
+
+          with open("release_name.txt", "w") as f:
+              f.write(release_name)
+
+          print(f"Title : {release_name}")
+          print(f"Notes : {len(out)} lines for v{version}")
+          print(f"Unchanged bullets: {len(unchanged_bullets)}")
+          PYEOF
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          PREV_TAG: ${{ steps.version.outputs.PREV_TAG }}
+          REPO: ${{ github.repository }}
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref }}
-          name: "Release ${{ steps.version.outputs.VERSION }}"
+          name: "v${{ steps.version.outputs.VERSION }}"
           body_path: release_notes.md
           draft: false
           generate_release_notes: false
+
+      - name: Set release title
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ steps.version.outputs.CURRENT_TAG }}" \
+            --title "$(cat release_name.txt)"
