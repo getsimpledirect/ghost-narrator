@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v2.11.4 (2026-04-20)
+
+### Bug Fixes
+
+- **hardware**: Correct TTS runtime VRAM estimates across all tiers
+  ([`71006da`](https://github.com/getsimpledirect/ghost-narrator/commit/71006dadcdae22cb3411596cc631c242d66e7b83))
+
+The original TTS_SIZE_MIB values used bare model weight sizes, not actual runtime VRAM consumption.
+  This caused the Ollama parallel-slot formula (low_vram) to over-allocate slots and both
+  documentation values (mid/high_vram) to be inconsistent with the measured runtime of ~5.1 GiB now
+  reflected in vllm-init.sh.
+
+Changes: - `scripts/init/hardware-probe.sh`: update TTS_SIZE_MIB comment from "model weights" to
+  "runtime VRAM (weights + torch.compile + activations)" to clarify the intended semantic. -
+  `scripts/init/hardware-probe.sh` low_vram: TTS_SIZE_MIB 2400 → 3200 (Qwen3-TTS-0.6B fp32: ~2.4 GiB
+  weights + ~0.8 GiB torch.compile and activation overhead). On an 8 GB GPU this corrects
+  OLLAMA_NUM_PARALLEL from 3 (over-allocated, OOM risk) to 1 (safe). -
+  `scripts/init/hardware-probe.sh` mid/high_vram: TTS_SIZE_MIB 3584 → 6144 to match the measured
+  runtime value already applied to vllm-init.sh; these fields are unused in the OLLAMA_NUM_PARALLEL
+  formula for vLLM tiers but were stale documentation. - `scripts/init/hardware-probe.sh` mid/high
+  tier comments: update "TTS (3.4 GB)" → "TTS (~5.1 GB)" to reflect actual measured runtime. -
+  `scripts/init/hardware-probe.sh` worked example: recalculate the 8 GB low_vram example with the
+  corrected TTS value (result 1, not 3). - `scripts/init/vllm-init.sh` header comment: update
+  formula examples to show TTS_RESERVE_MIB=6144 (24 GB L4 ≈ 0.75, 18 GB GPU ≈ 0.67).
+
+
 ## v2.11.3 (2026-04-20)
 
 ### Bug Fixes
