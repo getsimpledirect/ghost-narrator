@@ -24,9 +24,9 @@
 #
 # GPU memory utilization is computed from VRAM_MIB (written by hardware-probe.sh)
 # to leave headroom for the TTS model that shares the same GPU.
-# Formula: (VRAM_MIB - 3584) / VRAM_MIB, clamped [0.60, 0.90].
-# Example: 24 GB L4 → (24576 - 3584) / 24576 ≈ 0.85
-#          10 GB GPU → (10240 - 3584) / 10240 ≈ 0.65
+# Formula: (VRAM_MIB - 6144) / VRAM_MIB, clamped [0.60, 0.90].
+# Example: 24 GB L4 → (24576 - 6144) / 24576 ≈ 0.75
+#          18 GB GPU → (18432 - 6144) / 18432 ≈ 0.67
 set -e
 
 SHARED_DIR="${SHARED_DIR:-/shared}"

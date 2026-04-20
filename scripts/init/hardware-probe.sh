@@ -66,7 +66,7 @@ fi
 
 # ── Model and VRAM budget constants per tier ─────────────────────────────────
 # LLM_SIZE_MIB  — approximate VRAM for the LLM model weights (Q4_K_M quant)
-# TTS_SIZE_MIB  — approximate VRAM for the TTS model weights
+# TTS_SIZE_MIB  — approximate VRAM consumed by TTS at runtime (weights + torch.compile + activations)
 # KV_PER_SLOT   — KV cache per Ollama parallel slot at the tier's context window (fp16)
 # SAFETY_MIB    — reserved for CUDA context, activations, and OS overhead
 case "$TIER" in
@@ -83,30 +83,30 @@ case "$TIER" in
         LLM_MODEL="qwen3.5:4b"
         LLM_NUM_CTX=4096
         VLLM_QUANT=""
-        LLM_SIZE_MIB=3400; TTS_SIZE_MIB=2400; KV_PER_SLOT=350; SAFETY_MIB=1024
+        LLM_SIZE_MIB=3400; TTS_SIZE_MIB=3200; KV_PER_SLOT=350; SAFETY_MIB=1024
         OLLAMA_FA=1
         ;;
     mid_vram)
         TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"
         # HuggingFace ID: vLLM serves the narration LLM on GPU tiers.
-        # fp8 quantization: Qwen3.5-4B ≈ 4.25 GB — fits any 10–18 GB GPU alongside TTS (3.4 GB).
+        # fp8 quantization: Qwen3.5-4B ≈ 4.25 GB — fits any 10–18 GB GPU alongside TTS (~5.1 GB).
         LLM_MODEL="Qwen/Qwen3.5-4B"
         LLM_NUM_CTX=8192
         VLLM_QUANT="fp8"
         OLLAMA_FA=1
         # LLM_SIZE_MIB/KV_PER_SLOT unused for vLLM tiers; set to avoid division-by-zero.
-        LLM_SIZE_MIB=0; TTS_SIZE_MIB=3584; KV_PER_SLOT=1; SAFETY_MIB=0
+        LLM_SIZE_MIB=0; TTS_SIZE_MIB=6144; KV_PER_SLOT=1; SAFETY_MIB=0
         ;;
     high_vram)
         TTS_MODEL="Qwen/Qwen3-TTS-12Hz-1.7B-Base"
         # HuggingFace ID: vLLM serves the narration LLM on GPU tiers.
-        # fp8 quantization: Qwen3.5-9B ≈ 9.7 GB — fits 24 GB L4 alongside TTS (3.4 GB).
+        # fp8 quantization: Qwen3.5-9B ≈ 9.7 GB — fits 24 GB L4 alongside TTS (~5.1 GB).
         LLM_MODEL="Qwen/Qwen3.5-9B"
         LLM_NUM_CTX=65536
         VLLM_QUANT="fp8"
         OLLAMA_FA=1
         # LLM_SIZE_MIB/KV_PER_SLOT unused for vLLM tiers; set to avoid division-by-zero.
-        LLM_SIZE_MIB=0; TTS_SIZE_MIB=3584; KV_PER_SLOT=1; SAFETY_MIB=0
+        LLM_SIZE_MIB=0; TTS_SIZE_MIB=6144; KV_PER_SLOT=1; SAFETY_MIB=0
         ;;
     *)
         echo "Unknown HARDWARE_TIER='$HARDWARE_TIER' — defaulting to cpu_only" >&2
@@ -134,7 +134,7 @@ LLM_NUM_CTX="${SELECTED_LLM_NUM_CTX:-$LLM_NUM_CTX}"
 # Ollama pre-allocates ALL slots at startup — setting it too high wastes VRAM.
 #
 # Worked example (low_vram):
-#    8 GB GPU, low_vram   qwen3.5:4b  4K ctx: ( 8192 - 3400 - 2400 - 1024) /  350 = 3  → 3
+#    8 GB GPU, low_vram   qwen3.5:4b  4K ctx: ( 8192 - 3400 - 3200 - 1024) /  350 = 1  → 1
 if [ "$TIER" = "cpu_only" ] || [ "$VRAM_MIB" -le 0 ]; then
     OLLAMA_PARALLEL=1
 elif [ "$TIER" = "mid_vram" ] || [ "$TIER" = "high_vram" ]; then
