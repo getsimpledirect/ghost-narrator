@@ -32,6 +32,7 @@ from app.domains.narration.strategy import (
     _split_into_chunks,
     _strip_llm_artifacts,
     _OLLAMA_ENDPOINT,
+    _VLLM_ENDPOINT,
 )
 
 
@@ -76,6 +77,15 @@ def test_ollama_endpoint_detected():
     assert _OLLAMA_ENDPOINT == expected
 
 
+def test_vllm_endpoint_detected():
+    """http://vllm:8000/v1 must be detected as vLLM so chat_template_kwargs is sent."""
+    from app.config import LLM_BASE_URL
+
+    url = LLM_BASE_URL.lower()
+    expected = 'vllm' in url or ':8000/' in LLM_BASE_URL
+    assert _VLLM_ENDPOINT == expected
+
+
 @pytest.mark.asyncio
 async def test_chunked_strategy_passes_think_false_to_ollama():
     """When targeting Ollama, extra_body must contain think=False and the tier's num_ctx."""
@@ -103,7 +113,7 @@ async def test_chunked_strategy_passes_think_false_to_ollama():
 
 @pytest.mark.asyncio
 async def test_chunked_strategy_omits_think_false_for_non_ollama():
-    """When NOT targeting Ollama, extra_body must not be present in the LLM call."""
+    """When NOT targeting Ollama or vLLM, extra_body must not be present in the LLM call."""
     client = _make_llm_client('Narrated output with enough words to pass validation check here.')
     strategy = ChunkedStrategy(
         llm_client=client,
@@ -112,14 +122,72 @@ async def test_chunked_strategy_omits_think_false_for_non_ollama():
     )
     import app.domains.narration.strategy as strat
 
-    original = strat._OLLAMA_ENDPOINT
+    original_ollama = strat._OLLAMA_ENDPOINT
+    original_vllm = strat._VLLM_ENDPOINT
     try:
         strat._OLLAMA_ENDPOINT = False
+        strat._VLLM_ENDPOINT = False
         await strategy.narrate('Short source text paragraph for testing purposes only.')
         call_kwargs = client.chat.completions.create.call_args[1]
         assert 'extra_body' not in call_kwargs
     finally:
-        strat._OLLAMA_ENDPOINT = original
+        strat._OLLAMA_ENDPOINT = original_ollama
+        strat._VLLM_ENDPOINT = original_vllm
+
+
+@pytest.mark.asyncio
+async def test_chunked_strategy_passes_enable_thinking_false_to_vllm():
+    """When targeting vLLM, extra_body must contain chat_template_kwargs.enable_thinking=False."""
+    client = _make_llm_client('Narrated output with enough words to pass validation check here.')
+    strategy = ChunkedStrategy(
+        llm_client=client,
+        chunk_words=500,
+        tier=HardwareTier.HIGH_VRAM,
+    )
+    import app.domains.narration.strategy as strat
+
+    original_ollama = strat._OLLAMA_ENDPOINT
+    original_vllm = strat._VLLM_ENDPOINT
+    try:
+        strat._OLLAMA_ENDPOINT = False
+        strat._VLLM_ENDPOINT = True
+        await strategy.narrate('Short source text paragraph for testing purposes only.')
+        call_kwargs = client.chat.completions.create.call_args[1]
+        extra_body = call_kwargs.get('extra_body', {})
+        assert extra_body.get('chat_template_kwargs', {}).get('enable_thinking') is False
+    finally:
+        strat._OLLAMA_ENDPOINT = original_ollama
+        strat._VLLM_ENDPOINT = original_vllm
+
+
+@pytest.mark.asyncio
+async def test_chunked_strategy_omits_no_think_prefix_for_vllm():
+    """When targeting vLLM, user messages must NOT have /no_think prepended.
+    vLLM disables thinking server-side; injecting /no_think would corrupt the prompt."""
+    client = _make_llm_client('Narrated output with enough words to pass validation check here.')
+    strategy = ChunkedStrategy(
+        llm_client=client,
+        chunk_words=500,
+        tier=HardwareTier.HIGH_VRAM,
+    )
+    import app.domains.narration.strategy as strat
+
+    original_ollama = strat._OLLAMA_ENDPOINT
+    original_vllm = strat._VLLM_ENDPOINT
+    try:
+        strat._OLLAMA_ENDPOINT = False
+        strat._VLLM_ENDPOINT = True
+        await strategy.narrate('Short source text paragraph for testing purposes only.')
+        call_kwargs = client.chat.completions.create.call_args[1]
+        messages = call_kwargs.get('messages', [])
+        user_messages = [m for m in messages if m.get('role') == 'user']
+        for msg in user_messages:
+            assert not msg['content'].startswith('/no_think'), (
+                f'vLLM user message must not have /no_think prefix; got: {msg["content"][:60]}'
+            )
+    finally:
+        strat._OLLAMA_ENDPOINT = original_ollama
+        strat._VLLM_ENDPOINT = original_vllm
 
 
 @pytest.mark.asyncio

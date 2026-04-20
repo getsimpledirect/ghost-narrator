@@ -44,6 +44,16 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
+# Set or update a KEY=VALUE line in .env (adds if absent, replaces if present).
+_set_env() {
+    local key="$1" val="$2"
+    if grep -q "^${key}=" .env 2>/dev/null; then
+        sed -i.bak "s|^${key}=.*|${key}=${val}|" .env && rm -f .env.bak
+    else
+        echo "${key}=${val}" >> .env
+    fi
+}
+
 # ─── Preflight ─────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}══════════════════════════════════════════════════════════════${NC}"
@@ -352,10 +362,31 @@ else
     ok "No GPU — skipped docker-compose.override.yml (CPU mode)"
 fi
 
+# ─── LLM Backend Selection ────────────────────────────────────────────────────
+# GPU tiers (mid_vram / high_vram) use vLLM: no 120s server-side timeout,
+# 3-5× faster token throughput via PagedAttention, fp8 quantization.
+# CPU / low-VRAM tiers use bundled Ollama (GGUF Q4_K_M — efficient on CPU/small GPU).
+echo ""
+if [ "$GPU_DETECTED" = true ]; then
+    _set_env "COMPOSE_PROFILES" "gpu"
+    _set_env "LLM_BASE_URL" "http://vllm:8000/v1"
+    ok "GPU mode: vLLM will serve the narration LLM (COMPOSE_PROFILES=gpu)"
+    info "First start downloads the model from HuggingFace — allow 10-20 min"
+else
+    _set_env "COMPOSE_PROFILES" "cpu"
+    _set_env "LLM_BASE_URL" "http://ollama:11434/v1"
+    ok "CPU mode: Ollama will serve the narration LLM (COMPOSE_PROFILES=cpu)"
+fi
+
 # ─── Pull Docker Images ───────────────────────────────────────────────────────
 echo ""
 info "Pulling Docker images (this may take a few minutes on first run)..."
-docker compose pull redis n8n ollama 2>/dev/null || warn "Some images failed to pull — will retry on start"
+docker compose pull redis n8n 2>/dev/null || warn "Some images failed to pull — will retry on start"
+if [ "$GPU_DETECTED" = true ]; then
+    docker compose --profile gpu pull vllm 2>/dev/null || warn "vLLM image pull failed — will retry on start"
+else
+    docker compose --profile cpu pull ollama 2>/dev/null || warn "Ollama image pull failed — will retry on start"
+fi
 
 info "Building TTS service image..."
 docker compose build tts-service 2>/dev/null || warn "Build failed — check Dockerfile"

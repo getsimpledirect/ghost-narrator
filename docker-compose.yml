@@ -6,6 +6,12 @@
 #   - redis: Job state persistence
 #   - n8n: Workflow orchestration
 #   - tts-service: Studio-quality TTS API (Qwen3-TTS)
+#   - ollama: Bundled LLM for cpu_only / low_vram tiers  (profile: cpu)
+#   - vllm:   Bundled LLM for mid_vram / high_vram tiers (profile: gpu)
+#
+# LLM backend selection (set by install.sh, stored in .env):
+#   CPU / low-VRAM  →  COMPOSE_PROFILES=cpu  LLM_BASE_URL=http://ollama:11434/v1
+#   GPU / mid+high  →  COMPOSE_PROFILES=gpu  LLM_BASE_URL=http://vllm:8000/v1
 #
 # Usage:
 #   docker compose up -d
@@ -17,8 +23,8 @@
 #   - N8N_PASSWORD: n8n admin password
 #   - N8N_ENCRYPTION_KEY: n8n encryption key (openssl rand -hex 32)
 #   - GCS_BUCKET_NAME: GCS bucket for audio storage (STORAGE_BACKEND=gcs)
-#   - LLM_BASE_URL: Narration LLM URL (default: bundled Ollama; override for any OpenAI-compatible API)
-#   - LLM_MODEL_NAME: Override LLM model name (default: ghost-narrator-llm, the Modelfile-based custom model)
+#   - LLM_BASE_URL: set by install.sh; override for external OpenAI-compatible API
+#   - COMPOSE_PROFILES: set by install.sh; controls which LLM backend starts
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -65,11 +71,12 @@ services:
         reservations:
           memory: 128M
 
-  # ─── Ollama: Bundled Narration LLM ────────────────────────────────────────
+  # ─── Ollama: Bundled LLM for cpu_only / low_vram tiers ───────────────────────
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
+    profiles: [cpu]
     ports:
       - "11434:11434"
     environment:
@@ -103,6 +110,47 @@ services:
           memory: 12G
         reservations:
           memory: 2G
+
+  # ─── vLLM: Bundled LLM for mid_vram / high_vram GPU tiers ────────────────────
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    restart: unless-stopped
+    profiles: [gpu]
+    ports:
+      - "8000:8000"
+    ipc: host
+    environment:
+      - SHARED_DIR=/shared
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - vllm_models:/root/.cache/huggingface
+      - tier_data:/shared:ro
+      - ./scripts/init/vllm-init.sh:/scripts/vllm-init.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/vllm-init.sh"]
+    networks:
+      - pipeline_net
+    depends_on:
+      hardware-probe:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1200s
+    deploy:
+      resources:
+        limits:
+          memory: 30G
+        reservations:
+          memory: 8G
 
   # ─── n8n: Workflow Orchestration ─────────────────────────────────────────────
   n8n:
@@ -171,8 +219,6 @@ services:
       redis:
         condition: service_healthy
       tts-service:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     deploy:
       resources:
@@ -276,6 +322,8 @@ volumes:
   tier_data:
     driver: local
   ollama_models:
+    driver: local
+  vllm_models:
     driver: local
 
 # ─── Networks ──────────────────────────────────────────────────────────────────

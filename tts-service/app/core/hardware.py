@@ -127,9 +127,8 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-Base',
         tts_device='cuda',
         tts_precision='fp16',
-        # hardware-probe.sh selects qwen3.5:9b for ≥13GB GPUs via SELECTED_LLM_MODEL;
-        # qwen3.5:4b is the safe fallback for 10-12GB GPUs where 9b would OOM.
-        llm_model='qwen3.5:4b',
+        # vLLM fp8: Qwen3.5-4B ≈ 4.25 GB — fits any 10–18 GB GPU alongside TTS (3.4 GB).
+        llm_model='Qwen/Qwen3.5-4B',
         llm_num_ctx=8192,
         narration_strategy='single_shot',
         narration_chunk_words=400,  # 400 words ≈ 600 tokens; gives ~6000+ tokens for output
@@ -152,8 +151,10 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-Base',
         tts_device='cuda',
         tts_precision='bf16',  # bf16: 1.5-2x faster on Tensor Core GPUs, imperceptible quality diff
-        llm_model='qwen3.5:9b',  # hybrid MoE; 15 attn layers → KV ~2 GB at 64K; IFEval 91.5%
-        llm_num_ctx=65536,  # 64K: KV ~1920 MiB/slot (15 layers × fp16) — fits 4 slots on 24 GB L4
+        # vLLM fp8: Qwen3.5-9B ≈ 9.7 GB weights + fp8 KV ≈ 4.8 GB at 65 K tokens = 14.5 GB;
+        # leaves 6 GB headroom on 24 GB L4 alongside TTS (3.4 GB).
+        llm_model='Qwen/Qwen3.5-9B',
+        llm_num_ctx=65536,
         narration_strategy='single_shot',  # qwen3.5:9b narrates whole articles ≤8000 words in one call
         narration_chunk_words=4000,  # fallback chunk size when article > 8000 words
         tts_chunk_words=300,  # Larger chunks = fewer boundaries = smoother flow

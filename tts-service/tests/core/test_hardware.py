@@ -90,7 +90,9 @@ def test_mid_vram_when_12gb():
         config = get_engine_config()
     assert config.tier == HardwareTier.MID_VRAM
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-1.7B-Base'
-    assert config.llm_model == 'qwen3.5:4b'  # default; 9b selected by hardware-probe.sh for ≥13GB
+    assert (
+        config.llm_model == 'Qwen/Qwen3.5-4B'
+    )  # vLLM fp8; hardware-probe.sh writes HuggingFace ID
     assert config.synthesis_workers == 1
 
 
@@ -107,7 +109,7 @@ def test_high_vram_when_24gb():
         config = get_engine_config()
     assert config.tier == HardwareTier.HIGH_VRAM
     assert config.tts_model == 'Qwen/Qwen3-TTS-12Hz-1.7B-Base'
-    assert config.llm_model == 'qwen3.5:9b'
+    assert config.llm_model == 'Qwen/Qwen3.5-9B'  # vLLM fp8; HuggingFace ID
     assert config.llm_num_ctx == 65536
     assert config.synthesis_workers == 1
     assert config.mp3_bitrate == '320k'
@@ -191,17 +193,15 @@ def test_invalid_env_override_falls_back_to_probe():
 
 
 def test_high_vram_llm_model_is_qwen3_5_9b():
-    """HIGH_VRAM must use qwen3.5:9b with 64K context window.
+    """HIGH_VRAM must use Qwen/Qwen3.5-9B (HuggingFace ID) with 64K context window.
 
-    qwen3.5:9b hybrid MoE (~6.6 GB) + TTS 1.7B (~3.4 GB) = ~10 GB base,
-    leaving ~12.5 GB on a 24 GB L4 for KV cache across 4 parallel slots.
-    At 64K context (15 attn layers × fp16): ~1920 MiB KV/slot × 4 = ~7.5 GB —
-    comfortably within the remaining headroom.
+    vLLM fp8: Qwen3.5-9B ≈ 9.7 GB weights + fp8 KV ≈ 4.8 GB at 65K tokens = 14.5 GB;
+    leaves ~6 GB headroom on 24 GB L4 alongside TTS (3.4 GB).
     """
     from app.core.hardware import _TIER_CONFIGS
 
     cfg = _TIER_CONFIGS[HardwareTier.HIGH_VRAM]
-    assert cfg.llm_model == 'qwen3.5:9b', f'Expected qwen3.5:9b, got {cfg.llm_model!r}'
+    assert cfg.llm_model == 'Qwen/Qwen3.5-9B', f'Expected Qwen/Qwen3.5-9B, got {cfg.llm_model!r}'
     assert cfg.llm_num_ctx == 65536, f'Expected 65536, got {cfg.llm_num_ctx}'
 
 

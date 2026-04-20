@@ -78,12 +78,14 @@ logger = logging.getLogger(__name__)
 
 _validator = NarrationValidator()
 
-# True when the configured LLM endpoint is Ollama.
-# Ollama's OpenAI-compatible API accepts a non-standard `think` field that
-# prevents Qwen3 from generating <think> blocks entirely.  Other providers
-# (OpenAI, Anthropic, etc.) validate the request body strictly and return 400
-# on unknown fields, so we must not send it there.
+# True when the configured LLM endpoint is Ollama (cpu_only / low_vram tiers).
+# Ollama accepts non-standard `think` and `options.num_ctx` fields in extra_body.
+# Other providers validate strictly and return 400 on unknown fields.
 _OLLAMA_ENDPOINT: bool = 'ollama' in LLM_BASE_URL.lower() or ':11434' in LLM_BASE_URL
+
+# True when the configured LLM endpoint is vLLM (mid_vram / high_vram tiers).
+# vLLM accepts `chat_template_kwargs` in extra_body to disable thinking per-request.
+_VLLM_ENDPOINT: bool = 'vllm' in LLM_BASE_URL.lower() or ':8000/' in LLM_BASE_URL
 
 
 def _split_into_chunks(text: str, chunk_words: int, overlap_paragraphs: int = 1) -> list[str]:
@@ -163,18 +165,19 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
     if timeout is None:
         timeout = LLM_TIMEOUT
 
-    # On Ollama endpoints: disable thinking blocks via two mechanisms:
+    # Endpoint-specific thinking suppression:
+    #
+    # Ollama (cpu_only / low_vram):
     #   1. think: False in extra_body — API-level flag (Ollama >= 0.6.x)
     #   2. /no_think prepended to each user message — model-level prefix that
-    #      qwen3/qwen3.5 models recognise from their chat template.
+    #      Qwen3/Qwen3.5 chat templates recognise, defence-in-depth for older versions.
+    #   3. options.num_ctx: Ollama defaults to 2048; must be set explicitly or it
+    #      silently truncates long articles and produces summary-style output.
     #
-    # qwen3.5 small models (≤9b) have thinking disabled by default, so both
-    # mechanisms are redundant for the current model set. They remain as
-    # defence-in-depth in case the tier is overridden to a qwen3 model that
-    # has thinking on by default, or a future model that re-enables it.
-    #
-    # Set tier-specific num_ctx: Ollama defaults to 2048, which silently
-    # truncates long articles and produces summarisation-style output.
+    # vLLM (mid_vram / high_vram):
+    #   Thinking is disabled server-wide via --default-chat-template-kwargs at startup.
+    #   chat_template_kwargs per-request reinforces this and is safe for vLLM's
+    #   OpenAI-compatible API. No /no_think prefix — the chat template controls it.
     kwargs: dict = {}
     effective_messages = messages
     if _OLLAMA_ENDPOINT:
@@ -189,6 +192,8 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
             for msg in messages
         ]
         kwargs['extra_body'] = {'think': False, 'options': {'num_ctx': ENGINE_CONFIG.llm_num_ctx}}
+    elif _VLLM_ENDPOINT:
+        kwargs['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
 
     # max_tokens: set high enough to never truncate narration output. Ollama caps
     # the actual output at min(max_tokens, num_ctx - prompt_tokens), so this only
