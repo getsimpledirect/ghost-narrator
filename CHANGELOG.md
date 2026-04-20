@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v2.12.0 (2026-04-20)
+
+### Documentation
+
+- **tts-service**: Fix stale context window comment in strategy.py
+  ([`07e78dd`](https://github.com/getsimpledirect/ghost-narrator/commit/07e78dd10abb0551e49a4d88d6107fe55f67d7fd))
+
+- Update HIGH_VRAM completeness check comment: "64K context window" → "~29K KV cache" to reflect
+  actual --language-model-only KV budget
+
+### Features
+
+- **tts-service**: Dynamic segment sizing from free VRAM post-init
+  ([`058671a`](https://github.com/getsimpledirect/ghost-narrator/commit/058671a2b139fdceef3ca51db6e541cb29495a0a))
+
+- Add probe_optimal_segment_words() to hardware.py — measures free VRAM after both models +
+  torch.compile() are loaded, computes optimal segment size, clamps to empirical noise ceiling (650
+  words for 1.7B, 300 for 0.6B) - Add get_optimal_segment_words() — priority:
+  SINGLE_SHOT_SEGMENT_WORDS env var > probed value > hardcoded fallback of 400 - Call probe from
+  TTSEngine.initialize() after compile scratch is allocated so free VRAM reflects true runtime
+  budget - Replace SINGLE_SHOT_SEGMENT_WORDS/SINGLE_SHOT_MAX_WORDS constants in tts_job.py with
+  get_optimal_segment_words() for both the single-shot threshold and segment split size — articles ≤
+  seg_words go zero-boundary single-shot; larger articles split at seg_words per segment - Raise
+  tts_max_new_tokens HIGH_VRAM: 4000 → 7000, MID_VRAM: 4500 → 7000 to cover 650-word segments (3601
+  codec tokens) with 1.94× headroom - Update tests: rename max_new_tokens assertions, add 12 new
+  probe tests covering VRAM-limited, noise-limited, CPU, exception, and env override paths
+
+
 ## v2.11.7 (2026-04-20)
 
 ### Performance Improvements
