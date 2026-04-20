@@ -221,41 +221,180 @@ def test_high_vram_llm_model_is_qwen3_5_9b():
     assert cfg.llm_num_ctx == 65536, f'Expected 65536, got {cfg.llm_num_ctx}'
 
 
-def test_high_vram_tts_max_new_tokens_is_4000():
-    """HIGH_VRAM max_new_tokens must be 4000 for larger 300-word chunks.
+def test_high_vram_tts_max_new_tokens_is_7000():
+    """HIGH_VRAM max_new_tokens must be 7000 for dynamic 650-word segments.
 
-    300 words at 130 WPT ≈ 1,684 codec tokens at 12 Hz.
-    4000 = 2.4× headroom — sufficient for natural variation,
-    prevents runaway loops while supporting larger chunk sizes.
+    Empirical noise ceiling for Qwen3-TTS-1.7B is 650 words.
+    650 words × 5.54 codec tokens/word = 3,601 tokens; 7000 = 1.94× headroom.
     """
     from app.core.hardware import _TIER_CONFIGS
 
     cfg = _TIER_CONFIGS[HardwareTier.HIGH_VRAM]
-    assert cfg.tts_max_new_tokens == 4000, f'Expected 4000, got {cfg.tts_max_new_tokens}'
+    assert cfg.tts_max_new_tokens == 7000, f'Expected 7000, got {cfg.tts_max_new_tokens}'
 
 
-def test_mid_vram_tts_max_new_tokens_is_4500():
-    """MID_VRAM max_new_tokens must be 4500 (2× headroom for 400-word segments).
+def test_mid_vram_tts_max_new_tokens_is_7000():
+    """MID_VRAM max_new_tokens must be 7000 (1.94× headroom for 650-word segments).
 
-    400 words ≈ 2200 codec tokens at 12 Hz; 3000 left only 35% headroom at 130 wpm,
-    causing mid-word clipping. 4500 provides 2× headroom at both speaking rates.
+    MID_VRAM uses the same 1.7B model with the same 650-word noise ceiling.
+    4500 only gave 1.25× headroom at 650 words — too marginal for natural variation.
     """
     from app.core.hardware import _TIER_CONFIGS
 
     cfg = _TIER_CONFIGS[HardwareTier.MID_VRAM]
-    assert cfg.tts_max_new_tokens == 4500, f'Expected 4500, got {cfg.tts_max_new_tokens}'
+    assert cfg.tts_max_new_tokens == 7000, f'Expected 7000, got {cfg.tts_max_new_tokens}'
 
 
 def test_low_vram_tts_max_new_tokens_is_4500():
-    """LOW_VRAM max_new_tokens must be 4500 (2× headroom for 400-word segments).
+    """LOW_VRAM max_new_tokens stays 4500 — 0.6B model has 300-word noise ceiling.
 
-    400 words ≈ 2200 codec tokens at 12 Hz; 3000 left only 35% headroom at 130 wpm,
-    causing mid-word clipping. 4500 provides 2× headroom at both speaking rates.
+    300 words × 5.54 = 1,662 codec tokens; 4500 = 2.7× headroom. No change needed.
     """
     from app.core.hardware import _TIER_CONFIGS
 
     cfg = _TIER_CONFIGS[HardwareTier.LOW_VRAM]
     assert cfg.tts_max_new_tokens == 4500, f'Expected 4500, got {cfg.tts_max_new_tokens}'
+
+
+# ── probe_optimal_segment_words / get_optimal_segment_words tests ──────────────
+
+
+def test_get_noise_ceiling_1_7b():
+    from app.core.hardware import _get_noise_ceiling
+
+    assert _get_noise_ceiling('Qwen/Qwen3-TTS-12Hz-1.7B-Base') == 650
+
+
+def test_get_noise_ceiling_0_6b():
+    from app.core.hardware import _get_noise_ceiling
+
+    assert _get_noise_ceiling('Qwen/Qwen3-TTS-12Hz-0.6B-Base') == 300
+
+
+def test_get_noise_ceiling_unknown_model():
+    from app.core.hardware import _get_noise_ceiling
+
+    assert _get_noise_ceiling('some-unknown-tts-model') == 400
+
+
+def test_probe_returns_noise_ceiling_when_no_cuda():
+    """Without CUDA, probe returns the model's noise ceiling (not VRAM-derived)."""
+    import app.core.hardware as _hw
+    from unittest.mock import patch
+
+    original = _hw._optimal_segment_words
+    try:
+        _hw._optimal_segment_words = None
+        with patch('app.core.hardware.torch') as mock_torch:
+            mock_torch.cuda.is_available.return_value = False
+            result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-1.7B-Base')
+        assert result == 650
+        assert _hw._optimal_segment_words == 650
+    finally:
+        _hw._optimal_segment_words = original
+
+
+def test_probe_is_vram_limited_on_tight_gpu():
+    """When free VRAM < headroom + any synthesis budget, result clamps to floor (200)."""
+    import app.core.hardware as _hw
+    from unittest.mock import patch
+
+    original = _hw._optimal_segment_words
+    try:
+        _hw._optimal_segment_words = None
+        with patch('app.core.hardware.torch') as mock_torch:
+            mock_torch.cuda.is_available.return_value = True
+            # 300 MB free — below the 512 MB safety headroom → available=0 → floor
+            mock_torch.cuda.mem_get_info.return_value = (300 * 1024 * 1024, 8 * 1024**3)
+            result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-1.7B-Base')
+        assert result == 200
+    finally:
+        _hw._optimal_segment_words = original
+
+
+def test_probe_is_noise_limited_on_large_gpu():
+    """On a large GPU with ample VRAM, the noise ceiling dominates."""
+    import app.core.hardware as _hw
+    from unittest.mock import patch
+
+    original = _hw._optimal_segment_words
+    try:
+        _hw._optimal_segment_words = None
+        with patch('app.core.hardware.torch') as mock_torch:
+            mock_torch.cuda.is_available.return_value = True
+            # 6 GB free — far exceeds any reasonable codec token budget for 650 words
+            mock_torch.cuda.mem_get_info.return_value = (6 * 1024**3, 24 * 1024**3)
+            result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-1.7B-Base')
+        assert result == 650  # noise ceiling for 1.7B
+    finally:
+        _hw._optimal_segment_words = original
+
+
+def test_probe_falls_back_to_noise_ceiling_on_exception():
+    """Exceptions during the probe are swallowed — noise ceiling used as fallback."""
+    import app.core.hardware as _hw
+    from unittest.mock import patch
+
+    original = _hw._optimal_segment_words
+    try:
+        _hw._optimal_segment_words = None
+        with patch('app.core.hardware.torch') as mock_torch:
+            mock_torch.cuda.is_available.side_effect = RuntimeError('driver error')
+            result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-0.6B-Base')
+        assert result == 300  # 0.6B noise ceiling
+    finally:
+        _hw._optimal_segment_words = original
+
+
+def test_get_optimal_segment_words_returns_probed_value():
+    import app.core.hardware as _hw
+
+    original = _hw._optimal_segment_words
+    try:
+        _hw._optimal_segment_words = 580
+        with patch.dict(os.environ, {}, clear=False):
+            env = {k: v for k, v in os.environ.items() if k != 'SINGLE_SHOT_SEGMENT_WORDS'}
+            with patch.dict(os.environ, env, clear=True):
+                assert _hw.get_optimal_segment_words() == 580
+    finally:
+        _hw._optimal_segment_words = original
+
+
+def test_get_optimal_segment_words_env_overrides_probe():
+    """SINGLE_SHOT_SEGMENT_WORDS env var wins over the probed value."""
+    import app.core.hardware as _hw
+
+    original = _hw._optimal_segment_words
+    try:
+        _hw._optimal_segment_words = 580
+        with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '300'}):
+            assert _hw.get_optimal_segment_words() == 300
+    finally:
+        _hw._optimal_segment_words = original
+
+
+def test_get_optimal_segment_words_env_clamped_to_safe_range():
+    """Env var values outside [100, 700] are clamped."""
+    import app.core.hardware as _hw
+
+    with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '999'}):
+        assert _hw.get_optimal_segment_words() == 700
+    with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '50'}):
+        assert _hw.get_optimal_segment_words() == 100
+
+
+def test_get_optimal_segment_words_fallback_before_probe():
+    """Before the probe runs and without an env var, falls back to 400."""
+    import app.core.hardware as _hw
+
+    original = _hw._optimal_segment_words
+    try:
+        _hw._optimal_segment_words = None
+        env = {k: v for k, v in os.environ.items() if k != 'SINGLE_SHOT_SEGMENT_WORDS'}
+        with patch.dict(os.environ, env, clear=True):
+            assert _hw.get_optimal_segment_words() == 400
+    finally:
+        _hw._optimal_segment_words = original
 
 
 def test_all_tiers_use_temperature_03():

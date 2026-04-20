@@ -104,14 +104,17 @@ except ValueError:
     MAX_CHUNK_WORDS: Final[int] = 400  # Default to 400
 
 # Single-shot synthesis settings
-# When content is at or below this word count, synthesize in a single pass.
-# Must stay ≤ 400 — Qwen3-TTS-1.7B's codec token budget (~75 tokens/sec audio)
-# overflows the model's context window beyond ~700 words, producing noise.
+# NOTE: tts_job.py uses get_optimal_segment_words() (hardware.py) as the live
+# threshold — probed from free VRAM after model load and clamped to the model's
+# empirical noise ceiling (650 words for 1.7B, 300 words for 0.6B).
+# SINGLE_SHOT_MAX_WORDS is kept as a manual override / pre-probe fallback only.
+# Set SINGLE_SHOT_SEGMENT_WORDS in .env to override the dynamic probe entirely.
 SINGLE_SHOT_MAX_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_MAX_WORDS', '400'))
 
-# For content above SINGLE_SHOT_MAX_WORDS, split into segments of this size.
-# Each segment is synthesized in single-shot mode, then crossfaded together.
-# Keep ≤ 400 for the same context-window reason as SINGLE_SHOT_MAX_WORDS.
+# Manual override for the dynamic segment size probe (hardware.get_optimal_segment_words).
+# Leave unset to let the VRAM probe choose (recommended). Set explicitly only to pin a
+# specific value regardless of available VRAM, e.g. for debugging or constrained hardware.
+# Hard ceiling: 700 words for 1.7B model, 400 words for 0.6B model.
 SINGLE_SHOT_SEGMENT_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_SEGMENT_WORDS', '400'))
 
 # Overlap between segments for crossfade (in milliseconds)

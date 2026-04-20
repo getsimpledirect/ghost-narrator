@@ -158,6 +158,13 @@ class TTSEngine:
                 except Exception as _cudnn_exc:
                     logger.warning('cuDNN determinism setup failed (non-fatal): %s', _cudnn_exc)
 
+                # Probe free VRAM now — after model load AND torch.compile() — so
+                # compile scratch buffers are already allocated and the measurement
+                # reflects the true synthesis runtime budget.
+                from app.core.hardware import probe_optimal_segment_words
+
+                probe_optimal_segment_words(SELECTED_TTS_MODEL)
+
                 self._ready = True
                 logger.info('Qwen3-TTS engine ready')
             except Exception as e:

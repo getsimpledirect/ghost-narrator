@@ -55,12 +55,10 @@ from app.config import (
     MAX_JOB_DURATION_SECONDS,
     MP3_BITRATE,
     OUTPUT_DIR,
-    SINGLE_SHOT_MAX_WORDS,
-    SINGLE_SHOT_SEGMENT_WORDS,
     SINGLE_SHOT_OVERLAP_MS,
 )
 from app.domains.narration.factory import get_narration_strategy
-from app.core.hardware import ENGINE_CONFIG, HardwareTier
+from app.core.hardware import ENGINE_CONFIG, HardwareTier, get_optimal_segment_words
 from app.domains.synthesis.quality import validate_audio_quality, apply_final_mastering
 from app.domains.synthesis.quality_check import (
     _quality_check_and_resynthesize,
@@ -322,13 +320,18 @@ async def run_tts_job(
                     # count. Choosing the path after narration (not before) is critical —
                     # we cannot know the output word count until the LLM finishes.
                     #
-                    #  ≤ SINGLE_SHOT_MAX_WORDS  → full single-shot (no boundary artifacts)
-                    #  > SINGLE_SHOT_MAX_WORDS  → segment single-shot (sentence-boundary
-                    #                             splits + crossfade merge)
+                    # seg_words is the VRAM-probed optimal segment size (computed at
+                    # startup after model + torch.compile() load). On HIGH_VRAM this is
+                    # typically 650 words (noise ceiling), on CPU/LOW_VRAM 300 words.
+                    #
+                    #  ≤ seg_words → full single-shot (zero boundary artifacts)
+                    #  > seg_words → segment single-shot (sentence-boundary splits +
+                    #                crossfade merge, seg_words words per segment)
+                    seg_words = get_optimal_segment_words()
                     await _check_status()
 
                     with _span('tts.synthesis'):
-                        if total_words <= SINGLE_SHOT_MAX_WORDS:
+                        if total_words <= seg_words:
                             # Short content: synthesize with real silence at [LONG_PAUSE]
                             # boundaries. synthesize_with_pauses splits the narrated text
                             # at [LONG_PAUSE] markers, synthesizes each part independently,
@@ -354,11 +357,11 @@ async def run_tts_job(
                             from app.utils.text import split_into_large_segments, clean_text_for_tts
 
                             sentence_segments = split_into_large_segments(
-                                full_narrated_text, SINGLE_SHOT_SEGMENT_WORDS
+                                full_narrated_text, seg_words
                             )
                             logger.info(
                                 f'[{job_id}] Phase 2: segment synthesis '
-                                f'({len(sentence_segments)} × ~{SINGLE_SHOT_SEGMENT_WORDS}-word segments)'
+                                f'({len(sentence_segments)} × ~{seg_words}-word segments)'
                             )
 
                             # Tail conditioning: HIGH_VRAM conditions each segment on the
@@ -485,7 +488,7 @@ async def run_tts_job(
 
                     # Quality check for the single-shot path.
                     # Segment path already ran quality check before merging above.
-                    if total_words <= SINGLE_SHOT_MAX_WORDS:
+                    if total_words <= seg_words:
                         await _check_status()
                         logger.info(
                             f'[{job_id}] Quality check on {len(chunk_wav_paths)} audio file(s)...'

@@ -28,6 +28,7 @@ import logging
 import os
 from dataclasses import dataclass, replace
 from enum import Enum
+from typing import Optional
 
 try:
     import torch
@@ -97,7 +98,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=4500,  # 400 words ≈ 2200 tokens at 12 Hz; 4500 = 2× headroom
+        tts_max_new_tokens=4500,  # 0.6B noise ceiling 300 words × 5.54 = 1662 tokens; 4500 = 2.7× headroom
     ),
     HardwareTier.LOW_VRAM: EngineConfig(
         tier=HardwareTier.LOW_VRAM,
@@ -120,7 +121,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=4500,  # 400 words ≈ 2200 tokens at 12 Hz; 4500 = 2× headroom
+        tts_max_new_tokens=4500,  # 0.6B noise ceiling 300 words × 5.54 = 1662 tokens; 4500 = 2.7× headroom
     ),
     HardwareTier.MID_VRAM: EngineConfig(
         tier=HardwareTier.MID_VRAM,
@@ -144,7 +145,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=4500,  # 400 words ≈ 2200 tokens at 12 Hz; 4500 = 2× headroom
+        tts_max_new_tokens=7000,  # 650 words × 5.54 tok/word = 3601 tokens; 7000 = 1.94× headroom
     ),
     HardwareTier.HIGH_VRAM: EngineConfig(
         tier=HardwareTier.HIGH_VRAM,
@@ -169,9 +170,93 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=4000,
+        tts_max_new_tokens=7000,  # 650 words × 5.54 tok/word = 3601 tokens; 7000 = 1.94× headroom
     ),
 }
+
+
+# ── Dynamic segment sizing ──────────────────────────────────────────────────────
+# Probed once in TTSEngine.initialize() after torch.compile() so free VRAM
+# reflects the true runtime budget: both models + compile scratch loaded.
+#
+# Formula:  codec_budget = (free_vram - headroom) / BYTES_PER_CODEC_TOKEN
+#           seg_words    = min(noise_ceiling, codec_budget / CODEC_TOKENS_PER_WORD)
+#
+# At 12 Hz and 130 WPM: 1 word ≈ 0.46 s ≈ 5.54 codec tokens.
+# Empirical noise ceiling: model context overflow above this word count → artifacts.
+_BYTES_PER_CODEC_TOKEN: int = 150_000  # 150 KB/token — Qwen3-TTS KV cache (conservative)
+_CODEC_TOKENS_PER_WORD: float = 5.54  # 12 Hz × (60 s / 130 WPM)
+_VRAM_SAFETY_HEADROOM: int = 512 * 1024 * 1024  # 512 MiB reserved for CUDA context
+
+# Empirical quality ceilings per model family — above these word counts the
+# codec context window fills up and the model produces noise or repetition.
+_NOISE_CEILING: dict[str, int] = {
+    '1.7B': 650,  # Qwen3-TTS-12Hz-1.7B-Base (hard limit ~700; conservative)
+    '0.6B': 300,  # Qwen3-TTS-12Hz-0.6B-Base (hard limit ~400; conservative)
+}
+_DEFAULT_NOISE_CEILING: int = 400  # safe fallback for unrecognised models
+
+_optimal_segment_words: Optional[int] = None
+
+
+def _get_noise_ceiling(model_id: str) -> int:
+    for key, ceiling in _NOISE_CEILING.items():
+        if key in model_id:
+            return ceiling
+    return _DEFAULT_NOISE_CEILING
+
+
+def probe_optimal_segment_words(model_id: str) -> int:
+    """Compute and cache the optimal single-shot segment size from free VRAM.
+
+    Called once from TTSEngine.initialize() after model load + torch.compile().
+    Clamps between 200 (min useful quality) and the empirical noise ceiling for
+    the loaded model. On CPU or when CUDA is unavailable, returns the noise ceiling.
+    """
+    global _optimal_segment_words
+    try:
+        noise_ceiling = _get_noise_ceiling(model_id)
+        if torch is None or not torch.cuda.is_available():
+            _optimal_segment_words = noise_ceiling
+            logger.info('Optimal segment words (CPU): %d (noise ceiling)', noise_ceiling)
+            return _optimal_segment_words
+
+        free_vram, _ = torch.cuda.mem_get_info(0)
+        available = max(0, free_vram - _VRAM_SAFETY_HEADROOM)
+        codec_budget = available // _BYTES_PER_CODEC_TOKEN
+        vram_words = int(codec_budget / _CODEC_TOKENS_PER_WORD)
+        optimal = max(200, min(noise_ceiling, vram_words))
+        _optimal_segment_words = optimal
+        logger.info(
+            'Optimal segment words probed: %d '
+            '(free=%.1f GiB, codec_budget=%d tok, noise_ceiling=%d words)',
+            optimal,
+            free_vram / (1024**3),
+            codec_budget,
+            noise_ceiling,
+        )
+    except Exception as exc:
+        logger.warning(
+            'Segment probe failed (non-fatal): %s — using noise ceiling for %s', exc, model_id
+        )
+        _optimal_segment_words = _get_noise_ceiling(model_id)
+    return _optimal_segment_words
+
+
+def get_optimal_segment_words() -> int:
+    """Return the optimal single-shot segment word count.
+
+    Priority:
+      1. SINGLE_SHOT_SEGMENT_WORDS env var (explicit user override)
+      2. Probed value from probe_optimal_segment_words() (set at startup)
+      3. Hardcoded fallback of 400 (safe for all GPU tiers before probe runs)
+    """
+    env_val = os.environ.get('SINGLE_SHOT_SEGMENT_WORDS', '').strip()
+    if env_val.isdigit():
+        return max(100, min(700, int(env_val)))
+    if _optimal_segment_words is not None:
+        return _optimal_segment_words
+    return 400
 
 
 def _probe_tier() -> HardwareTier:
