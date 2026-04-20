@@ -134,7 +134,7 @@ def master_audio(
             ],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=600,
         )
 
         measured = _parse_loudnorm_stats(measure_result.stderr)
@@ -178,7 +178,7 @@ def master_audio(
                 output_path,
             ],
             capture_output=True,
-            timeout=300,
+            timeout=600,
         )
 
         if result.returncode != 0:

@@ -93,7 +93,7 @@ if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
             | head -1 | tr -d ' ')
     if [ -n "$_VRAM" ] && [ "$_VRAM" -eq "$_VRAM" ] 2>/dev/null && [ "$_VRAM" -gt 0 ]; then
         GPU_DETECTED=true
-        if [ "$_VRAM" -ge 10240 ]; then
+        if [ "$_VRAM" -ge 12288 ]; then
             VLLM_TIER=true
             ok "NVIDIA GPU detected (${_VRAM} MiB VRAM) — mid/high_vram tier, vLLM backend"
         else
@@ -121,8 +121,8 @@ else
 fi
 
 # ─── LLM Backend Selection ────────────────────────────────────────────────────
-# mid_vram / high_vram (VRAM ≥ 10 GB): vLLM — no per-request timeout, 3-5× faster.
-# cpu_only / low_vram  (no GPU or < 10 GB VRAM): Ollama — GGUF Q4_K_M quantization.
+# mid_vram / high_vram (VRAM ≥ 12 GB): vLLM — no per-request timeout, 3-5× faster.
+# cpu_only / low_vram  (no GPU or < 12 GB VRAM): Ollama — GGUF Q4_K_M quantization.
 if [ "$VLLM_TIER" = true ]; then
     _set_env "COMPOSE_PROFILES" "gpu"
     _set_env "LLM_BASE_URL" "http://vllm:8000/v1"

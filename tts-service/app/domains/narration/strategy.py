@@ -195,10 +195,14 @@ async def _call_llm(client, messages: list[dict], model: str, timeout: float = N
     elif _VLLM_ENDPOINT:
         kwargs['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
 
-    # max_tokens: set high enough to never truncate narration output. Ollama caps
-    # the actual output at min(max_tokens, num_ctx - prompt_tokens), so this only
-    # matters if thinking is disabled and input is small.
-    max_tokens = ENGINE_CONFIG.llm_num_ctx
+    # max_tokens semantics differ by backend:
+    #   Ollama: clamps output to min(max_tokens, num_ctx - prompt_tokens), so
+    #           setting it to llm_num_ctx is safe — it never starves the prompt.
+    #   vLLM:   treats max_tokens as the output-only budget; setting it to llm_num_ctx
+    #           (65536) leaves 0 tokens for input, causing HTTP 400 on every call.
+    # For vLLM use 8192 — generous for the largest narration chunk (4000 words ≈
+    # 6000 output tokens) while leaving the bulk of the KV cache for prompt tokens.
+    max_tokens = 8192 if _VLLM_ENDPOINT else ENGINE_CONFIG.llm_num_ctx
 
     # stream=True keeps the HTTP connection alive as tokens arrive, bypassing
     # Ollama's 120-second server-side idle timeout that fires on long articles.

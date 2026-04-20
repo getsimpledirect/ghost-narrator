@@ -10,8 +10,8 @@
 #   - vllm:   Bundled LLM for mid_vram / high_vram tiers (profile: gpu)
 #
 # LLM backend selection (set by install.sh, stored in .env):
-#   cpu_only / low_vram (no GPU or < 10 GB VRAM)  →  COMPOSE_PROFILES=cpu  LLM_BASE_URL=http://ollama:11434/v1
-#   mid_vram / high_vram (≥ 10 GB VRAM)           →  COMPOSE_PROFILES=gpu  LLM_BASE_URL=http://vllm:8000/v1
+#   cpu_only / low_vram (no GPU or < 12 GB VRAM)  →  COMPOSE_PROFILES=cpu  LLM_BASE_URL=http://ollama:11434/v1
+#   mid_vram / high_vram (≥ 12 GB VRAM)           →  COMPOSE_PROFILES=gpu  LLM_BASE_URL=http://vllm:8000/v1
 #
 # Usage:
 #   docker compose up -d
