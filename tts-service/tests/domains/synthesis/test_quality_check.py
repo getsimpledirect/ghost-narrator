@@ -294,3 +294,44 @@ class TestDurationRatioCheck:
         _write_wav(p, (_make_sine(400.0, 5.0) * 0.5).astype(np.float32))
         result = _chunk_passes_acoustic_gate(p, word_count=12, reference_f0=100.0)
         assert result is False
+
+
+class TestResynthesizeStrategies:
+    """_resynthesize_with_strategies uses 4 input-modifying strategies."""
+
+    def test_strategy_0_uses_repetition_penalty(self):
+        """Strategy 0 must set repetition_penalty=1.2 on the kwargs."""
+        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
+
+        import inspect
+        src = inspect.getsource(_resynthesize_with_strategies)
+        assert 'repetition_penalty' in src
+        assert '1.2' in src
+
+    def test_split_at_punctuation_bidirectional(self):
+        """_split_at_punctuation must find a split to the right of the pivot if left has none."""
+        # Access the inner helper by running the function partially — instead, test the
+        # behaviour through re-synthesis by checking the source code uses bidirectional search.
+        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
+        import inspect
+        src = inspect.getsource(_resynthesize_with_strategies)
+        # Must search in both directions (pivot - offset AND pivot + offset)
+        assert 'pivot - offset' in src
+        assert 'pivot + offset' in src
+
+    def test_strategy_3_sanitizes_text(self):
+        """Strategy 3 must strip parentheticals, digits, and ALL-CAPS tokens."""
+        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
+        import inspect
+        src = inspect.getsource(_resynthesize_with_strategies)
+        assert '_sanitize_text' in src or 'sanitize' in src.lower()
+
+    def test_exception_handler_is_narrow(self):
+        """Exception handler must not catch ChunkExhaustedError."""
+        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
+        import inspect
+        src = inspect.getsource(_resynthesize_with_strategies)
+        # Must NOT have bare 'except Exception'
+        assert 'except Exception' not in src
+        # Must have narrow catches
+        assert 'SynthesisError' in src

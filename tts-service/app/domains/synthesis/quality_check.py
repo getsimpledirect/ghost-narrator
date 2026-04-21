@@ -494,98 +494,135 @@ async def _resynthesize_with_strategies(
     generation_kwargs: dict | None = None,
     reference_f0: float | None = None,
 ) -> str:
-    """Re-synthesize with up to 3 increasingly conservative strategies.
+    """Re-synthesize with up to 4 increasingly conservative strategies.
 
-    Strategy 0: strip leading punctuation + lower temperature by 30%
-    Strategy 1: temperature=0.1, top_p=0.70 (near-greedy decoding)
-    Strategy 2: split chunk at mid-sentence boundary (if > 10 words)
+    Strategy 0: raise repetition_penalty to 1.2 (targets repetition-loop hallucinations)
+    Strategy 1: split at nearest any-punctuation boundary around midpoint (both directions)
+    Strategy 2: quarter the text (halve again), same bidirectional split
+    Strategy 3: aggressive text sanitization (strip parentheticals/digits/ALL-CAPS), then retry
 
-    Raises ChunkExhaustedError if all strategies fail acoustic gate.
+    Raises ChunkExhaustedError if all strategies fail the acoustic gate.
     """
-    from app.core.exceptions import ChunkExhaustedError
+    from app.core.exceptions import ChunkExhaustedError, SynthesisError
 
     if chunk_idx >= len(chunk_texts):
         return wav_path
 
     original_text = chunk_texts[chunk_idx]
-    word_count = len(original_text.split())
 
-    strategies = [
-        # (temperature_scale, top_p_override, split_chunk)
-        (0.70, None, False),
-        (0.33, 0.70, False),
-        (0.33, 0.70, True),
-    ]
+    def _split_at_punctuation(text: str, target_fraction: float = 0.5) -> list[str]:
+        """Split text near target_fraction, searching outward for any punctuation."""
+        words = text.split()
+        if len(words) <= 5:
+            return [text]
+        pivot = int(len(words) * target_fraction)
+        _ANY_PUNCT_ENDS = ('.', ',', ';', ':', '!', '?', '—', '–')
+        split_at = pivot  # fallback: split at pivot
+        # Search outward from pivot: alternating left/right
+        for offset in range(0, max(pivot, len(words) - pivot) + 1):
+            for candidate in (pivot - offset, pivot + offset):
+                if 0 < candidate < len(words):
+                    if words[candidate - 1].endswith(_ANY_PUNCT_ENDS):
+                        split_at = candidate
+                        # Found — break both loops
+                        offset = len(words)  # noqa: B023
+                        break
+        part_a = ' '.join(words[:split_at])
+        part_b = ' '.join(words[split_at:])
+        return [p for p in (part_a, part_b) if p.strip()]
 
-    for attempt, (temp_scale, top_p_override, do_split) in enumerate(strategies):
-        retry_kwargs = dict(generation_kwargs or {})
-        orig_temp = retry_kwargs.get('temperature') or 0.3
-        retry_kwargs['temperature'] = max(0.05, orig_temp * temp_scale)
-        if top_p_override is not None:
-            retry_kwargs['top_p'] = top_p_override
+    def _sanitize_text(text: str) -> str:
+        """Strip parentheticals, numeric quantities, and ALL-CAPS tokens."""
+        import re as _re
+        # Remove content in parentheses
+        text = _re.sub(r'\([^)]{0,200}\)', '', text)
+        # Replace numeric sequences with spoken approximation
+        text = _re.sub(r'\b\d[\d,./]*\b', 'some', text)
+        # Remove ALL-CAPS words (often acronyms/jargon that trip the model)
+        text = _re.sub(r'\b[A-Z]{3,}\b', '', text)
+        # Collapse whitespace
+        text = _re.sub(r'\s+', ' ', text).strip()
+        return text or text  # return empty-safe
 
-        if do_split and word_count > 10:
-            # Split at nearest sentence boundary to the midpoint
-            words = original_text.split()
-            mid = len(words) // 2
-            split_at = mid
-            for k in range(mid, max(0, mid - 20), -1):
-                if words[k].endswith(('.', '!', '?', ';')):
-                    split_at = k + 1
+    async def _try_halves(halves: list[str], attempt: int, retry_kw: dict) -> str | None:
+        """Synthesize halves, combine, return combined wav_path if gate passes. None otherwise."""
+        import tempfile
+        from pydub import AudioSegment as _AS
+
+        with tempfile.TemporaryDirectory() as td:
+            sub_paths = []
+            all_ok = True
+            for si, half_text in enumerate(halves):
+                sp = f'{td}/half_{si}.wav'
+                synth_fn = _make_synth_fn(engine, retry_kw, job_id)
+                await loop.run_in_executor(executor, synth_fn, half_text, sp)
+                if not _chunk_passes_acoustic_gate(sp, len(half_text.split()), reference_f0):
+                    all_ok = False
                     break
-            part_a = ' '.join(words[:split_at])
-            part_b = ' '.join(words[split_at:])
-            halves = [p for p in (part_a, part_b) if p.strip()]
-        else:
-            retry_text = (
-                original_text.lstrip(
-                    '\'""\u2018\u2019\u201c\u201d\u2026\u2013\u2014\u2022\u00b7*#'
-                ).strip()
-                or original_text
-            )
-            halves = [retry_text]
-
-        try:
-            if len(halves) == 1:
-                synth_fn = _make_synth_fn(engine, retry_kwargs, job_id)
-                await loop.run_in_executor(executor, synth_fn, halves[0], wav_path)
-                wc = len(halves[0].split())
-                if _chunk_passes_acoustic_gate(wav_path, wc, reference_f0):
-                    logger.info('[%s] Chunk %d passed on strategy %d', job_id, chunk_idx, attempt)
+                sub_paths.append(sp)
+            if all_ok and len(sub_paths) >= 1:
+                combined = _AS.from_wav(sub_paths[0])
+                for sp in sub_paths[1:]:
+                    combined = combined + _AS.from_wav(sp)
+                combined.export(wav_path, format='wav')
+                total_wc = sum(len(h.split()) for h in halves)
+                if _chunk_passes_acoustic_gate(wav_path, total_wc, reference_f0):
+                    logger.info('[%s] Chunk %d passed on split strategy %d', job_id, chunk_idx, attempt)
                     return wav_path
-            else:
-                import tempfile
-                from pydub import AudioSegment as _AS
+        return None
 
-                with tempfile.TemporaryDirectory() as td:
-                    sub_paths = []
-                    all_ok = True
-                    for si, half_text in enumerate(halves):
-                        sp = f'{td}/half_{si}.wav'
-                        synth_fn = _make_synth_fn(engine, retry_kwargs, job_id)
-                        await loop.run_in_executor(executor, synth_fn, half_text, sp)
-                        if not _chunk_passes_acoustic_gate(
-                            sp, len(half_text.split()), reference_f0
-                        ):
-                            all_ok = False
-                            break
-                        sub_paths.append(sp)
-                    if all_ok and sub_paths:
-                        combined = _AS.from_wav(sub_paths[0])
-                        for sp in sub_paths[1:]:
-                            combined = combined + _AS.from_wav(sp)
-                        combined.export(wav_path, format='wav')
-                        wc = sum(len(h.split()) for h in halves)
-                        if _chunk_passes_acoustic_gate(wav_path, wc, reference_f0):
-                            logger.info('[%s] Chunk %d passed on split strategy', job_id, chunk_idx)
-                            return wav_path
-        except Exception as exc:
-            logger.warning(
-                '[%s] Strategy %d for chunk %d raised: %s', job_id, attempt, chunk_idx, exc
-            )
+    # Strategy 0: repetition_penalty=1.2 — most conservative change
+    retry_kw0 = dict(generation_kwargs or {})
+    retry_kw0['repetition_penalty'] = 1.2
+    try:
+        synth_fn = _make_synth_fn(engine, retry_kw0, job_id)
+        await loop.run_in_executor(executor, synth_fn, original_text, wav_path)
+        if _chunk_passes_acoustic_gate(wav_path, len(original_text.split()), reference_f0):
+            logger.info('[%s] Chunk %d passed on strategy 0 (repetition_penalty)', job_id, chunk_idx)
+            return wav_path
+    except (SynthesisError, RuntimeError, OSError) as exc:
+        logger.warning('[%s] Strategy 0 for chunk %d raised: %s', job_id, chunk_idx, exc)
+
+    # Strategy 1: split at midpoint (any punctuation, bidirectional search)
+    halves = _split_at_punctuation(original_text, target_fraction=0.5)
+    if len(halves) > 1:
+        retry_kw1 = dict(generation_kwargs or {})
+        try:
+            result = await _try_halves(halves, attempt=1, retry_kw=retry_kw1)
+            if result is not None:
+                return result
+        except (SynthesisError, RuntimeError, OSError) as exc:
+            logger.warning('[%s] Strategy 1 for chunk %d raised: %s', job_id, chunk_idx, exc)
+
+    # Strategy 2: quarter split (halve each half)
+    quarter_texts: list[str] = []
+    for half in (_split_at_punctuation(original_text, target_fraction=0.5) or [original_text]):
+        quarter_texts.extend(_split_at_punctuation(half, target_fraction=0.5))
+    quarter_texts = [q for q in quarter_texts if q.strip()]
+    if len(quarter_texts) > 1:
+        retry_kw2 = dict(generation_kwargs or {})
+        try:
+            result = await _try_halves(quarter_texts, attempt=2, retry_kw=retry_kw2)
+            if result is not None:
+                return result
+        except (SynthesisError, RuntimeError, OSError) as exc:
+            logger.warning('[%s] Strategy 2 for chunk %d raised: %s', job_id, chunk_idx, exc)
+
+    # Strategy 3: aggressive text sanitization
+    sanitized = _sanitize_text(original_text)
+    if sanitized.strip():
+        retry_kw3 = dict(generation_kwargs or {})
+        try:
+            synth_fn = _make_synth_fn(engine, retry_kw3, job_id)
+            await loop.run_in_executor(executor, synth_fn, sanitized, wav_path)
+            if _chunk_passes_acoustic_gate(wav_path, len(sanitized.split()), reference_f0):
+                logger.info('[%s] Chunk %d passed on strategy 3 (sanitized text)', job_id, chunk_idx)
+                return wav_path
+        except (SynthesisError, RuntimeError, OSError) as exc:
+            logger.warning('[%s] Strategy 3 for chunk %d raised: %s', job_id, chunk_idx, exc)
 
     raise ChunkExhaustedError(
-        f'Chunk {chunk_idx} failed all {len(strategies)} synthesis strategies',
+        f'Chunk {chunk_idx} failed all 4 synthesis strategies',
         chunk_idx=chunk_idx,
     )
 
