@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v2.13.0 (2026-04-21)
+
+### Features
+
+- **tts-service**: Cascading segment splitter with pipeline guard
+  ([`6fc35ee`](https://github.com/getsimpledirect/ghost-narrator/commit/6fc35eedd807ac007a6518b6af5f76650db24489))
+
+- app/utils/text.py: rewrite split_into_large_segments with 4-stage cascade - Stage 1: paragraph
+  split (fast path for well-formatted narration) - Stage 2: sentence-boundary split for oversized
+  paragraphs (new _SENTENCE_BOUNDARY_RE) - Stage 3: emergency word-count split when no sentence
+  boundaries exist - Stage 4: accumulate expanded units into final ~target_words segments - Safety
+  log at ERROR level if any segment still exceeds target × 1.3 - app/domains/job/tts_job.py: add
+  hard guard after split_into_large_segments - Raises RuntimeError if any segment exceeds seg_words
+  × 1.3 words - Logs segment plan (count + per-segment word counts) before synthesis loop -
+  tests/utils/test_text_split.py: new test file covering all 4 stages plus trailing-merge, hard-cap
+  invariants, and real-world narration simulation
+
+Fixes the 5,719-word single-segment failure mode where a narration with no paragraph breaks produced
+  one giant segment, causing 9+ minutes of voice drift in a single Qwen3-TTS call.
+
+
 ## v2.12.6 (2026-04-21)
 
 ### Bug Fixes
