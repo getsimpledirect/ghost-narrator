@@ -359,7 +359,7 @@ def is_speakable_text(text: str) -> bool:
     - Contains code fences (```)
     - Contains raw URLs (https://)
     - Contains snake_case identifiers (function_names)
-    - More than 50% non-alphabetic, non-space characters
+    - More than 40% non-alphabetic, non-space characters
     """
     if not text or not text.strip():
         return False
