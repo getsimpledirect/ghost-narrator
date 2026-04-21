@@ -205,3 +205,55 @@ class TestQualityCheckBoundary:
         assert 'chunk_wav_paths' in params
         assert 'chunk_texts' in params
         assert 'job_id' in params
+
+
+class TestDurationRatioCheck:
+    """Duration-ratio validation: catch hallucinating segments before concatenation."""
+
+    def test_chunk_too_long_raises_synthesis_error(self, tmp_path):
+        """A 5-word chunk that produces 5 minutes of audio should be flagged."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        p = str(tmp_path / 'long.wav')
+        _write_wav(p, (_make_sine(200.0, 300.0) * 0.3).astype(np.float32))
+        result = _chunk_passes_acoustic_gate(p, word_count=5, reference_f0=None)
+        assert result is False
+
+    def test_chunk_within_expected_range_passes(self, tmp_path):
+        """A 50-word chunk with ~20s of audio should pass duration check."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        p = str(tmp_path / 'ok.wav')
+        # Use _make_speech_like — harmonic carrier has low spectral flatness so it
+        # passes the flatness gate (flatness << 0.025). Random noise would fail.
+        _write_wav(p, _make_speech_like(word_rate=2.0, duration_s=20.0))
+        result = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=None)
+        assert result is True
+
+    def test_empty_audio_fails(self, tmp_path):
+        """Sub-100ms audio is caught by the empty-audio check."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        p = str(tmp_path / 'empty.wav')
+        _write_wav(p, _make_silence(0.05))
+        result = _chunk_passes_acoustic_gate(p, word_count=10, reference_f0=None)
+        assert result is False
+
+    def test_high_onset_rate_fails(self, tmp_path):
+        """Onset rate > 6.5 /s should flag hallucination."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        p = str(tmp_path / 'rapid.wav')
+        _write_wav(p, _make_rapid_noise(rate_hz=15.0, duration_s=10.0))
+        result = _chunk_passes_acoustic_gate(p, word_count=25, reference_f0=None)
+        assert result is False
+
+    def test_speaker_drift_fails(self, tmp_path):
+        """F0 far from reference (>3 semitones) should fail gate."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        p = str(tmp_path / 'high_pitch.wav')
+        # Reference is 100 Hz, chunk is 400 Hz — way more than 3 semitones apart
+        _write_wav(p, (_make_sine(400.0, 5.0) * 0.5).astype(np.float32))
+        result = _chunk_passes_acoustic_gate(p, word_count=12, reference_f0=100.0)
+        assert result is False
