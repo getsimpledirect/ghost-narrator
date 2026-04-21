@@ -26,8 +26,8 @@ class TestMaxNewTokensBounding:
         from app.core.tts_engine import _compute_max_new_tokens
 
         tokens = _compute_max_new_tokens(word_count=50)
-        # 50 × 0.4 × 50 × 1.4 = 1400
-        assert 1000 <= tokens <= 3000
+        # 50 × 0.42 × 12 × 1.3 = 327.6 → ceil 328 → max(328, 300) = 328
+        assert 300 <= tokens <= 500
 
     def test_compute_max_tokens_respects_minimum(self):
         from app.core.tts_engine import _compute_max_new_tokens
@@ -38,8 +38,15 @@ class TestMaxNewTokensBounding:
         from app.core.tts_engine import _compute_max_new_tokens
 
         tokens = _compute_max_new_tokens(word_count=300)
-        # 300 × 0.4 × 50 × 1.4 = 8400
-        assert tokens >= 6000
+        # 300 × 0.42 × 12 × 1.3 = 1965.6 → 1966
+        assert 1700 <= tokens <= 2300
+
+    def test_compute_max_tokens_for_650_words(self):
+        from app.core.tts_engine import _compute_max_new_tokens
+
+        tokens = _compute_max_new_tokens(word_count=650)
+        # 650 × 0.42 × 12 × 1.3 = 4258.8 → 4259
+        assert 3800 <= tokens <= 4800
 
 
 def test_tts_engine_has_reference_f0_property():

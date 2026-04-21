@@ -42,10 +42,21 @@ except ImportError:
     Qwen3TTSModel = None  # type: ignore[assignment,misc]
 
 
-# Calibrated from Qwen3-TTS codec token rate (~50 audio tokens/second of output).
-# 1.4× headroom allows for natural pauses, slow passages, and measurement uncertainty.
-_TTS_TOKENS_PER_SECOND: int = 50
-_SECONDS_PER_WORD: float = 0.40
+# Qwen3-TTS-12Hz emits 12 audio codec tokens per second of output audio.
+# Do NOT change this constant without verifying the model's codec rate — a
+# wrong value here directly enables the hallucination loop bug this function
+# is designed to prevent. Evidence: all model IDs contain "-12Hz-" and
+# hardware.py derives _CODEC_TOKENS_PER_WORD = 5.54 = 12 × (60 s / 130 WPM).
+_TTS_CODEC_TOKENS_PER_SECOND: int = 12
+
+# 143 WPM → 0.42 s/word — conservative narration pace upper bound.
+# Matches _CODEC_TOKENS_PER_WORD = 5.54 = 12 × (60/130) in hardware.py.
+_SECONDS_PER_WORD: float = 0.42
+
+# 1.3× headroom — tight enough to cut off hallucinations within ~30 s of audio
+# past the expected end, while accommodating natural slow passages.
+_MAX_TOKENS_HEADROOM: float = 1.3
+
 _MIN_MAX_NEW_TOKENS: int = 300
 
 
@@ -56,7 +67,7 @@ def _compute_max_new_tokens(word_count: int) -> int:
     in a hallucination loop.
     """
     expected_seconds = word_count * _SECONDS_PER_WORD
-    bound = int(math.ceil(expected_seconds * _TTS_TOKENS_PER_SECOND * 1.4))
+    bound = int(math.ceil(expected_seconds * _TTS_CODEC_TOKENS_PER_SECOND * _MAX_TOKENS_HEADROOM))
     return max(bound, _MIN_MAX_NEW_TOKENS)
 
 
