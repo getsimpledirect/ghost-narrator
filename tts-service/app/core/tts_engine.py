@@ -203,6 +203,27 @@ class TTSEngine:
 
                 probe_optimal_segment_words(SELECTED_TTS_MODEL)
 
+                # Warmup synthesis — burns one short call to populate internal
+                # KV-cache buffers and normalise codec dynamics before the first
+                # real job.  Without this, Chunk 0 of the first article can have
+                # different acoustic characteristics (cold-start artefact) that
+                # trips the acoustic gate's duration or onset checks.
+                import os
+                import tempfile
+
+                try:
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as _wf:
+                        _warmup_path = _wf.name
+                    self.synthesize_to_file(
+                        'Warming up.',
+                        _warmup_path,
+                        generation_kwargs={'max_new_tokens': 50},
+                    )
+                    os.unlink(_warmup_path)
+                    logger.info('TTS warmup synthesis complete')
+                except Exception as _warmup_exc:
+                    logger.warning('TTS warmup failed (non-fatal): %s', _warmup_exc)
+
                 self._ready = True
                 logger.info('Qwen3-TTS engine ready')
             except Exception as e:

@@ -169,10 +169,10 @@ def _chunk_passes_acoustic_gate(
     reference_f0: float | None,
     onset_rate_ceiling: float = 6.5,
     flatness_ceiling: float = 0.025,
-) -> bool:
-    """Return False if the WAV exhibits any hallucination signature.
+) -> tuple[bool, str]:
+    """Return (True, '') or (False, reason) based on WAV hallucination signature.
 
-    Checks (any failure → False):
+    Checks (any failure → (False, reason)):
     1. Duration < 100ms → empty output
     2. Duration > 1.6 × expected_from_word_count → hallucinating (ran too long)
     3. Duration < 0.4 × expected_from_word_count → truncated (ran too short)
@@ -186,44 +186,48 @@ def _chunk_passes_acoustic_gate(
         seg = _AS.from_wav(wav_path)
         duration_ms = len(seg)
     except Exception:
-        return False  # Unreadable → treat as failed
+        return False, 'unreadable wav'
 
     # 1. Empty audio
     if duration_ms < 100:
-        logger.debug('Acoustic gate: empty audio (%dms)', duration_ms)
-        return False
+        logger.info('Acoustic gate: empty audio (%dms)', duration_ms)
+        return False, f'empty audio ({duration_ms}ms)'
 
     # 2 & 3. Duration ratio
     if word_count > 0:
         expected_ms = word_count * _SECONDS_PER_WORD * 1000
         if duration_ms > expected_ms * 1.6:
-            logger.debug(
+            logger.info(
                 'Acoustic gate: hallucination — %dms audio for %d words (expected ~%dms)',
                 duration_ms,
                 word_count,
                 int(expected_ms),
             )
-            return False
+            return False, (
+                f'hallucination: {duration_ms}ms for {word_count}w (expected ~{int(expected_ms)}ms)'
+            )
         if duration_ms < expected_ms * 0.4:
-            logger.debug(
+            logger.info(
                 'Acoustic gate: truncation — %dms audio for %d words (expected ~%dms)',
                 duration_ms,
                 word_count,
                 int(expected_ms),
             )
-            return False
+            return False, (
+                f'truncation: {duration_ms}ms for {word_count}w (expected ~{int(expected_ms)}ms)'
+            )
 
     # 4. Onset rate
     rate = _compute_onset_rate(wav_path)
     if rate > onset_rate_ceiling:
-        logger.debug('Acoustic gate: onset rate %.1f > %.1f /s', rate, onset_rate_ceiling)
-        return False
+        logger.info('Acoustic gate: onset rate %.1f > %.1f /s', rate, onset_rate_ceiling)
+        return False, f'onset rate {rate:.1f} > {onset_rate_ceiling:.1f}/s'
 
     # 5. Spectral flatness
     flatness = _compute_spectral_flatness(wav_path)
     if flatness > flatness_ceiling:
-        logger.debug('Acoustic gate: spectral flatness %.3f > %.3f', flatness, flatness_ceiling)
-        return False
+        logger.info('Acoustic gate: spectral flatness %.3f > %.3f', flatness, flatness_ceiling)
+        return False, f'spectral flatness {flatness:.3f} > {flatness_ceiling:.3f}'
 
     # 6. Speaker drift
     if reference_f0 is not None and reference_f0 > 0:
@@ -231,15 +235,18 @@ def _chunk_passes_acoustic_gate(
         if chunk_f0 is not None and chunk_f0 > 0:
             semitones = abs(12 * math.log2(chunk_f0 / reference_f0))
             if semitones > _MAX_F0_DEVIATION_SEMITONES:
-                logger.debug(
+                logger.info(
                     'Acoustic gate: speaker drift %.1f st (ref=%.0fHz chunk=%.0fHz)',
                     semitones,
                     reference_f0,
                     chunk_f0,
                 )
-                return False
+                return False, (
+                    f'speaker drift {semitones:.1f}st'
+                    f' (ref={reference_f0:.0f}Hz chunk={chunk_f0:.0f}Hz)'
+                )
 
-    return True
+    return True, ''
 
 
 def _get_asr_pipeline():
@@ -340,13 +347,17 @@ async def _quality_check_and_resynthesize(
         if word_count == 0:
             logger.debug('[%s] Chunk %d: word_count=0, duration-ratio gate disabled', job_id, i)
         try:
-            passed_gate = _chunk_passes_acoustic_gate(wav_path, word_count, reference_f0)
+            passed_gate, gate_reason = _chunk_passes_acoustic_gate(
+                wav_path, word_count, reference_f0
+            )
         except Exception as exc:
             logger.debug('[%s] Acoustic gate check for chunk %d skipped: %s', job_id, i, exc)
-            passed_gate = True  # fail-open on gate error
+            passed_gate, gate_reason = True, ''  # fail-open on gate error
 
         if not passed_gate:
-            logger.warning('[%s] Chunk %d failed acoustic gate — re-synthesizing', job_id, i)
+            logger.warning(
+                '[%s] Chunk %d failed acoustic gate (%s) — re-synthesizing', job_id, i, gate_reason
+            )
             checked_paths[i] = await _resynthesize_with_strategies(
                 i,
                 wav_path,
@@ -559,7 +570,7 @@ async def _resynthesize_with_strategies(
                 sp = f'{td}/half_{si}.wav'
                 synth_fn = _make_synth_fn(engine, retry_kw, job_id)
                 await loop.run_in_executor(executor, synth_fn, half_text, sp)
-                if not _chunk_passes_acoustic_gate(sp, len(half_text.split()), reference_f0):
+                if not _chunk_passes_acoustic_gate(sp, len(half_text.split()), reference_f0)[0]:
                     all_ok = False
                     break
                 sub_paths.append(sp)
@@ -569,7 +580,7 @@ async def _resynthesize_with_strategies(
                     combined = combined + _AS.from_wav(sp)
                 combined.export(wav_path, format='wav')
                 total_wc = sum(len(h.split()) for h in halves)
-                if _chunk_passes_acoustic_gate(wav_path, total_wc, reference_f0):
+                if _chunk_passes_acoustic_gate(wav_path, total_wc, reference_f0)[0]:
                     logger.info(
                         '[%s] Chunk %d passed on split strategy %d', job_id, chunk_idx, attempt
                     )
@@ -582,7 +593,7 @@ async def _resynthesize_with_strategies(
     try:
         synth_fn = _make_synth_fn(engine, retry_kw0, job_id)
         await loop.run_in_executor(executor, synth_fn, original_text, wav_path)
-        if _chunk_passes_acoustic_gate(wav_path, len(original_text.split()), reference_f0):
+        if _chunk_passes_acoustic_gate(wav_path, len(original_text.split()), reference_f0)[0]:
             logger.info(
                 '[%s] Chunk %d passed on strategy 0 (repetition_penalty)', job_id, chunk_idx
             )
@@ -622,7 +633,7 @@ async def _resynthesize_with_strategies(
         try:
             synth_fn = _make_synth_fn(engine, retry_kw3, job_id)
             await loop.run_in_executor(executor, synth_fn, sanitized, wav_path)
-            if _chunk_passes_acoustic_gate(wav_path, len(sanitized.split()), reference_f0):
+            if _chunk_passes_acoustic_gate(wav_path, len(sanitized.split()), reference_f0)[0]:
                 logger.info(
                     '[%s] Chunk %d passed on strategy 3 (sanitized text)', job_id, chunk_idx
                 )

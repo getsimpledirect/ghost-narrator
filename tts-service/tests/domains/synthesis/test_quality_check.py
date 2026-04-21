@@ -253,8 +253,9 @@ class TestDurationRatioCheck:
 
         p = str(tmp_path / 'long.wav')
         _write_wav(p, (_make_sine(200.0, 300.0) * 0.3).astype(np.float32))
-        result = _chunk_passes_acoustic_gate(p, word_count=5, reference_f0=None)
-        assert result is False
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=5, reference_f0=None)
+        assert passed is False
+        assert reason
 
     def test_chunk_within_expected_range_passes(self, tmp_path):
         """A 50-word chunk with ~20s of audio should pass duration check."""
@@ -264,8 +265,9 @@ class TestDurationRatioCheck:
         # Use _make_speech_like — harmonic carrier has low spectral flatness so it
         # passes the flatness gate (flatness << 0.025). Random noise would fail.
         _write_wav(p, _make_speech_like(word_rate=2.0, duration_s=20.0))
-        result = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=None)
-        assert result is True
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=None)
+        assert passed is True
+        assert reason == ''
 
     def test_empty_audio_fails(self, tmp_path):
         """Sub-100ms audio is caught by the empty-audio check."""
@@ -273,8 +275,9 @@ class TestDurationRatioCheck:
 
         p = str(tmp_path / 'empty.wav')
         _write_wav(p, _make_silence(0.05))
-        result = _chunk_passes_acoustic_gate(p, word_count=10, reference_f0=None)
-        assert result is False
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=10, reference_f0=None)
+        assert passed is False
+        assert reason
 
     def test_high_onset_rate_fails(self, tmp_path):
         """Onset rate > 6.5 /s should flag hallucination."""
@@ -282,8 +285,9 @@ class TestDurationRatioCheck:
 
         p = str(tmp_path / 'rapid.wav')
         _write_wav(p, _make_rapid_noise(rate_hz=15.0, duration_s=10.0))
-        result = _chunk_passes_acoustic_gate(p, word_count=25, reference_f0=None)
-        assert result is False
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=25, reference_f0=None)
+        assert passed is False
+        assert reason
 
     def test_speaker_drift_fails(self, tmp_path):
         """F0 far from reference (>3 semitones) should fail gate."""
@@ -292,8 +296,9 @@ class TestDurationRatioCheck:
         p = str(tmp_path / 'high_pitch.wav')
         # Reference is 100 Hz, chunk is 400 Hz — way more than 3 semitones apart
         _write_wav(p, (_make_sine(400.0, 5.0) * 0.5).astype(np.float32))
-        result = _chunk_passes_acoustic_gate(p, word_count=12, reference_f0=100.0)
-        assert result is False
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=12, reference_f0=100.0)
+        assert passed is False
+        assert reason
 
 
 class TestResynthesizeStrategies:
@@ -304,6 +309,7 @@ class TestResynthesizeStrategies:
         from app.domains.synthesis.quality_check import _resynthesize_with_strategies
 
         import inspect
+
         src = inspect.getsource(_resynthesize_with_strategies)
         assert 'repetition_penalty' in src
         assert '1.2' in src
@@ -314,6 +320,7 @@ class TestResynthesizeStrategies:
         # behaviour through re-synthesis by checking the source code uses bidirectional search.
         from app.domains.synthesis.quality_check import _resynthesize_with_strategies
         import inspect
+
         src = inspect.getsource(_resynthesize_with_strategies)
         # Must search in both directions (pivot - offset AND pivot + offset)
         assert 'pivot - offset' in src
@@ -323,6 +330,7 @@ class TestResynthesizeStrategies:
         """Strategy 3 must strip parentheticals, digits, and ALL-CAPS tokens."""
         from app.domains.synthesis.quality_check import _resynthesize_with_strategies
         import inspect
+
         src = inspect.getsource(_resynthesize_with_strategies)
         assert '_sanitize_text' in src or 'sanitize' in src.lower()
 
@@ -330,6 +338,7 @@ class TestResynthesizeStrategies:
         """Exception handler must not catch ChunkExhaustedError."""
         from app.domains.synthesis.quality_check import _resynthesize_with_strategies
         import inspect
+
         src = inspect.getsource(_resynthesize_with_strategies)
         # Must NOT have bare 'except Exception'
         assert 'except Exception' not in src
