@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v2.12.5 (2026-04-21)
+
+### Bug Fixes
+
+- **quality-gate**: Recalibrate thresholds against real TTS output
+  ([`3f73823`](https://github.com/getsimpledirect/ghost-narrator/commit/3f7382387d0b56b7060cfd8219d46976771ef772))
+
+- Loosen flatness ceiling 0.025 → 0.18 (real Qwen3-TTS voice-cloned output measures ~0.15 flatness —
+  old threshold rejected healthy chunks) - Loosen onset rate ceiling 6.5 → 8.0 (narration pace
+  commonly 6.5-7.0/s) - Tighten F0 deviation threshold 3.0 → 2.5 semitones; F0 drift is a hard
+  identity signal and now fails independently as a hard check - Convert flatness + onset_rate from
+  independent hard checks to a co-occurrence gate: both must trip simultaneously to reject a chunk;
+  a single-flag trip logs INFO and passes (normal TTS variation) - Add DRY_RUN_GATE env var (default
+  true): gate logs failures but always returns pass, enabling threshold calibration from production
+  data before enforcing; conftest.py sets it to false for tests - Add regression test for healthy
+  high-flatness single-flag pass - Fix burst rate in test_high_onset_rate_fails (10Hz not 20Hz): at
+  20Hz burst_len equals interval so no silent gaps form and onset detection returns 0/s despite the
+  nominal rate
+
+
 ## v2.12.4 (2026-04-21)
 
 ### Bug Fixes
