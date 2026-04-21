@@ -519,14 +519,16 @@ async def _resynthesize_with_strategies(
         _ANY_PUNCT_ENDS = ('.', ',', ';', ':', '!', '?', '—', '–')
         split_at = pivot  # fallback: split at pivot
         # Search outward from pivot: alternating left/right
+        found = False
         for offset in range(0, max(pivot, len(words) - pivot) + 1):
             for candidate in (pivot - offset, pivot + offset):
                 if 0 < candidate < len(words):
                     if words[candidate - 1].endswith(_ANY_PUNCT_ENDS):
                         split_at = candidate
-                        # Found — break both loops
-                        offset = len(words)  # noqa: B023
+                        found = True
                         break
+            if found:
+                break
         part_a = ' '.join(words[:split_at])
         part_b = ' '.join(words[split_at:])
         return [p for p in (part_a, part_b) if p.strip()]
