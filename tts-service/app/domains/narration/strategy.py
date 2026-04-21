@@ -331,6 +331,14 @@ class ChunkedStrategy(NarrationStrategy):
         ]
         # Use retry wrapper for network resilience
         result = await _call_llm_with_retry(self._client, messages, self._model)
+        # Speakability check — if narration contains URLs/code, ask LLM to fix before validating.
+        from app.utils.text import is_speakable_text
+        _speakable, _reason = is_speakable_text(result)
+        if not _speakable:
+            logger.warning('Narration chunk contains unspeakable content (%s) — retrying with targeted prompt', _reason)
+            messages.append({'role': 'assistant', 'content': result})
+            messages.append({'role': 'user', 'content': f'Your narration contained {_reason}. Rewrite without it, keeping the same content.'})
+            result = await _call_llm(self._client, messages, self._model)
         validation = _validator.validate(chunk, result)
         retry_count = 0
         max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
@@ -465,6 +473,14 @@ class SingleShotStrategy(NarrationStrategy):
             {'role': 'user', 'content': text + word_count_hint},
         ]
         result = await _call_llm_with_retry(self._client, messages, self._model)
+        # Speakability check
+        from app.utils.text import is_speakable_text
+        _speakable, _reason = is_speakable_text(result)
+        if not _speakable:
+            logger.warning('Narration contains unspeakable content (%s) — retrying with targeted prompt', _reason)
+            messages.append({'role': 'assistant', 'content': result})
+            messages.append({'role': 'user', 'content': f'Your narration contained {_reason}. Rewrite without it, keeping the same content.'})
+            result = await _call_llm(self._client, messages, self._model)
         validation = _validator.validate(text, result)
         retry_count = 0
         max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts

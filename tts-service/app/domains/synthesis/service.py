@@ -238,14 +238,6 @@ def synthesize_single_shot(
             details=f'output_path={output_path}',
         )
 
-    from app.utils.text import is_speakable_text
-
-    if not is_speakable_text(text):
-        raise SynthesisError(
-            'Text failed pre-TTS speakability check — likely contains code or URLs',
-            details=f'text[:80]={text[:80]!r}',
-        )
-
     engine = get_tts_engine()
     result = engine.synthesize_to_file(
         text,

@@ -345,35 +345,36 @@ def get_pause_ms_after_chunk(chunk: str, next_chunk: str | None) -> int:
 # Patterns that reliably trigger TTS hallucination and must be rejected pre-synthesis
 _CODE_FENCE_RE: Final[re.Pattern[str]] = re.compile(r'```', re.MULTILINE)
 _URL_STRICT_RE: Final[re.Pattern[str]] = re.compile(r'https?://')
-# snake_case identifiers (function_name, method_call()) — not normal prose
-_SNAKE_CASE_RE: Final[re.Pattern[str]] = re.compile(r'\b[a-z][a-z0-9]+_[a-z0-9_]+\b')
+# snake_case with at least 3 underscores OR appearing >=2 times — avoids false positives
+# on common compound adjectives like "open_source", "well_known" in technical prose.
+_SNAKE_CASE_RE: Final[re.Pattern[str]] = re.compile(r'\b[a-z][a-z0-9]+(?:_[a-z0-9]+){2,}\b')
 # Max fraction of non-alphabetic, non-space characters before rejecting chunk
 _MAX_NON_ALPHA_RATIO: Final[float] = 0.40
 
 
-def is_speakable_text(text: str) -> bool:
-    """Return True if text is safe to pass to the TTS model.
+def is_speakable_text(text: str) -> tuple[bool, str | None]:
+    """Return (True, None) if text is safe to pass to the TTS model, (False, reason) otherwise.
 
     Rejects text that reliably triggers hallucination:
     - Empty / whitespace-only
     - Contains code fences (```)
     - Contains raw URLs (https://)
-    - Contains snake_case identifiers (function_names)
+    - Contains snake_case identifiers with >=3 components (e.g. get_voice_clone_prompt)
     - More than 40% non-alphabetic, non-space characters
     """
     if not text or not text.strip():
-        return False
+        return False, 'empty text'
     if _CODE_FENCE_RE.search(text):
-        return False
+        return False, 'code fence (```)'
     if _URL_STRICT_RE.search(text):
-        return False
+        return False, 'raw URL (https://)'
     if _SNAKE_CASE_RE.search(text):
-        return False
+        return False, 'snake_case identifier'
     non_alpha = sum(1 for c in text if not c.isalpha() and not c.isspace())
     ratio = non_alpha / max(len(text), 1)
     if ratio > _MAX_NON_ALPHA_RATIO:
-        return False
-    return True
+        return False, f'non-alpha ratio {ratio:.0%} > {_MAX_NON_ALPHA_RATIO:.0%}'
+    return True, None
 
 
 # ─── Quote Detection for Multi-Voice ──────────────────────────────────────────
