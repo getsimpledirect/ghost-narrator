@@ -536,6 +536,7 @@ async def _resynthesize_with_strategies(
     def _sanitize_text(text: str) -> str:
         """Strip parentheticals, numeric quantities, and ALL-CAPS tokens."""
         import re as _re
+
         # Remove content in parentheses
         text = _re.sub(r'\([^)]{0,200}\)', '', text)
         # Replace numeric sequences with spoken approximation
@@ -569,7 +570,9 @@ async def _resynthesize_with_strategies(
                 combined.export(wav_path, format='wav')
                 total_wc = sum(len(h.split()) for h in halves)
                 if _chunk_passes_acoustic_gate(wav_path, total_wc, reference_f0):
-                    logger.info('[%s] Chunk %d passed on split strategy %d', job_id, chunk_idx, attempt)
+                    logger.info(
+                        '[%s] Chunk %d passed on split strategy %d', job_id, chunk_idx, attempt
+                    )
                     return wav_path
         return None
 
@@ -580,7 +583,9 @@ async def _resynthesize_with_strategies(
         synth_fn = _make_synth_fn(engine, retry_kw0, job_id)
         await loop.run_in_executor(executor, synth_fn, original_text, wav_path)
         if _chunk_passes_acoustic_gate(wav_path, len(original_text.split()), reference_f0):
-            logger.info('[%s] Chunk %d passed on strategy 0 (repetition_penalty)', job_id, chunk_idx)
+            logger.info(
+                '[%s] Chunk %d passed on strategy 0 (repetition_penalty)', job_id, chunk_idx
+            )
             return wav_path
     except (SynthesisError, RuntimeError, OSError) as exc:
         logger.warning('[%s] Strategy 0 for chunk %d raised: %s', job_id, chunk_idx, exc)
@@ -598,7 +603,7 @@ async def _resynthesize_with_strategies(
 
     # Strategy 2: quarter split (halve each half)
     quarter_texts: list[str] = []
-    for half in (_split_at_punctuation(original_text, target_fraction=0.5) or [original_text]):
+    for half in _split_at_punctuation(original_text, target_fraction=0.5) or [original_text]:
         quarter_texts.extend(_split_at_punctuation(half, target_fraction=0.5))
     quarter_texts = [q for q in quarter_texts if q.strip()]
     if len(quarter_texts) > 1:
@@ -618,7 +623,9 @@ async def _resynthesize_with_strategies(
             synth_fn = _make_synth_fn(engine, retry_kw3, job_id)
             await loop.run_in_executor(executor, synth_fn, sanitized, wav_path)
             if _chunk_passes_acoustic_gate(wav_path, len(sanitized.split()), reference_f0):
-                logger.info('[%s] Chunk %d passed on strategy 3 (sanitized text)', job_id, chunk_idx)
+                logger.info(
+                    '[%s] Chunk %d passed on strategy 3 (sanitized text)', job_id, chunk_idx
+                )
                 return wav_path
         except (SynthesisError, RuntimeError, OSError) as exc:
             logger.warning('[%s] Strategy 3 for chunk %d raised: %s', job_id, chunk_idx, exc)

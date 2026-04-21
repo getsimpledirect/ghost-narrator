@@ -670,6 +670,7 @@ async def run_tts_job(
                 _lufs = quality.get('integrated_lufs')
                 _silences = quality.get('long_silence_gaps_count', 0)
                 from app.config import TARGET_LUFS as _TARGET_LUFS
+
                 _lufs_target = float(_TARGET_LUFS)
                 if _tp is not None and _tp > -1.0:
                     raise RuntimeError(
