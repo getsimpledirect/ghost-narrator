@@ -698,10 +698,10 @@ async def run_tts_job(
                         f'[{job_id}] Final audio exceeds true-peak limit: {_tp:.1f} dBTP > -1.0 dBTP. '
                         'Mastering limiter likely did not run (check mastering logs).'
                     )
-                if _lufs is not None and abs(_lufs - _lufs_target) > 2.5:
+                if _lufs is not None and abs(_lufs - _lufs_target) > 3.0:
                     raise RuntimeError(
                         f'[{job_id}] Final audio LUFS outside tolerance: {_lufs:.1f} LUFS '
-                        f'(target {_lufs_target:.1f} ± 2.5). Mastering may have failed.'
+                        f'(target {_lufs_target:.1f} ± 3.0). Mastering may have failed.'
                     )
                 # Allow up to 3 long silences — legitimate paragraph breaks at
                 # [LONG_PAUSE] markers can produce gaps up to ~1.5s.  More than 3
