@@ -652,7 +652,9 @@ async def run_tts_job(
         # GPU slot released — next queued job can start its pipeline.
         logger.info(f'[{job_id}] GPU slot released')
 
-        # Step 6: Quality validation (non-fatal, log only)
+        # Step 6: Quality validation — gate on final file metrics.
+        # validate_audio_quality already runs; we now fail the job if the output
+        # exceeds safe thresholds rather than shipping broken audio silently.
         try:
             quality = await loop.run_in_executor(
                 executor,
@@ -661,6 +663,28 @@ async def run_tts_job(
             )
             if quality:
                 logger.info(f'[{job_id}] Quality metrics: {quality}')
+                _tp = quality.get('true_peak_dbfs')
+                _lufs = quality.get('integrated_lufs')
+                _silences = quality.get('long_silence_gaps_count', 0)
+                from app.config import TARGET_LUFS as _TARGET_LUFS
+                _lufs_target = float(_TARGET_LUFS)
+                if _tp is not None and _tp > -1.0:
+                    raise RuntimeError(
+                        f'[{job_id}] Final audio exceeds true-peak limit: {_tp:.1f} dBTP > -1.0 dBTP. '
+                        'Mastering limiter likely did not run (check mastering logs).'
+                    )
+                if _lufs is not None and abs(_lufs - _lufs_target) > 2.5:
+                    raise RuntimeError(
+                        f'[{job_id}] Final audio LUFS outside tolerance: {_lufs:.1f} LUFS '
+                        f'(target {_lufs_target:.1f} ± 2.5). Mastering may have failed.'
+                    )
+                if _silences and _silences > 0:
+                    raise RuntimeError(
+                        f'[{job_id}] Final audio contains {_silences} long silence gap(s). '
+                        'Check synthesis and mastering logs.'
+                    )
+        except RuntimeError:
+            raise  # propagate quality gate failures
         except Exception as exc:
             logger.warning(f'[{job_id}] Quality check failed (non-fatal): {exc}')
 
