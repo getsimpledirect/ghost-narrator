@@ -40,3 +40,43 @@ def test_clean_text_strips_pause_markers():
     assert '[LONG_PAUSE]' not in cleaned
     assert 'Hello world.' in cleaned
     assert 'Goodbye.' in cleaned
+
+
+class TestIsSpeakableText:
+    def test_normal_prose_passes(self):
+        from app.utils.text import is_speakable_text
+
+        assert is_speakable_text('The revenue model failed to account for churn rates.') is True
+
+    def test_url_fails(self):
+        from app.utils.text import is_speakable_text
+
+        assert is_speakable_text('Visit https://github.com/foo/bar for more info.') is False
+
+    def test_markdown_code_fence_fails(self):
+        from app.utils.text import is_speakable_text
+
+        assert is_speakable_text('```python\ndef foo(): return 42\n```') is False
+
+    def test_high_non_alpha_ratio_fails(self):
+        from app.utils.text import is_speakable_text
+
+        assert is_speakable_text('>>> 12345 != None && x == True || y >= 0;') is False
+
+    def test_empty_string_fails(self):
+        from app.utils.text import is_speakable_text
+
+        assert is_speakable_text('   ') is False
+
+    def test_snake_case_identifier_fails(self):
+        from app.utils.text import is_speakable_text
+
+        assert (
+            is_speakable_text('Call get_voice_clone_prompt() to initialise the embedding.') is False
+        )
+
+    def test_camel_case_word_allowed_in_prose(self):
+        from app.utils.text import is_speakable_text
+
+        # CamelCase proper nouns should not fail — only snake_case identifiers
+        assert is_speakable_text('OpenAI released a new model called ChatGPT.') is True
