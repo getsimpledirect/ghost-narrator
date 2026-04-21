@@ -124,6 +124,7 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
     mock_narration.narrate_iter = mock_narrate_iter
 
     with (
+        patch('app.domains.voices.validate.validate_reference_wav', return_value=[]),
         patch('app.domains.job.tts_job.get_narration_strategy', return_value=mock_narration),
         patch(
             'app.domains.job.tts_job.get_effective_config',
@@ -190,6 +191,7 @@ async def test_run_tts_job_deleted_mid_process(mock_job_store, mock_tts_engine):
     storage_path = 'audio/deleted.mp3'
 
     with (
+        patch('app.domains.voices.validate.validate_reference_wav', return_value=[]),
         patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch.object(Path, 'mkdir'),
     ):
@@ -214,6 +216,7 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
     storage_path = 'audio/fail.mp3'
 
     with (
+        patch('app.domains.voices.validate.validate_reference_wav', return_value=[]),
         patch('app.domains.job.tts_job.get_narration_strategy', return_value=None),
         patch(
             'app.domains.job.tts_job.get_effective_config',
@@ -262,6 +265,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
     mock_narration.narrate_iter = mock_narrate_iter
 
     with (
+        patch('app.domains.voices.validate.validate_reference_wav', return_value=[]),
         patch('app.domains.job.tts_job.get_narration_strategy', return_value=mock_narration),
         patch(
             'app.domains.job.tts_job.get_effective_config',
@@ -361,6 +365,7 @@ async def test_run_tts_job_transitions_through_queued_status(
     mock_narration.narrate_iter = mock_narrate_iter
 
     with (
+        patch('app.domains.voices.validate.validate_reference_wav', return_value=[]),
         patch('app.domains.job.tts_job.get_narration_strategy', return_value=mock_narration),
         patch(
             'app.domains.job.tts_job.get_effective_config',
@@ -416,6 +421,7 @@ async def test_run_tts_job_exceeds_max_duration(mock_job_store, mock_tts_engine)
     mock_narration.narrate_iter = _slow_narrate_iter
 
     with (
+        patch('app.domains.voices.validate.validate_reference_wav', return_value=[]),
         patch('app.domains.job.tts_job.get_narration_strategy', return_value=mock_narration),
         patch(
             'app.domains.job.tts_job.get_effective_config',
