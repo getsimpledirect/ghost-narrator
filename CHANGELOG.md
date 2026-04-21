@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v2.13.1 (2026-04-21)
+
+### Performance Improvements
+
+- **tts-service**: Reduce 1.7B noise ceiling to 400 words + fp16 precision
+  ([`af191cc`](https://github.com/getsimpledirect/ghost-narrator/commit/af191cc766fb6c622f96ab2d9e88b8a023efa062))
+
+- hardware.py: switch HIGH_VRAM tts_precision bf16 → fp16 - fp16 has 10 mantissa bits vs bf16's 7,
+  improving pitch stability for the speaker encoder's fine pitch features on Ada (sm_89 / L4) -
+  Existing fp32 overflow fallback in tts_engine.py handles rare NaN cases - hardware.py: reduce
+  _NOISE_CEILING['1.7B'] 650 → 400 words - 400-word segments ≈ 170s autoregressive generation vs
+  270s at 650 words - Shorter generation windows reduce the distance voice identity can drift -
+  hardware.py: reduce HIGH_VRAM tts_chunk_words 300 → 200 words - Smaller chunk-level splits inside
+  each segment for additional safety margin - hardware.py: update tts_max_new_tokens comment (3.16×
+  headroom at 400 words) - config.py, text.py: update noise ceiling references 650 → 400 -
+  tests/core/test_hardware.py: update 3 assertions from 650 → 400 - docs/ARCHITECTURE.md, README.md:
+  update tier tables (bf16 → fp16, 650 → 400) - run-docker.sh: remove stale
+  SINGLE_SHOT_SEGMENT_WORDS=3000 default (now passes empty string; auto-probe from VRAM takes
+  effect)
+
+Intervention 2 + 3 of the voice-drift mitigation sequence.
+
+
 ## v2.13.0 (2026-04-21)
 
 ### Features
