@@ -141,15 +141,22 @@ def master_audio(
         measured = _parse_loudnorm_stats(measure_result.stderr)
 
         if measured and all(v is not None for v in measured.values()):
+            logger.info(
+                'Loudnorm pass-1 measured: I=%s, TP=%s, LRA=%s, thresh=%s',
+                measured.get('input_i'),
+                measured.get('input_tp'),
+                measured.get('input_lra'),
+                measured.get('input_thresh'),
+            )
             loudnorm_filter = (
-                f'loudnorm=I={target_lufs}:TP={true_peak}:LRA={lra}:'
+                f'loudnorm=I={target_lufs}:TP={true_peak}:LRA=11:'
                 f'measured_I={measured["input_i"]}:measured_TP={measured["input_tp"]}:'
                 f'measured_LRA={measured["input_lra"]}:measured_thresh={measured["input_thresh"]}:'
-                f'offset={measured["target_offset"]}:linear=true:print_format=none'
+                f'offset={measured["target_offset"]}:linear=true:print_format=summary'
             )
             logger.debug('Using two-pass loudnorm with measured values')
         else:
-            loudnorm_filter = f'loudnorm=I={target_lufs}:TP={true_peak}:LRA={lra}:print_format=none'
+            loudnorm_filter = f'loudnorm=I={target_lufs}:TP={true_peak}:LRA=11:print_format=summary'
             logger.debug('Falling back to single-pass loudnorm')
 
         _SILENCE_TRIM = (
@@ -159,20 +166,17 @@ def master_audio(
             'areverse'
         )
 
-        if measured and all(v is not None for v in measured.values()):
-            # Two-pass: loudnorm with linear=true applies true-peak limiting
-            # as part of its gain calculation — alimiter is redundant and can
-            # clip the signal a second time, raising effective true peak.
-            filter_chain = f'{_SILENCE_TRIM},{_COMPRESSOR},{loudnorm_filter}'
-        else:
-            # Single-pass fallback: loudnorm doesn't apply reliable true-peak
-            # control without measured values, so add alimiter as safety net.
-            filter_chain = (
-                f'{_SILENCE_TRIM},'
-                f'{_COMPRESSOR},'
-                f'{loudnorm_filter},'
-                'alimiter=level_in=1:level_out=1:limit=0.794:attack=5:release=50:level=disabled'
-            )
+        # Defensive alimiter after loudnorm — loudnorm's TP control has ~1 dB
+        # uncertainty and does not catch intersample peaks from the MP3 encoder's
+        # reconstruction filter. limit=0.794 = -2.0 dBFS sample peak; with
+        # loudnorm-normalized input this rarely triggers but prevents +1 dBTP
+        # excursions empirically observed with linear=true on L4/Ada.
+        filter_chain = (
+            f'{_SILENCE_TRIM},'
+            f'{_COMPRESSOR},'
+            f'{loudnorm_filter},'
+            'alimiter=level_in=1:level_out=1:limit=0.794:attack=5:release=50:level=disabled'
+        )
 
         result = subprocess.run(
             [
@@ -238,11 +242,19 @@ def master_audio(
                 logger.info('Post-master true peak: %.1f dBTP', measured_tp)
                 if measured_tp > -1.0:
                     logger.warning(
-                        'Post-master true peak %.1f dBTP exceeds -1.0 — applying remediation pass',
+                        'Post-master true peak %.1f dBTP exceeds -1.0 — '
+                        'applying remediation pass with LUFS preservation',
                         measured_tp,
                     )
-                    compensation_db = -(measured_tp + 2.0)  # aim for -2.0 dBTP
+                    # Strategy: re-run loudnorm on the mastered output targeting
+                    # the original LUFS — preserves loudness while tightening TP.
+                    # Follow with tight alimiter as hard ceiling.
+                    # limit=0.708 = -3.0 dBFS sample peak → ~-1.5 dBTP true peak.
                     temp_path = output_path + '.remaster.mp3'
+                    remedy_filter = (
+                        f'loudnorm=I={target_lufs}:TP=-2.5:LRA=11:print_format=summary,'
+                        'alimiter=level_in=1:level_out=1:limit=0.708:attack=5:release=50:level=disabled'
+                    )
                     remedy_result = subprocess.run(
                         [
                             'ffmpeg',
@@ -250,10 +262,7 @@ def master_audio(
                             '-i',
                             output_path,
                             '-af',
-                            (
-                                f'volume={compensation_db}dB,'
-                                'alimiter=level_in=1:level_out=1:limit=0.794:attack=5:release=50:level=disabled'
-                            ),
+                            remedy_filter,
                             '-codec:a',
                             'libmp3lame',
                             '-b:a',
@@ -265,7 +274,30 @@ def master_audio(
                     )
                     if remedy_result.returncode == 0:
                         shutil.move(temp_path, output_path)
-                        logger.info('True-peak remediation applied successfully')
+                        logger.info('True-peak remediation with LUFS preservation applied')
+                        verify2 = subprocess.run(
+                            [
+                                'ffmpeg',
+                                '-i',
+                                output_path,
+                                '-filter_complex',
+                                'ebur128=peak=true',
+                                '-f',
+                                'null',
+                                '-',
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        tp2: Optional[float] = None
+                        for _line2 in verify2.stderr.split('\n'):
+                            if 'Peak:' in _line2 and 'dBFS' in _line2:
+                                try:
+                                    tp2 = float(_line2.split('Peak:')[1].split('dBFS')[0].strip())
+                                except (ValueError, IndexError):
+                                    pass
+                        logger.info('Post-remediation true peak: %s dBTP', tp2)
                     else:
                         logger.error('True-peak remediation failed; keeping original output')
                         if Path(temp_path).exists():
