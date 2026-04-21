@@ -336,11 +336,10 @@ class ChunkedStrategy(NarrationStrategy):
         max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
         while not validation.passed and retry_count < max_retries:
             if validation.word_ratio < _validator.CRITICAL_WORD_RATIO:
-                logger.warning(
-                    'Critical truncation (%.0f%%) for chunk — falling back to source text',
-                    validation.word_ratio * 100,
+                raise NarrationError(
+                    f'Critical truncation: narration is {validation.word_ratio:.0%} of source after '
+                    f'{retry_count} retries — aborting chunk rather than shipping raw text'
                 )
-                return chunk
             logger.warning(
                 'Validation failed for chunk — retrying (%d/%d). Missing: %s',
                 retry_count + 1,
@@ -471,11 +470,10 @@ class SingleShotStrategy(NarrationStrategy):
         max_retries = 2  # Allow initial attempt + 2 retries = 3 total attempts
         while not validation.passed and retry_count < max_retries:
             if validation.word_ratio < _validator.CRITICAL_WORD_RATIO:
-                logger.warning(
-                    'Critical truncation (%.0f%%) — falling back to source text',
-                    validation.word_ratio * 100,
+                raise NarrationError(
+                    f'Critical truncation: narration is {validation.word_ratio:.0%} of source after '
+                    f'{retry_count} retries — aborting rather than shipping raw text'
                 )
-                return text
             logger.warning(
                 'Validation failed — retrying (%d/%d). Missing: %s',
                 retry_count + 1,

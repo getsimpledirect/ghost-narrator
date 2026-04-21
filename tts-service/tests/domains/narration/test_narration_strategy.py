@@ -455,3 +455,93 @@ def test_strip_llm_artifacts_preserves_normal_content():
     text = "I'm sitting in a Toronto coffee shop, looking at my bank statements."
     result = _strip_llm_artifacts(text)
     assert result == text
+
+
+class TestNarrationFallbackRemoval:
+    """Critical truncation must raise NarrationError, not silently return raw text."""
+
+    def test_chunked_critical_truncation_raises(self):
+        """ChunkedStrategy must raise NarrationError on critical truncation."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch, MagicMock
+
+        from app.domains.narration.strategy import ChunkedStrategy
+        from app.core.exceptions import NarrationError
+        from app.core.hardware import HardwareTier
+
+        mock_client = MagicMock()
+        strategy = ChunkedStrategy(
+            llm_client=mock_client,
+            chunk_words=400,
+            tier=HardwareTier.CPU_ONLY,
+            model='test-model',
+        )
+
+        # Simulate a validation result that triggers CRITICAL_WORD_RATIO
+        from app.domains.narration.validator import NarrationValidator, ValidationResult
+
+        critical_result = ValidationResult(
+            passed=False,
+            word_ratio=0.1,  # Well below CRITICAL_WORD_RATIO (typically 0.5)
+            missing_entities=[],
+        )
+
+        with patch.object(strategy, '_client') as mock_client_attr:
+            with patch(
+                'app.domains.narration.strategy._call_llm_with_retry',
+                new_callable=AsyncMock,
+                return_value='tiny output',
+            ):
+                with patch(
+                    'app.domains.narration.validator.NarrationValidator.validate',
+                    return_value=critical_result,
+                ):
+                    with pytest.raises(NarrationError, match='Critical truncation'):
+                        asyncio.run(
+                            strategy._narrate_chunk(
+                                chunk='A long paragraph with many words ' * 20,
+                                chunk_index=0,
+                                total_chunks=1,
+                                previous_output_tail='',
+                            )
+                        )
+
+    def test_single_shot_critical_truncation_raises(self):
+        """SingleShotStrategy must raise NarrationError on critical truncation."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch, MagicMock
+
+        from app.domains.narration.strategy import SingleShotStrategy
+        from app.core.exceptions import NarrationError
+        from app.core.hardware import HardwareTier
+
+        mock_client = MagicMock()
+        strategy = SingleShotStrategy(
+            llm_client=mock_client,
+            fallback_threshold_words=500,
+            fallback_chunk_words=200,
+            tier=HardwareTier.CPU_ONLY,
+            model='test-model',
+        )
+
+        from app.domains.narration.validator import ValidationResult
+
+        critical_result = ValidationResult(
+            passed=False,
+            word_ratio=0.1,
+            missing_entities=[],
+        )
+
+        with patch(
+            'app.domains.narration.strategy._call_llm_with_retry',
+            new_callable=AsyncMock,
+            return_value='tiny',
+        ):
+            with patch(
+                'app.domains.narration.validator.NarrationValidator.validate',
+                return_value=critical_result,
+            ):
+                with pytest.raises(NarrationError, match='Critical truncation'):
+                    asyncio.run(
+                        strategy.narrate('A long paragraph with many words ' * 20)
+                    )
