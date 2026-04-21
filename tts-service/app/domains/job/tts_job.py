@@ -44,6 +44,7 @@ from typing import Optional
 from pydub import AudioSegment as _AudioSegment
 
 from app.core.exceptions import (
+    ChunkExhaustedError,
     JobDeletedError,
     SynthesisError,
     StorageError,
@@ -230,6 +231,9 @@ async def run_tts_job(
         # without a restart, synthesis would immediately raise SynthesisError.
         engine.uncancel_job(job_id)
 
+        # Obtain reference F0 for speaker-drift gating — pre-computed from voice sample
+        _reference_f0 = getattr(engine, 'reference_f0', None)
+
         # Fetch generation config once (async Redis read) before entering thread pool
         generation_kwargs, _overrides = await get_effective_config()
 
@@ -396,15 +400,22 @@ async def run_tts_job(
                                 if use_tail_conditioning:
                                     # Per-segment quality check on HIGH_VRAM so the tail
                                     # reference is always from a known-good segment.
-                                    [checked_path] = await _quality_check_and_resynthesize(
-                                        [segment_path],
-                                        [clean_seg],
-                                        job_id,
-                                        engine,
-                                        loop,
-                                        executor,
-                                        generation_kwargs,
-                                    )
+                                    try:
+                                        [checked_path] = await _quality_check_and_resynthesize(
+                                            [segment_path],
+                                            [clean_seg],
+                                            job_id,
+                                            engine,
+                                            loop,
+                                            executor,
+                                            generation_kwargs,
+                                            reference_f0=_reference_f0,
+                                        )
+                                    except ChunkExhaustedError as exc:
+                                        raise RuntimeError(
+                                            f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                            'Job aborted to prevent shipping broken audio.'
+                                        ) from exc
                                     segment_wavs.append(checked_path)
                                     # Extract tail for next segment; skip on failure (non-fatal)
                                     try:
@@ -442,29 +453,42 @@ async def run_tts_job(
                                 logger.info(
                                     f'[{job_id}] Consistency check across {len(segment_wavs)} segments...'
                                 )
-                                segment_wavs = await _check_segment_consistency(
-                                    segment_wavs,
-                                    segment_texts,
-                                    job_id,
-                                    engine,
-                                    loop,
-                                    executor,
-                                    generation_kwargs,
-                                )
+                                try:
+                                    segment_wavs = await _check_segment_consistency(
+                                        segment_wavs,
+                                        segment_texts,
+                                        job_id,
+                                        engine,
+                                        loop,
+                                        executor,
+                                        generation_kwargs,
+                                    )
+                                except ChunkExhaustedError as exc:
+                                    raise RuntimeError(
+                                        f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                        'Job aborted to prevent shipping broken audio.'
+                                    ) from exc
                             else:
                                 # Batch quality check for lower tiers (silence/too-short detection)
                                 logger.info(
                                     f'[{job_id}] Quality check on {len(segment_wavs)} segments...'
                                 )
-                                segment_wavs = await _quality_check_and_resynthesize(
-                                    segment_wavs,
-                                    segment_texts,
-                                    job_id,
-                                    engine,
-                                    loop,
-                                    executor,
-                                    generation_kwargs,
-                                )
+                                try:
+                                    segment_wavs = await _quality_check_and_resynthesize(
+                                        segment_wavs,
+                                        segment_texts,
+                                        job_id,
+                                        engine,
+                                        loop,
+                                        executor,
+                                        generation_kwargs,
+                                        reference_f0=_reference_f0,
+                                    )
+                                except ChunkExhaustedError as exc:
+                                    raise RuntimeError(
+                                        f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                        'Job aborted to prevent shipping broken audio.'
+                                    ) from exc
 
                             if len(segment_wavs) > 1:
                                 merged_wav = await loop.run_in_executor(
@@ -493,15 +517,22 @@ async def run_tts_job(
                         logger.info(
                             f'[{job_id}] Quality check on {len(chunk_wav_paths)} audio file(s)...'
                         )
-                        chunk_wav_paths = await _quality_check_and_resynthesize(
-                            chunk_wav_paths,
-                            all_chunks,
-                            job_id,
-                            engine,
-                            loop,
-                            executor,
-                            generation_kwargs,
-                        )
+                        try:
+                            chunk_wav_paths = await _quality_check_and_resynthesize(
+                                chunk_wav_paths,
+                                all_chunks,
+                                job_id,
+                                engine,
+                                loop,
+                                executor,
+                                generation_kwargs,
+                                reference_f0=_reference_f0,
+                            )
+                        except ChunkExhaustedError as exc:
+                            raise RuntimeError(
+                                f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                'Job aborted to prevent shipping broken audio.'
+                            ) from exc
 
                     # Step 3: Skip per-chunk normalization — it causes inconsistent loudness
                     # between chunks (single-pass loudnorm is inaccurate). Final mastering
