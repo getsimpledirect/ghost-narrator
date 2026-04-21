@@ -481,6 +481,7 @@ async def run_tts_job(
                                         loop,
                                         executor,
                                         generation_kwargs,
+                                        reference_f0=_reference_f0,
                                     )
                                 except ChunkExhaustedError as exc:
                                     raise RuntimeError(

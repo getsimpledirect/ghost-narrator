@@ -397,6 +397,7 @@ async def _check_segment_consistency(
     executor,
     generation_kwargs: dict | None = None,
     loudness_tolerance_db: float = 3.0,
+    reference_f0: float | None = None,
 ) -> list[str]:
     """Re-synthesize segments whose loudness deviates > tolerance_db from the median.
 
@@ -444,7 +445,15 @@ async def _check_segment_consistency(
                 median_dbfs,
             )
             checked[i] = await _resynthesize_with_strategies(
-                i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
+                i,
+                wav_path,
+                chunk_texts,
+                job_id,
+                engine,
+                loop,
+                executor,
+                generation_kwargs,
+                reference_f0=reference_f0,
             )
             resynth_count += 1
 
