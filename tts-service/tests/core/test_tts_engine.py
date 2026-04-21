@@ -32,7 +32,7 @@ class TestMaxNewTokensBounding:
     def test_compute_max_tokens_respects_minimum(self):
         from app.core.tts_engine import _compute_max_new_tokens
 
-        assert _compute_max_new_tokens(word_count=1) >= 200
+        assert _compute_max_new_tokens(word_count=1) >= 300
 
     def test_compute_max_tokens_for_300_words(self):
         from app.core.tts_engine import _compute_max_new_tokens
