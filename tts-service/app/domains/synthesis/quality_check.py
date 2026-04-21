@@ -110,7 +110,14 @@ def _compute_spectral_flatness(wav_path: str) -> float:
 
 
 def _estimate_median_f0(wav_path: str) -> float | None:
-    """Autocorrelation-based F0 estimate (Hz). Returns None if no voiced frames."""
+    """Autocorrelation-based F0 estimate (Hz). Returns None if no voiced frames.
+
+    Uses a stricter voicing threshold (0.5) and octave-down correction to
+    avoid the classic autocorrelation octave error: when even harmonics are
+    strong, the peak at 2× the true period can exceed the true-period peak,
+    causing the estimator to return F0/2 (or 2×F0 depending on direction).
+    Returns None if fewer than 10 voiced frames are found.
+    """
     try:
         data, sr = _sf.read(wav_path, dtype='float32', always_2d=False)
         if data.ndim > 1:
@@ -132,9 +139,17 @@ def _estimate_median_f0(wav_path: str) -> float | None:
             if max_lag >= len(corr):
                 continue
             peak_lag = min_lag + int(np.argmax(corr[min_lag:max_lag]))
-            if corr[0] > 0 and corr[peak_lag] > 0.3 * corr[0]:
-                f0_values.append(sr / peak_lag)
-        if not f0_values:
+            # Stricter voicing threshold — 0.3 passes noise frames; 0.5 does not.
+            if corr[0] <= 0 or corr[peak_lag] <= 0.5 * corr[0]:
+                continue
+            # Octave-down correction: if the half-period has comparable autocorrelation
+            # (within 10%), the true fundamental is an octave lower.
+            half_lag = peak_lag // 2
+            if half_lag >= min_lag and corr[half_lag] >= 0.9 * corr[peak_lag]:
+                peak_lag = half_lag
+            f0_values.append(sr / peak_lag)
+        # Require at least 10 voiced frames for a reliable median.
+        if len(f0_values) < 10:
             return None
         return float(np.median(f0_values))
     except Exception:

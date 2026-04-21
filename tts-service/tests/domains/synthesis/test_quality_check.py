@@ -182,6 +182,43 @@ class TestEstimateMedianF0:
         assert f0 is not None
         assert 170 < f0 < 240
 
+    def test_multi_harmonic_no_octave_error(self, tmp_path):
+        """Multi-harmonic input (fundamental + 2nd + 3rd) must not return double freq."""
+        from app.domains.synthesis.quality_check import _estimate_median_f0
+
+        sr = 22050
+        duration_s = 3.0
+        t = np.linspace(0, duration_s, int(sr * duration_s), endpoint=False)
+        # Fundamental 120 Hz + strong 2nd harmonic (240 Hz) + 3rd (360 Hz)
+        # The 2nd harmonic is at 0.8× the fundamental — strong enough to trigger
+        # octave errors in naive autocorrelation.
+        signal = (
+            np.sin(2 * np.pi * 120 * t)
+            + 0.8 * np.sin(2 * np.pi * 240 * t)
+            + 0.4 * np.sin(2 * np.pi * 360 * t)
+        ).astype(np.float32) * 0.4
+        p = str(tmp_path / 'multi_harmonic.wav')
+        _write_wav(p, signal, sr=sr)
+        f0 = _estimate_median_f0(p)
+        assert f0 is not None
+        # Must be within ±20% of 120 Hz, not erroneously doubled to ~240 Hz
+        assert 96 < f0 < 145, f'Expected ~120 Hz, got {f0:.1f} Hz'
+
+    def test_requires_minimum_voiced_frames(self, tmp_path):
+        """Very short signal with < 10 voiced frames should return None."""
+        from app.domains.synthesis.quality_check import _estimate_median_f0
+
+        sr = 22050
+        # 200ms sine — at 30ms frames / 15ms hop, this yields ~12 frames total,
+        # but only the voiced ones count; the short sine has exactly the right
+        # amount of frames to test the boundary. Use 100ms to be clearly below.
+        t = np.linspace(0, 0.1, int(sr * 0.1), endpoint=False)
+        signal = (np.sin(2 * np.pi * 200 * t) * 0.5).astype(np.float32)
+        p = str(tmp_path / 'short.wav')
+        _write_wav(p, signal, sr=sr)
+        result = _estimate_median_f0(p)
+        assert result is None
+
 
 class TestQualityCheckImports:
     def test_quality_check_module_imports(self):
