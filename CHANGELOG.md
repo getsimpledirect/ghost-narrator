@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v2.13.2 (2026-04-21)
+
+### Bug Fixes
+
+- **mastering**: Preserve LUFS during true-peak remediation
+  ([`e74f5e4`](https://github.com/getsimpledirect/ghost-narrator/commit/e74f5e4707f988e57f3035b445c9e6bc1ed21c73))
+
+- mastering.py: replace flat volume reduction in remediation pass with a second loudnorm pass
+  (I=target_lufs, TP=-2.5, LRA=11) followed by alimiter=limit=0.708 (-3.0 dBFS sample peak → ~-1.5
+  dBTP true peak) - mastering.py: add post-remediation ebur128 verification and log the resulting
+  true peak so loudness outcome is visible in logs - tts_job.py: loosen LUFS gate tolerance from
+  ±2.5 to ±3.0 LUFS
+
+Previous remediation did compensation_db = -(measured_tp + 2.0) flat volume reduction which fixed TP
+  but knocked LUFS from -14.7 to -17.8, failing the loudness gate. The new loudnorm-based
+  remediation targets the original LUFS while tightening the true-peak ceiling.
+
+±3.0 LUFS matches AES podcast distribution acceptable range (-11 to -17 LUFS) and accounts for the
+  mastering pipeline's TP/loudness tradeoff inherent in loudnorm + alimiter chains.
+
+- **mastering**: Restore defensive alimiter after loudnorm pass-2
+  ([`a17bc2d`](https://github.com/getsimpledirect/ghost-narrator/commit/a17bc2d5bb412e0cab6e19795bda5efe286eb329))
+
+- mastering.py: add alimiter=limit=0.794 after loudnorm in both two-pass and single-pass paths
+  (previously removed from two-pass) - mastering.py: add INFO-level logging of pass-1 loudnorm
+  measurements (I, TP, LRA, thresh) for diagnostics - mastering.py: harden LRA to 11 in all loudnorm
+  calls; switch print_format to summary for pass-2 so ffmpeg logs loudnorm result - tests: update
+  test_alimiter_command_contains_correct_limit comment to reflect that alimiter is now present in
+  all filter chain paths
+
+Empirical test showed loudnorm linear=true output +1.1 dBTP despite TP=-2.0 target. loudnorm's TP
+  control does not catch intersample peaks from the MP3 encoder's reconstruction filter.
+  alimiter=limit=0.794 (-2.0 dBFS sample peak) is the only reliable hard ceiling.
+
+
 ## v2.13.1 (2026-04-21)
 
 ### Performance Improvements
