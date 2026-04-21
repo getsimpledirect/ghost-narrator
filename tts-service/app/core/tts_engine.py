@@ -203,6 +203,10 @@ class TTSEngine:
 
                 probe_optimal_segment_words(SELECTED_TTS_MODEL)
 
+                # All prerequisites met — set ready before warmup so the warmup's
+                # synthesize_to_file() call passes the readiness guard.
+                self._ready = True
+
                 # Warmup synthesis — burns one short call to populate internal
                 # KV-cache buffers and normalise codec dynamics before the first
                 # real job.  Without this, Chunk 0 of the first article can have
@@ -222,9 +226,11 @@ class TTSEngine:
                     os.unlink(_warmup_path)
                     logger.info('TTS warmup synthesis complete')
                 except Exception as _warmup_exc:
-                    logger.warning('TTS warmup failed (non-fatal): %s', _warmup_exc)
+                    logger.warning(
+                        'TTS warmup failed — cold-start artefacts likely on first job: %s',
+                        _warmup_exc,
+                    )
 
-                self._ready = True
                 logger.info('Qwen3-TTS engine ready')
             except Exception as e:
                 raise TTSEngineError(f'Failed to load Qwen3-TTS model: {e}') from e
