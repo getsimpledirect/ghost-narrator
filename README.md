@@ -69,8 +69,8 @@ Ghost Narrator auto-detects your hardware and selects the right models:
 |---|---|---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b (Ollama) | 192kbps, 48kHz | Parallel workers, any machine |
 | Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
-| Mid | 12–18 GB | Qwen3-TTS-1.7B | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | Pipelined narrate+synthesize, VRAM-probed segments (up to 650 words) |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz** | **Pipelined narrate+synthesize, VRAM-probed segments (up to 650 words), multi-voice, quality re-synth, voice caching** |
+| Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | Pipelined narrate+synthesize, VRAM-probed segments (up to 400 words) |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (fp16)** | **Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz** | **Pipelined narrate+synthesize, VRAM-probed segments (up to 400 words), multi-voice, quality re-synth, voice caching** |
 
 Override with `HARDWARE_TIER=cpu_only` in `.env` if auto-detection fails.
 

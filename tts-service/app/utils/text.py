@@ -282,7 +282,7 @@ def split_into_large_segments(text: str, target_words: int) -> list[str]:
 
     Args:
         text: Full narration text.
-        target_words: Desired words per segment (e.g. 650).
+        target_words: Desired words per segment (e.g. 400).
 
     Returns:
         List of segments, each ≤ target_words × 1.1 words (except when a

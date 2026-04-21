@@ -106,7 +106,7 @@ except ValueError:
 # Single-shot synthesis settings
 # NOTE: tts_job.py uses get_optimal_segment_words() (hardware.py) as the live
 # threshold — probed from free VRAM after model load and clamped to the model's
-# empirical noise ceiling (650 words for 1.7B, 300 words for 0.6B).
+# empirical noise ceiling (400 words for 1.7B, 300 words for 0.6B).
 # SINGLE_SHOT_MAX_WORDS is kept as a manual override / pre-probe fallback only.
 # Set SINGLE_SHOT_SEGMENT_WORDS in .env to override the dynamic probe entirely.
 SINGLE_SHOT_MAX_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_MAX_WORDS', '400'))

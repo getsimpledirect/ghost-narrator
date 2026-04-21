@@ -145,20 +145,20 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=7000,  # 650 words × 5.54 tok/word = 3601 tokens; 7000 = 1.94× headroom
+        tts_max_new_tokens=7000,  # 400 words × 5.54 tok/word = 2216 tokens; 7000 = 3.16× headroom
     ),
     HardwareTier.HIGH_VRAM: EngineConfig(
         tier=HardwareTier.HIGH_VRAM,
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-Base',
         tts_device='cuda',
-        tts_precision='bf16',  # bf16: 1.5-2x faster on Tensor Core GPUs, imperceptible quality diff
+        tts_precision='fp16',  # fp16: extra mantissa bits improve pitch stability on Ada (sm_89)
         # vLLM fp8: Qwen3.5-9B ≈ 9.7 GB weights + fp8 KV ≈ 4.8 GB at 65 K tokens = 14.5 GB;
         # leaves ~3.5 GB headroom on 24 GB L4 alongside TTS (~5.1 GB runtime).
         llm_model='Qwen/Qwen3.5-9B',
         llm_num_ctx=65536,
         narration_strategy='single_shot',  # qwen3.5:9b narrates whole articles ≤8000 words in one call
         narration_chunk_words=4000,  # fallback chunk size when article > 8000 words
-        tts_chunk_words=300,  # Larger chunks = fewer boundaries = smoother flow
+        tts_chunk_words=200,  # Reduced from 300 — shorter chunks limit per-chunk autoregressive drift
         synthesis_workers=1,  # GPU synthesis is serial — gpu semaphore + _synthesis_lock
         mp3_bitrate='320k',  # Studio quality
         sample_rate=48000,  # Studio quality
@@ -170,7 +170,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tts_temperature_sub_talker=0.3,
         tts_top_k_sub_talker=40,
         tts_do_sample_sub_talker=True,
-        tts_max_new_tokens=7000,  # 650 words × 5.54 tok/word = 3601 tokens; 7000 = 1.94× headroom
+        tts_max_new_tokens=7000,  # 400 words × 5.54 tok/word = 2216 tokens; 7000 = 3.16× headroom
     ),
 }
 
@@ -191,7 +191,7 @@ _VRAM_SAFETY_HEADROOM: int = 512 * 1024 * 1024  # 512 MiB reserved for CUDA cont
 # Empirical quality ceilings per model family — above these word counts the
 # codec context window fills up and the model produces noise or repetition.
 _NOISE_CEILING: dict[str, int] = {
-    '1.7B': 650,  # Qwen3-TTS-12Hz-1.7B-Base (hard limit ~700; conservative)
+    '1.7B': 400,  # Qwen3-TTS-12Hz-1.7B-Base — reduced from 650; empirical drift limit at ~170s/call
     '0.6B': 300,  # Qwen3-TTS-12Hz-0.6B-Base (hard limit ~400; conservative)
 }
 _DEFAULT_NOISE_CEILING: int = 400  # safe fallback for unrecognised models

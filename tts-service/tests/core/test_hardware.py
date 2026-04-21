@@ -222,10 +222,11 @@ def test_high_vram_llm_model_is_qwen3_5_9b():
 
 
 def test_high_vram_tts_max_new_tokens_is_7000():
-    """HIGH_VRAM max_new_tokens must be 7000 for dynamic 650-word segments.
+    """HIGH_VRAM max_new_tokens must be 7000 for dynamic 400-word segments.
 
-    Empirical noise ceiling for Qwen3-TTS-1.7B is 650 words.
-    650 words × 5.54 codec tokens/word = 3,601 tokens; 7000 = 1.94× headroom.
+    Empirical noise ceiling for Qwen3-TTS-1.7B is 400 words (reduced from 650
+    to limit per-segment autoregressive drift on long generation runs).
+    400 words × 5.54 codec tokens/word = 2,216 tokens; 7000 = 3.16× headroom.
     """
     from app.core.hardware import _TIER_CONFIGS
 
@@ -234,10 +235,10 @@ def test_high_vram_tts_max_new_tokens_is_7000():
 
 
 def test_mid_vram_tts_max_new_tokens_is_7000():
-    """MID_VRAM max_new_tokens must be 7000 (1.94× headroom for 650-word segments).
+    """MID_VRAM max_new_tokens must be 7000 (3.16× headroom for 400-word segments).
 
-    MID_VRAM uses the same 1.7B model with the same 650-word noise ceiling.
-    4500 only gave 1.25× headroom at 650 words — too marginal for natural variation.
+    MID_VRAM uses the same 1.7B model with the same 400-word noise ceiling.
+    7000 gives comfortable headroom at 400 words (2,216 tokens).
     """
     from app.core.hardware import _TIER_CONFIGS
 
@@ -262,7 +263,7 @@ def test_low_vram_tts_max_new_tokens_is_4500():
 def test_get_noise_ceiling_1_7b():
     from app.core.hardware import _get_noise_ceiling
 
-    assert _get_noise_ceiling('Qwen/Qwen3-TTS-12Hz-1.7B-Base') == 650
+    assert _get_noise_ceiling('Qwen/Qwen3-TTS-12Hz-1.7B-Base') == 400
 
 
 def test_get_noise_ceiling_0_6b():
@@ -288,8 +289,8 @@ def test_probe_returns_noise_ceiling_when_no_cuda():
         with patch('app.core.hardware.torch') as mock_torch:
             mock_torch.cuda.is_available.return_value = False
             result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-1.7B-Base')
-        assert result == 650
-        assert _hw._optimal_segment_words == 650
+        assert result == 400
+        assert _hw._optimal_segment_words == 400
     finally:
         _hw._optimal_segment_words = original
 
@@ -322,10 +323,10 @@ def test_probe_is_noise_limited_on_large_gpu():
         _hw._optimal_segment_words = None
         with patch('app.core.hardware.torch') as mock_torch:
             mock_torch.cuda.is_available.return_value = True
-            # 6 GB free — far exceeds any reasonable codec token budget for 650 words
+            # 6 GB free — far exceeds any reasonable codec token budget for 400 words
             mock_torch.cuda.mem_get_info.return_value = (6 * 1024**3, 24 * 1024**3)
             result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-1.7B-Base')
-        assert result == 650  # noise ceiling for 1.7B
+        assert result == 400  # noise ceiling for 1.7B
     finally:
         _hw._optimal_segment_words = original
 

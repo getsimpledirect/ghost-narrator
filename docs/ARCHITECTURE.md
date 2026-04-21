@@ -150,11 +150,11 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 |---|---|---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Parallel workers, any machine |
 | Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
-| Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | RTX 3080 12GB+ / A10G, pipelined narrate+synthesize, VRAM-probed segments (up to 650 words) |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **VRAM-probed segments (up to 650 words), tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
+| Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | RTX 3080 12GB+ / A10G, pipelined narrate+synthesize, VRAM-probed segments (up to 400 words) |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (fp16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **VRAM-probed segments (up to 400 words), tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
-- **bf16 TTS precision** — 1.5–2x faster synthesis on Tensor Core GPUs with imperceptible quality difference
+- **fp16 TTS precision** — extra mantissa bits improve pitch stability on Ada Lovelace (sm_89 / L4) compared to bf16
 - **Tail conditioning** — each segment is conditioned on the last 2.5s of the preceding segment, anchoring voice timbre and speaking rate across synthesis boundaries
 - **WER-based re-synthesis** — each segment is transcribed by Whisper base (CPU) and re-synthesized if word error rate exceeds 10%; catches hallucinated, skipped, and repeated words that silence-ratio checks cannot detect
 - **Loudness consistency check** — after all segments are synthesized, any segment deviating more than ±3 dB from the median dBFS is re-synthesized; prevents volume-level drift between segments
@@ -374,7 +374,7 @@ Expected response:
 - Zero-shot voice cloning from a single reference audio file
 - Async background job processing with Redis-backed status tracking
 - Automatic fallback to in-memory storage if Redis is unavailable
-- VRAM-probed segment sizing — optimal segment word count auto-calculated from free VRAM after model load; eliminates boundary artifacts within each segment (up to 650 words for 1.7B, 300 for 0.6B)
+- VRAM-probed segment sizing — optimal segment word count auto-calculated from free VRAM after model load; eliminates boundary artifacts within each segment (up to 400 words for 1.7B, 300 for 0.6B)
 - Segment mode with tail conditioning for articles exceeding the probed segment size (voice timbre anchored across segment boundaries)
 - Professional audio mastering (two-pass EBU R128 loudnorm, speech compressor, true-peak limiter)
 - Exponential-backoff retry on storage uploads and n8n callbacks
@@ -564,7 +564,7 @@ The TTS service implements a multi-stage pipeline with hardware-adaptive quality
 - Determines synthesis strategy based on narrated word count vs `seg_words` (VRAM-probed optimal segment size, computed at startup):
   - **≤ seg_words**: Single-shot synthesis — entire text in one TTS call (zero boundary artifacts)
   - **> seg_words**: Segment mode — splits at sentence boundaries into segments of ≤ `seg_words` each
-- `seg_words` is computed from free VRAM after model + torch.compile() load: `(free_vram − 512 MiB) / 150 KB_per_token / 5.54 tok_per_word`, clamped to 200–noise_ceiling (650 words for 1.7B, 300 for 0.6B). Override with `SINGLE_SHOT_SEGMENT_WORDS=N` in `.env`.
+- `seg_words` is computed from free VRAM after model + torch.compile() load: `(free_vram − 512 MiB) / 150 KB_per_token / 5.54 tok_per_word`, clamped to 200–noise_ceiling (400 words for 1.7B, 300 for 0.6B). Override with `SINGLE_SHOT_SEGMENT_WORDS=N` in `.env`.
 - Applies final normalization for TTS: expands numbers/dates/symbols to spoken form; strips any residual [PAUSE] markers after gap insertion
 
 **Stage 3: Synthesis**
@@ -1302,7 +1302,7 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 - To use a different endpoint: set `LLM_BASE_URL` in `.env`
 
 **Audio quality is poor (pitch/jumps/volume changes):**
-- Segment size is VRAM-probed at startup — up to 650 words (1.7B model) or 300 words (0.6B). If you hear inconsistency at boundaries, reduce the segment size: set `SINGLE_SHOT_SEGMENT_WORDS=200` in `.env`.
+- Segment size is VRAM-probed at startup — up to 400 words (1.7B model) or 300 words (0.6B). If you hear inconsistency at boundaries, reduce the segment size: set `SINGLE_SHOT_SEGMENT_WORDS=200` in `.env`.
 - Check reference WAV format: `ffprobe tts-service/voices/default/reference.wav`
 - Expected: Audio: pcm_s16le, 22050 Hz, mono, s16, 352 kb/s
 - Ensure 45+ seconds of clear speech with no background noise
