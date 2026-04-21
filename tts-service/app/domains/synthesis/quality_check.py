@@ -62,7 +62,7 @@ def _compute_onset_rate(wav_path: str) -> float:
         rms_frames = np.array(
             [
                 np.sqrt(np.mean(data[i : i + frame_size] ** 2))
-                for i in range(0, len(data) - frame_size, hop_size)
+                for i in range(0, len(data) - frame_size + 1, hop_size)
             ]
         )
         if len(rms_frames) < 2:

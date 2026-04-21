@@ -54,6 +54,12 @@ def _make_rapid_noise(rate_hz: float, duration_s: float, sr: int = 22050) -> np.
     return data.astype(np.float32)
 
 
+def _make_stereo_sine(freq: float, duration_s: float, sr: int = 22050) -> np.ndarray:
+    """Two-channel (stereo) sine — for testing mono-mixing paths."""
+    mono = _make_sine(freq, duration_s, sr=sr)
+    return np.stack([mono, mono * 0.8], axis=1)  # shape (N, 2)
+
+
 def _make_speech_like(word_rate: float, duration_s: float, sr: int = 22050) -> np.ndarray:
     """Simulate speech: harmonic carrier + sinusoidal amplitude envelope.
 
@@ -103,6 +109,16 @@ class TestComputeOnsetRate:
         rate = _compute_onset_rate(p)
         assert 1.0 < rate < 7.0
 
+    def test_stereo_input_handled(self, tmp_path):
+        from app.domains.synthesis.quality_check import _compute_onset_rate
+        import soundfile as sf
+
+        p = str(tmp_path / 'stereo.wav')
+        sf.write(p, _make_stereo_sine(200.0, 2.0), 22050)
+        rate = _compute_onset_rate(p)
+        assert isinstance(rate, float)
+        assert rate >= 0.0
+
 
 class TestComputeSpectralFlatness:
     def test_pure_sine_has_low_flatness(self, tmp_path):
@@ -128,6 +144,16 @@ class TestComputeSpectralFlatness:
         _write_wav(p, _make_silence(1.0))
         assert _compute_spectral_flatness(p) == 0.0
 
+    def test_stereo_input_handled(self, tmp_path):
+        from app.domains.synthesis.quality_check import _compute_spectral_flatness
+        import soundfile as sf
+
+        p = str(tmp_path / 'stereo.wav')
+        sf.write(p, _make_stereo_sine(200.0, 2.0), 22050)
+        flatness = _compute_spectral_flatness(p)
+        assert isinstance(flatness, float)
+        assert 0.0 <= flatness <= 1.0
+
 
 class TestEstimateMedianF0:
     def test_sine_200hz_returns_near_200(self, tmp_path):
@@ -145,6 +171,16 @@ class TestEstimateMedianF0:
         p = str(tmp_path / 'sil.wav')
         _write_wav(p, _make_silence(1.0))
         assert _estimate_median_f0(p) is None
+
+    def test_stereo_input_handled(self, tmp_path):
+        from app.domains.synthesis.quality_check import _estimate_median_f0
+        import soundfile as sf
+
+        p = str(tmp_path / 'stereo.wav')
+        sf.write(p, _make_stereo_sine(200.0, 2.0), 22050)
+        f0 = _estimate_median_f0(p)
+        assert f0 is not None
+        assert 170 < f0 < 240
 
 
 class TestQualityCheckImports:
