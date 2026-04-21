@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v2.12.3 (2026-04-21)
+
+### Bug Fixes
+
+- **tts-service**: Promote acoustic gate logs to INFO and add warmup synthesis
+  ([`6336f61`](https://github.com/getsimpledirect/ghost-narrator/commit/6336f61aada56ea4f23de841590c7d7e568085cb))
+
+- _chunk_passes_acoustic_gate: return type bool → tuple[bool, str]; callers updated to unpack or
+  index [0] so gate reason is propagated to the WARNING log at the resynthesis dispatch site - All 6
+  gate-failure logger.debug calls promoted to logger.info so which check fired is visible in
+  production without enabling debug logging - tts_engine.py: burn one short warmup synthesis after
+  probe_optimal_segment_words to normalise KV-cache and codec dynamics before the first real job —
+  prevents cold-start acoustic artefacts on Chunk 0 of the first article - tests: assertions updated
+  to unpack (passed, reason) and assert reason is non-empty on failure paths, empty string on pass
+
+
 ## v2.12.2 (2026-04-21)
 
 ### Bug Fixes
