@@ -35,7 +35,15 @@ from unittest.mock import MagicMock
 
 
 def pytest_configure(config: object) -> None:
-    """Stub out qwen_tts so app modules can be imported without model weights."""
+    """Stub out qwen_tts so app modules can be imported without model weights.
+
+    Also disables DRY_RUN_GATE so acoustic gate tests exercise real rejection
+    logic — the gate defaults to dry-run in production but tests must enforce.
+    """
+    import os
+
+    os.environ.setdefault('DRY_RUN_GATE', 'false')
+
     if 'qwen_tts' not in sys.modules:
         _mock = types.ModuleType('qwen_tts')
         _mock.Qwen3TTSModel = MagicMock  # type: ignore[attr-defined]

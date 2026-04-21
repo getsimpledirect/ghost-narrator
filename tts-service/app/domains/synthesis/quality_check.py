@@ -27,6 +27,7 @@ from __future__ import annotations
 import functools
 import logging
 import math
+import os as _os
 import re as _re
 import threading
 
@@ -159,92 +160,134 @@ def _estimate_median_f0(wav_path: str) -> float | None:
 # Seconds of audio per word at 150 WPM (conversational narration)
 _SECONDS_PER_WORD: float = 0.40
 
-# F0 deviation threshold in semitones — beyond this, the chunk is a different "speaker"
-_MAX_F0_DEVIATION_SEMITONES: float = 3.0
+# F0 deviation threshold in semitones — beyond this, the chunk is a different "speaker".
+# Tightened to 2.5 (was 3.0): F0 is a hard identity signal, not a soft metric.
+_MAX_F0_DEVIATION_SEMITONES: float = 2.5
+
+# When true, acoustic gate logs failures but always returns pass.  Set via env var so
+# the first deployment week can collect real metric distributions without rejecting jobs.
+# Default is 'true' (shadow mode); set DRY_RUN_GATE=false to enable enforcement.
+_DRY_RUN_GATE: bool = _os.environ.get('DRY_RUN_GATE', 'true').lower() in ('1', 'true', 'yes')
+
+
+def _gate_result(passed: bool, reason: str) -> tuple[bool, str]:
+    """Return gate result, honouring _DRY_RUN_GATE shadow mode."""
+    if not passed and _DRY_RUN_GATE:
+        logger.info('Acoustic gate [DRY RUN]: would reject — %s', reason)
+        return True, ''
+    return passed, reason
 
 
 def _chunk_passes_acoustic_gate(
     wav_path: str,
     word_count: int,
     reference_f0: float | None,
-    onset_rate_ceiling: float = 6.5,
-    flatness_ceiling: float = 0.025,
+    onset_rate_ceiling: float = 8.0,
+    flatness_ceiling: float = 0.18,
 ) -> tuple[bool, str]:
     """Return (True, '') or (False, reason) based on WAV hallucination signature.
 
-    Checks (any failure → (False, reason)):
-    1. Duration < 100ms → empty output
-    2. Duration > 1.6 × expected_from_word_count → hallucinating (ran too long)
-    3. Duration < 0.4 × expected_from_word_count → truncated (ran too short)
-    4. Onset rate > onset_rate_ceiling → rapid garble
-    5. Spectral flatness of voiced frames > flatness_ceiling → noisy garble
-    6. |F0_median − reference_f0| > 3 semitones → speaker drift (only if reference given)
+    Hard checks — any one fails the chunk immediately:
+    1. Unreadable WAV
+    2. Duration < 100ms (empty output)
+    3. Duration > 1.6 × expected (hallucination runaway)
+    4. Duration < 0.4 × expected (severe truncation)
+    5. F0 drift > _MAX_F0_DEVIATION_SEMITONES (speaker identity violation)
+
+    Soft checks — BOTH must trip simultaneously to fail the chunk:
+    6. Onset rate > onset_rate_ceiling (8.0 /s)
+    7. Spectral flatness > flatness_ceiling (0.18)
+
+    When only one soft check trips, an INFO line is logged and the chunk passes.
+    Healthy Qwen3-TTS output routinely exceeds one threshold in isolation; the
+    co-occurrence pattern is the hallucination signature.
+
+    When _DRY_RUN_GATE is true, failures are logged but (True, '') is returned.
     """
+    # ── Hard checks ──────────────────────────────────────────────────────────
+
     try:
         from pydub import AudioSegment as _AS
 
         seg = _AS.from_wav(wav_path)
         duration_ms = len(seg)
     except Exception:
-        return False, 'unreadable wav'
+        return _gate_result(False, 'unreadable wav')
 
-    # 1. Empty audio
     if duration_ms < 100:
         logger.info('Acoustic gate: empty audio (%dms)', duration_ms)
-        return False, f'empty audio ({duration_ms}ms)'
+        return _gate_result(False, f'empty audio ({duration_ms}ms)')
 
-    # 2 & 3. Duration ratio
     if word_count > 0:
         expected_ms = word_count * _SECONDS_PER_WORD * 1000
         if duration_ms > expected_ms * 1.6:
             logger.info(
-                'Acoustic gate: hallucination — %dms audio for %d words (expected ~%dms)',
+                'Acoustic gate: hallucination runaway — %dms for %d words (expected ~%dms)',
                 duration_ms,
                 word_count,
                 int(expected_ms),
             )
-            return False, (
-                f'hallucination: {duration_ms}ms for {word_count}w (expected ~{int(expected_ms)}ms)'
+            return _gate_result(
+                False,
+                f'hallucination runaway: {duration_ms}ms for {word_count}w'
+                f' (expected ~{int(expected_ms)}ms)',
             )
         if duration_ms < expected_ms * 0.4:
             logger.info(
-                'Acoustic gate: truncation — %dms audio for %d words (expected ~%dms)',
+                'Acoustic gate: severe truncation — %dms for %d words (expected ~%dms)',
                 duration_ms,
                 word_count,
                 int(expected_ms),
             )
-            return False, (
-                f'truncation: {duration_ms}ms for {word_count}w (expected ~{int(expected_ms)}ms)'
+            return _gate_result(
+                False,
+                f'severe truncation: {duration_ms}ms for {word_count}w'
+                f' (expected ~{int(expected_ms)}ms)',
             )
 
-    # 4. Onset rate
-    rate = _compute_onset_rate(wav_path)
-    if rate > onset_rate_ceiling:
-        logger.info('Acoustic gate: onset rate %.1f > %.1f /s', rate, onset_rate_ceiling)
-        return False, f'onset rate {rate:.1f} > {onset_rate_ceiling:.1f}/s'
-
-    # 5. Spectral flatness
-    flatness = _compute_spectral_flatness(wav_path)
-    if flatness > flatness_ceiling:
-        logger.info('Acoustic gate: spectral flatness %.3f > %.3f', flatness, flatness_ceiling)
-        return False, f'spectral flatness {flatness:.3f} > {flatness_ceiling:.3f}'
-
-    # 6. Speaker drift
+    # F0 drift is a hard fail on its own — unambiguous speaker identity violation.
+    f0_drift_st: float | None = None
     if reference_f0 is not None and reference_f0 > 0:
         chunk_f0 = _estimate_median_f0(wav_path)
         if chunk_f0 is not None and chunk_f0 > 0:
-            semitones = abs(12 * math.log2(chunk_f0 / reference_f0))
-            if semitones > _MAX_F0_DEVIATION_SEMITONES:
-                logger.info(
-                    'Acoustic gate: speaker drift %.1f st (ref=%.0fHz chunk=%.0fHz)',
-                    semitones,
-                    reference_f0,
-                    chunk_f0,
-                )
-                return False, (
-                    f'speaker drift {semitones:.1f}st'
+            f0_drift_st = abs(12 * math.log2(chunk_f0 / reference_f0))
+            if f0_drift_st > _MAX_F0_DEVIATION_SEMITONES:
+                reason = (
+                    f'speaker drift {f0_drift_st:.1f}st'
                     f' (ref={reference_f0:.0f}Hz chunk={chunk_f0:.0f}Hz)'
                 )
+                logger.info('Acoustic gate: %s', reason)
+                return _gate_result(False, reason)
+
+    # ── Soft checks (both must co-occur) ─────────────────────────────────────
+
+    rate = _compute_onset_rate(wav_path)
+    flatness = _compute_spectral_flatness(wav_path)
+
+    onset_tripped = rate > onset_rate_ceiling
+    flatness_tripped = flatness > flatness_ceiling
+
+    if onset_tripped and flatness_tripped:
+        parts = [f'flatness={flatness:.3f}', f'onset_rate={rate:.1f}/s']
+        if f0_drift_st is not None:
+            parts.append(f'f0_drift={f0_drift_st:.1f}st')
+        reason = 'soft-check pattern: ' + ', '.join(parts)
+        logger.info('Acoustic gate: %s', reason)
+        return _gate_result(False, reason)
+
+    # Single soft-check trip — log for visibility, but pass the chunk.
+    if onset_tripped:
+        logger.info(
+            'Acoustic gate: onset_rate=%.1f/s above %.1f/s — single flag, passing',
+            rate,
+            onset_rate_ceiling,
+        )
+    elif flatness_tripped:
+        logger.info(
+            'Acoustic gate: flatness=%.3f above %.3f — single flag, passing',
+            flatness,
+            flatness_ceiling,
+        )
 
     return True, ''
 

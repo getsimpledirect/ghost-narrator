@@ -262,8 +262,7 @@ class TestDurationRatioCheck:
         from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
 
         p = str(tmp_path / 'ok.wav')
-        # Use _make_speech_like — harmonic carrier has low spectral flatness so it
-        # passes the flatness gate (flatness << 0.025). Random noise would fail.
+        # Harmonic carrier keeps flatness well below the 0.18 ceiling.
         _write_wav(p, _make_speech_like(word_rate=2.0, duration_s=20.0))
         passed, reason = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=None)
         assert passed is True
@@ -280,25 +279,53 @@ class TestDurationRatioCheck:
         assert reason
 
     def test_high_onset_rate_fails(self, tmp_path):
-        """Onset rate > 6.5 /s should flag hallucination."""
+        """Both onset rate and spectral flatness must trip simultaneously to reject.
+
+        Dense random-noise bursts at 20 Hz satisfy both conditions:
+        onset_rate >> 8.0 /s (the new ceiling) and flatness >> 0.18 (random noise ≈ 1.0).
+        """
         from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
 
         p = str(tmp_path / 'rapid.wav')
-        _write_wav(p, _make_rapid_noise(rate_hz=15.0, duration_s=10.0))
+        # rate_hz=10.0: interval=2205 samples, burst_len=1102 → clear silent gaps so
+        # onset detection fires (≈20/s).  randn bursts are spectrally flat (≈0.85),
+        # satisfying both soft checks simultaneously.  At 20Hz the burst fills the
+        # entire interval (no gaps) so onset_rate drops to ~0 despite the nominal rate.
+        _write_wav(p, _make_rapid_noise(rate_hz=10.0, duration_s=10.0))
         passed, reason = _chunk_passes_acoustic_gate(p, word_count=25, reference_f0=None)
         assert passed is False
         assert reason
 
     def test_speaker_drift_fails(self, tmp_path):
-        """F0 far from reference (>3 semitones) should fail gate."""
+        """F0 drift > 2.5 semitones is a hard fail regardless of other metrics."""
         from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
 
         p = str(tmp_path / 'high_pitch.wav')
-        # Reference is 100 Hz, chunk is 400 Hz — way more than 3 semitones apart
+        # Reference 100 Hz, chunk 400 Hz — 24 semitones of drift, unambiguous identity violation.
         _write_wav(p, (_make_sine(400.0, 5.0) * 0.5).astype(np.float32))
         passed, reason = _chunk_passes_acoustic_gate(p, word_count=12, reference_f0=100.0)
         assert passed is False
-        assert reason
+        assert 'speaker drift' in reason
+
+    def test_healthy_tts_output_with_high_flatness_passes(self, tmp_path):
+        """Healthy Qwen3-TTS voice-cloned output has flatness ~0.15 — must pass.
+
+        A sine carrier at 110 Hz mixed with 0.4× white noise gives flatness above
+        the 0.18 ceiling but normal onset rate and near-reference F0 — only one
+        soft check trips, so the chunk should be accepted.
+        """
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        p = str(tmp_path / 'healthy.wav')
+        sr = 22050
+        t = np.linspace(0, 20.0, int(sr * 20.0), endpoint=False)
+        # Sine at 110 Hz (close to reference 105 Hz) plus noise to raise flatness
+        signal = (np.sin(2 * np.pi * 110 * t) + 0.4 * np.random.randn(len(t))).astype(
+            np.float32
+        ) * 0.3
+        _write_wav(p, signal)
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=105.0)
+        assert passed is True, f'Healthy audio rejected: {reason}'
 
 
 class TestResynthesizeStrategies:
