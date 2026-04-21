@@ -322,6 +322,8 @@ async def _quality_check_and_resynthesize(
 
     for i, wav_path in enumerate(chunk_wav_paths):
         word_count = len(chunk_texts[i].split()) if i < len(chunk_texts) else 0
+        if word_count == 0:
+            logger.debug('[%s] Chunk %d: word_count=0, duration-ratio gate disabled', job_id, i)
         try:
             passed_gate = _chunk_passes_acoustic_gate(wav_path, word_count, reference_f0)
         except Exception as exc:
@@ -521,8 +523,8 @@ async def _resynthesize_with_strategies(
 
         try:
             if len(halves) == 1:
-                synth_fn = _make_synth_fn(engine, retry_kwargs)
-                await loop.run_in_executor(executor, synth_fn, halves[0], wav_path, job_id)
+                synth_fn = _make_synth_fn(engine, retry_kwargs, job_id)
+                await loop.run_in_executor(executor, synth_fn, halves[0], wav_path)
                 wc = len(halves[0].split())
                 if _chunk_passes_acoustic_gate(wav_path, wc, reference_f0):
                     logger.info('[%s] Chunk %d passed on strategy %d', job_id, chunk_idx, attempt)
@@ -536,8 +538,8 @@ async def _resynthesize_with_strategies(
                     all_ok = True
                     for si, half_text in enumerate(halves):
                         sp = f'{td}/half_{si}.wav'
-                        synth_fn = _make_synth_fn(engine, retry_kwargs)
-                        await loop.run_in_executor(executor, synth_fn, half_text, sp, job_id)
+                        synth_fn = _make_synth_fn(engine, retry_kwargs, job_id)
+                        await loop.run_in_executor(executor, synth_fn, half_text, sp)
                         if not _chunk_passes_acoustic_gate(
                             sp, len(half_text.split()), reference_f0
                         ):
@@ -564,6 +566,6 @@ async def _resynthesize_with_strategies(
     )
 
 
-def _make_synth_fn(engine, kwargs: dict):
+def _make_synth_fn(engine, kwargs: dict, job_id: str = ''):
     """Return a callable that calls engine.synthesize_to_file with given kwargs."""
-    return functools.partial(engine.synthesize_to_file, generation_kwargs=kwargs)
+    return functools.partial(engine.synthesize_to_file, job_id=job_id, generation_kwargs=kwargs)
