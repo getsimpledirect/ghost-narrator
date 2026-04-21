@@ -47,6 +47,7 @@ from pydub import AudioSegment as _AudioSegment
 from app.core.exceptions import (
     ChunkExhaustedError,
     JobDeletedError,
+    NarrationError,
     SynthesisError,
     StorageError,
     AudioProcessingError,
@@ -319,6 +320,8 @@ async def run_tts_job(
                                     f'[{job_id}] Narration complete — '
                                     f'{len(narrated_segments)} segments'
                                 )
+                            except NarrationError:
+                                raise  # critical truncation — do not fall back to raw text
                             except Exception as exc:
                                 logger.warning(
                                     f'[{job_id}] Narration failed, using raw text: {exc}'
