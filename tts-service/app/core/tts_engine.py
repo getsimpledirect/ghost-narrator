@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 from pathlib import Path
 from typing import Optional
@@ -39,6 +40,24 @@ try:
     from qwen_tts import Qwen3TTSModel  # type: ignore[import]
 except ImportError:
     Qwen3TTSModel = None  # type: ignore[assignment,misc]
+
+
+# Calibrated from Qwen3-TTS codec token rate (~50 audio tokens/second of output).
+# 1.4× headroom allows for natural pauses, slow passages, and measurement uncertainty.
+_TTS_TOKENS_PER_SECOND: int = 50
+_SECONDS_PER_WORD: float = 0.40
+_MIN_MAX_NEW_TOKENS: int = 300
+
+
+def _compute_max_new_tokens(word_count: int) -> int:
+    """Compute a safe max_new_tokens bound for the given text word count.
+
+    Prevents runaway autoregressive decoding when the model gets stuck
+    in a hallucination loop.
+    """
+    expected_seconds = word_count * _SECONDS_PER_WORD
+    bound = int(math.ceil(expected_seconds * _TTS_TOKENS_PER_SECOND * 1.4))
+    return max(bound, _MIN_MAX_NEW_TOKENS)
 
 
 class TTSEngine:
@@ -255,6 +274,13 @@ class TTSEngine:
                 # Strip None values; extract seed before forwarding to the model
                 gen_kw = {k: v for k, v in (generation_kwargs or {}).items() if v is not None}
                 seed = gen_kw.pop('seed', None)
+                # Bound max_new_tokens from word count — prevents hallucination loops.
+                # gen_kw already has None-values stripped and seed popped; mutate in place so
+                # both generate_voice_clone calls (primary and fp16-fallback) inherit the bound.
+                _wc = len(text.split())
+                _computed_max = _compute_max_new_tokens(_wc)
+                if 'max_new_tokens' not in gen_kw or gen_kw['max_new_tokens'] > _computed_max:
+                    gen_kw['max_new_tokens'] = _computed_max
                 if seed is not None:
                     try:
                         import random as _random
