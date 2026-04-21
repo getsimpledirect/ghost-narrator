@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import math
 import os
 import shutil
 import time
@@ -436,22 +437,58 @@ async def run_tts_job(
                                             'Job aborted to prevent shipping broken audio.'
                                         ) from exc
                                     segment_wavs.append(checked_path)
+                                    # Gate tail propagation on F0 match — prevents drift
+                                    # cascade when a synthesized segment drifts in pitch.
+                                    _tail_f0_ok = True
+                                    if _reference_f0 is not None and _reference_f0 > 0:
+                                        try:
+                                            from app.domains.synthesis.quality_check import (
+                                                _estimate_median_f0,
+                                            )
+
+                                            _seg_f0 = await loop.run_in_executor(
+                                                executor, _estimate_median_f0, checked_path
+                                            )
+                                            if _seg_f0 is not None and _seg_f0 > 0:
+                                                _semitones = abs(
+                                                    12 * math.log2(_seg_f0 / _reference_f0)
+                                                )
+                                                if _semitones > 3.0:
+                                                    logger.warning(
+                                                        '[%s] Segment %d tail F0=%.0f Hz vs ref %.0f Hz '
+                                                        '(%.1f st) — not propagating tail to next segment',
+                                                        job_id,
+                                                        seg_idx,
+                                                        _seg_f0,
+                                                        _reference_f0,
+                                                        _semitones,
+                                                    )
+                                                    _tail_f0_ok = False
+                                        except Exception as _f0_exc:
+                                            logger.debug(
+                                                '[%s] Tail F0 check failed (non-fatal): %s',
+                                                job_id,
+                                                _f0_exc,
+                                            )
                                     # Extract tail for next segment; skip on failure (non-fatal)
-                                    try:
-                                        tail_wav = str(job_dir / f'tail_{seg_idx:04d}.wav')
-                                        tail_voice_path = await loop.run_in_executor(
-                                            executor,
-                                            _extract_tail_wav,
-                                            checked_path,
-                                            2500,
-                                            tail_wav,
-                                        )
-                                    except Exception as _tail_exc:
-                                        logger.warning(
-                                            '[%s] Tail extraction failed (non-fatal): %s',
-                                            job_id,
-                                            _tail_exc,
-                                        )
+                                    if _tail_f0_ok:
+                                        try:
+                                            tail_wav = str(job_dir / f'tail_{seg_idx:04d}.wav')
+                                            tail_voice_path = await loop.run_in_executor(
+                                                executor,
+                                                _extract_tail_wav,
+                                                checked_path,
+                                                2500,
+                                                tail_wav,
+                                            )
+                                        except Exception as _tail_exc:
+                                            logger.warning(
+                                                '[%s] Tail extraction failed (non-fatal): %s',
+                                                job_id,
+                                                _tail_exc,
+                                            )
+                                            tail_voice_path = None
+                                    else:
                                         tail_voice_path = None
                                 else:
                                     segment_wavs.append(segment_path)

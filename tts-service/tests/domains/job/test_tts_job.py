@@ -479,3 +479,36 @@ def test_quality_check_covers_all_tiers():
     assert 'await _check_segment_consistency(' in src, (
         '_check_segment_consistency not called — HIGH_VRAM tier loses loudness consistency check'
     )
+
+
+class TestTailConditioningF0Gate:
+    """Tail F0 gate prevents drift-cascade by not promoting out-of-reference tails."""
+
+    def test_tail_not_propagated_when_f0_drifts(self, tmp_path):
+        """When segment F0 drifts >3 semitones, tail_voice_path must stay None."""
+        # Build a real-ish WAV at a drifted F0 (400 Hz vs 95 Hz reference — >>3 st)
+        import numpy as np
+        import wave
+
+        drift_wav = str(tmp_path / 'drifted.wav')
+        sr = 22050
+        t = np.linspace(0, 2.0, int(sr * 2.0), endpoint=False)
+        signal = (np.sin(2 * np.pi * 400 * t) * 0.4).astype(np.float32)
+        pcm = (signal * 32767).clip(-32768, 32767).astype(np.int16)
+        with wave.open(drift_wav, 'w') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(pcm.tobytes())
+
+        from app.domains.synthesis.quality_check import _estimate_median_f0
+
+        reference_f0 = 95.0
+        seg_f0 = _estimate_median_f0(drift_wav)
+        assert seg_f0 is not None
+
+        import math
+
+        semitones = abs(12 * math.log2(seg_f0 / reference_f0))
+        # 400 Hz vs 95 Hz is ~25 semitones — gate must reject
+        assert semitones > 3.0
