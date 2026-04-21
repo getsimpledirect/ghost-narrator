@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v2.12.6 (2026-04-21)
+
+### Bug Fixes
+
+- **mastering**: Replace alimiter with loudnorm true-peak control and add post-write verification
+  ([`a5c4c07`](https://github.com/getsimpledirect/ghost-narrator/commit/a5c4c07e318e0648658950a50cb5d69410cba289))
+
+alimiter caps sample peak but not intersample (true) peak. Observed result: mastering completed
+  successfully but output measured +1.6 dBTP.
+
+- Two-pass path now drops alimiter entirely: loudnorm with linear=true and measured_TP feeds the
+  exact measured overshoot back into the gain calculation, making it the true-peak limiter -
+  Single-pass fallback retains alimiter at 0.794 (tighter than old 0.891) as safety net since
+  single-pass loudnorm doesn't apply reliable TP control - Add post-write true-peak verification via
+  ebur128=peak=true; if output still exceeds -1.0 dBTP, apply compensating gain + alimiter
+  remediation pass - DEFAULT_TRUE_PEAK lowered -1.5 → -2.0 to give loudnorm 1 dB margin against its
+  own TP measurement uncertainty
+
+
 ## v2.12.5 (2026-04-21)
 
 ### Bug Fixes
