@@ -464,8 +464,12 @@ async def run_tts_job(
                                                         _semitones,
                                                     )
                                                     _tail_f0_ok = False
-                                        except Exception as _f0_exc:
-                                            logger.debug(
+                                            else:
+                                                # F0 undetectable (silent/unvoiced segment) — safer
+                                                # to reset than to propagate a potentially bad tail.
+                                                _tail_f0_ok = False
+                                        except (ValueError, RuntimeError, OSError) as _f0_exc:
+                                            logger.warning(
                                                 '[%s] Tail F0 check failed (non-fatal): %s',
                                                 job_id,
                                                 _f0_exc,
