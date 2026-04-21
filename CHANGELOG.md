@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v2.12.4 (2026-04-21)
+
+### Bug Fixes
+
+- **tts-engine**: Move self._ready = True before warmup synthesis call
+  ([`31e865e`](https://github.com/getsimpledirect/ghost-narrator/commit/31e865e294032924f2240cb41e9ced9a430d272c))
+
+synthesize_to_file() guards on self._ready, so calling it from inside initialize() while _ready is
+  still False raises TTSEngineError and the warmup silently degrades to a warning — leaving the
+  cold-start path unprotected. All model loading, voice caching, and probing are complete at the
+  point of warmup, so setting the flag first is semantically correct and safe (the engine readiness
+  event is not signalled until initialize() returns, so no jobs can race in through the API).
+
+
 ## v2.12.3 (2026-04-21)
 
 ### Bug Fixes
