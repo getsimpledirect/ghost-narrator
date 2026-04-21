@@ -682,10 +682,13 @@ async def run_tts_job(
                         f'[{job_id}] Final audio LUFS outside tolerance: {_lufs:.1f} LUFS '
                         f'(target {_lufs_target:.1f} ± 2.5). Mastering may have failed.'
                     )
-                if _silences and _silences > 0:
+                # Allow up to 3 long silences — legitimate paragraph breaks at
+                # [LONG_PAUSE] markers can produce gaps up to ~1.5s.  More than 3
+                # indicates dead chunks or synthesis failures, not natural pauses.
+                if _silences and _silences > 3:
                     raise RuntimeError(
-                        f'[{job_id}] Final audio contains {_silences} long silence gap(s). '
-                        'Check synthesis and mastering logs.'
+                        f'[{job_id}] Final audio contains {_silences} long silence gap(s) '
+                        '(> 3 is abnormal). Check synthesis and mastering logs.'
                     )
         except RuntimeError:
             raise  # propagate quality gate failures

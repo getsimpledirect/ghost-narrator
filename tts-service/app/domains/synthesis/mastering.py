@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, Final, Optional, Tuple
@@ -41,7 +42,7 @@ from app.config import AUDIO_SAMPLE_RATE, MP3_BITRATE, TARGET_LUFS
 logger = logging.getLogger(__name__)
 
 DEFAULT_TARGET_LUFS: Final[float] = TARGET_LUFS
-DEFAULT_TRUE_PEAK: Final[float] = -1.5
+DEFAULT_TRUE_PEAK: Final[float] = -2.0
 DEFAULT_LRA: Final[float] = 9.0  # Podcast standard; 7.0 over-compressed natural emphasis
 
 
@@ -151,6 +152,28 @@ def master_audio(
             loudnorm_filter = f'loudnorm=I={target_lufs}:TP={true_peak}:LRA={lra}:print_format=none'
             logger.debug('Falling back to single-pass loudnorm')
 
+        _SILENCE_TRIM = (
+            'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
+            'areverse,'
+            'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
+            'areverse'
+        )
+
+        if measured and all(v is not None for v in measured.values()):
+            # Two-pass: loudnorm with linear=true applies true-peak limiting
+            # as part of its gain calculation — alimiter is redundant and can
+            # clip the signal a second time, raising effective true peak.
+            filter_chain = f'{_SILENCE_TRIM},{_COMPRESSOR},{loudnorm_filter}'
+        else:
+            # Single-pass fallback: loudnorm doesn't apply reliable true-peak
+            # control without measured values, so add alimiter as safety net.
+            filter_chain = (
+                f'{_SILENCE_TRIM},'
+                f'{_COMPRESSOR},'
+                f'{loudnorm_filter},'
+                'alimiter=level_in=1:level_out=1:limit=0.794:attack=5:release=50:level=disabled'
+            )
+
         result = subprocess.run(
             [
                 'ffmpeg',
@@ -158,15 +181,7 @@ def master_audio(
                 '-i',
                 input_path,
                 '-af',
-                (
-                    'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
-                    'areverse,'
-                    'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-40dB,'
-                    'areverse,'
-                    f'{_COMPRESSOR},'
-                    f'{loudnorm_filter},'
-                    'alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled'
-                ),
+                filter_chain,
                 '-ar',
                 str(sample_rate),
                 '-ac',
@@ -192,6 +207,72 @@ def master_audio(
             f'Mastering complete: {output_path} '
             f'({Path(output_path).stat().st_size / (1024 * 1024):.2f} MB)'
         )
+
+        # Post-write true-peak verification: loudnorm's TP control has ~1 dB
+        # uncertainty.  If the output still exceeds -1.0 dBTP, apply a
+        # compensating gain + tight alimiter remediation pass.
+        try:
+            verify_result = subprocess.run(
+                [
+                    'ffmpeg',
+                    '-i',
+                    output_path,
+                    '-filter_complex',
+                    'ebur128=peak=true',
+                    '-f',
+                    'null',
+                    '-',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            measured_tp: Optional[float] = None
+            for _line in verify_result.stderr.split('\n'):
+                if 'Peak:' in _line and 'dBFS' in _line:
+                    try:
+                        measured_tp = float(_line.split('Peak:')[1].split('dBFS')[0].strip())
+                    except (ValueError, IndexError):
+                        pass
+            if measured_tp is not None:
+                logger.info('Post-master true peak: %.1f dBTP', measured_tp)
+                if measured_tp > -1.0:
+                    logger.warning(
+                        'Post-master true peak %.1f dBTP exceeds -1.0 — applying remediation pass',
+                        measured_tp,
+                    )
+                    compensation_db = -(measured_tp + 2.0)  # aim for -2.0 dBTP
+                    temp_path = output_path + '.remaster.mp3'
+                    remedy_result = subprocess.run(
+                        [
+                            'ffmpeg',
+                            '-y',
+                            '-i',
+                            output_path,
+                            '-af',
+                            (
+                                f'volume={compensation_db}dB,'
+                                'alimiter=level_in=1:level_out=1:limit=0.794:attack=5:release=50:level=disabled'
+                            ),
+                            '-codec:a',
+                            'libmp3lame',
+                            '-b:a',
+                            bitrate,
+                            temp_path,
+                        ],
+                        capture_output=True,
+                        timeout=600,
+                    )
+                    if remedy_result.returncode == 0:
+                        shutil.move(temp_path, output_path)
+                        logger.info('True-peak remediation applied successfully')
+                    else:
+                        logger.error('True-peak remediation failed; keeping original output')
+                        if Path(temp_path).exists():
+                            Path(temp_path).unlink()
+        except Exception as _verify_exc:
+            logger.warning('Post-master true-peak verification failed (non-fatal): %s', _verify_exc)
+
         return True
 
     except Exception as exc:

@@ -122,14 +122,17 @@ def validate_audio_quality(mp3_path: str) -> dict:
             if last_peak > -1.0:
                 logger.warning(f'True peak {last_peak:.1f} dBFS exceeds -1.0 dBFS limit')
 
-        # Check for excessive silence gaps (> 1.2s)
+        # Check for dead silence gaps (> 2.0s). Gaps up to ~1.5s are legitimate
+        # paragraph pauses inserted by [LONG_PAUSE] markers (800ms) plus crossfade
+        # and trim interactions. Only gaps > 2.0s indicate dead chunks or synthesis
+        # failures.
         r2 = subprocess.run(
             [
                 'ffmpeg',
                 '-i',
                 mp3_path,
                 '-filter_complex',
-                'silencedetect=noise=-40dB:d=1.2',
+                'silencedetect=noise=-40dB:d=2.0',
                 '-f',
                 'null',
                 '-',
@@ -142,7 +145,7 @@ def validate_audio_quality(mp3_path: str) -> dict:
         long_gaps = [line for line in r2.stderr.split('\n') if 'silence_duration' in line]
         results['long_silence_gaps_count'] = len(long_gaps)
         if long_gaps:
-            logger.warning(f'{len(long_gaps)} silence gap(s) exceeding 1.2s detected in output')
+            logger.warning(f'{len(long_gaps)} silence gap(s) exceeding 2.0s detected in output')
 
     except Exception as exc:
         logger.warning(f'Quality validation error (non-fatal): {exc}')

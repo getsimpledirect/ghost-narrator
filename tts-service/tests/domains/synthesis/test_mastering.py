@@ -91,11 +91,13 @@ def test_default_true_peak_is_minus_1_5():
 
 
 def test_alimiter_command_contains_correct_limit():
-    """The alimiter limit value should correspond to ≤ -1.0 dBFS (0.891)."""
+    """alimiter is used in the single-pass fallback and remediation paths at 0.794 (≤ -2.0 dBFS)."""
     import inspect
     from app.domains.synthesis import mastering
 
     src = inspect.getsource(mastering.master_audio)
-    assert 'limit=0.891' in src or 'limit=0.8' in src, (
-        'alimiter limit must be 0.891 or lower (stricter) in master_audio'
+    # Two-pass path drops alimiter (loudnorm linear=true handles true-peak limiting).
+    # Single-pass fallback and remediation pass use 0.794 — stricter than the old 0.891.
+    assert 'limit=0.794' in src, (
+        'alimiter limit must be 0.794 in the single-pass fallback and remediation paths'
     )
