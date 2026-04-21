@@ -1,6 +1,150 @@
 # CHANGELOG
 
 
+## v2.12.2 (2026-04-21)
+
+### Bug Fixes
+
+- **tts-service**: Stop shipping broken audio — acoustic quality gate, hallucination loop
+  prevention, voice drift cascade fix
+  ([`d3a5562`](https://github.com/getsimpledirect/ghost-narrator/commit/d3a5562383267fa386a32dc95ff2755bb575d925))
+
+## Problem
+
+The pipeline was shipping broken audio silently. A 32-minute narration exhibited: - 9+ minutes of
+  hallucinated buzz (F0 pinned at 380–400 Hz, onset rate 8+ /s) - Voice identity drift across four
+  distinct pitch ranges within one file (90 → 400 → 190 → back) - +1.01 dBTP true peak with 3,552
+  clipping events (mastering fell through to raw-export fallback) - 29 seam-level shifts ≥ 2.5 dB
+
+No error was raised. The job completed with status `done`.
+
+---
+
+## Root causes fixed
+
+### 1. Hallucination loop ran to near-full budget (`tts_engine.py`)
+
+`_TTS_TOKENS_PER_SECOND` was `50` — Qwen3-TTS-12Hz models emit **12** codec tokens/second. A
+  300-word segment had an 8,400-token budget (~700 s of headroom) instead of the correct 1,966 (~164
+  s). A stuck decoder could run uninterrupted for nearly 12 minutes.
+
+**Fix:** codec rate corrected to 12, `_SECONDS_PER_WORD` to 0.42 (143 WPM), headroom to 1.3×.
+  300-word budget: **8,400 → 1,966 tokens**.
+
+### 2. No detection of hallucinated chunks (`quality_check.py`)
+
+No acoustic check existed before concatenation. Hallucinated output was stitched in silently.
+
+**Fix:** `_chunk_passes_acoustic_gate` on every synthesized chunk: - Duration ratio vs expected
+  (×0.4–1.6 from word count) - Onset rate ≤ 6.5 /s - Spectral flatness ≤ 0.025 - F0 within 3
+  semitones of reference voice
+
+Failures trigger `_resynthesize_with_strategies` — 4 input-modifying strategies in escalating order:
+  1. `repetition_penalty=1.2` — targets repetition loops 2. Half-split on any punctuation,
+  bidirectional search from midpoint 3. Quarter-split 4. Aggressive text sanitization (strip
+  parentheticals, digits, ALL-CAPS)
+
+Exhausting all strategies raises `ChunkExhaustedError`, failing the job.
+
+### 3. Autocorrelation F0 estimator had octave errors (`quality_check.py`)
+
+The naive estimator returned F0/2 or 2×F0 when even harmonics were strong — the hallucination region
+  (380–400 Hz) is exactly 4× the 95 Hz reference, consistent with this failure mode. This caused the
+  speaker-drift gate to compare the wrong number against the reference.
+
+**Fix:** voicing threshold `0.3 → 0.5`, octave-down correction (`corr[peak_lag//2] ≥ 0.9 ×
+  corr[peak_lag]`), minimum 10 voiced frames required.
+
+### 4. Tail conditioning propagated drifted voice embeddings (`tts_job.py`)
+
+On HIGH_VRAM, each segment conditions on the last 2.5 s of the previous segment. Once segment K
+  hallucinated, segment K+1 inherited the bad embedding — drift cascaded for the rest of the job.
+  The four distinct F0 ranges in the analysed file trace directly to this.
+
+**Fix:** before extracting the tail, check the synthesized segment's F0 against the reference. If
+  drift > 3 semitones or F0 is undetectable, discard the tail — next segment falls back to the
+  default voice sample, breaking the cascade.
+
+### 5. Critical LLM truncation silently fed raw text to synthesis (`strategy.py`, `tts_job.py`)
+
+When the LLM truncated below `CRITICAL_WORD_RATIO`, the strategy returned raw HTML-normalized
+  article text — with markdown residue, URLs, and code identifiers — directly to synthesis. Those
+  inputs are known hallucination triggers.
+
+**Fix:** both `return chunk` / `return text` fallbacks replaced with `raise NarrationError`. Added
+  `except NarrationError: raise` in `tts_job.py` so it propagates instead of being caught by the
+  generic narration fallback handler (which would have re-applied the same raw-text path).
+
+### 6. Speakability check had no recovery path (`service.py` → `strategy.py`)
+
+`is_speakable_text` was called inside `synthesize_single_shot`. At that point the only option on
+  failure is to abort the job.
+
+**Fix:** moved to the narration retry loop. The LLM gets a targeted one-shot retry ("Your narration
+  contained a URL; rewrite without it") before synthesis runs. Snake_case rule softened from 2+ to
+  3+ components (`open_source`, `well_known` no longer rejected). Return type changed to
+  `tuple[bool, str | None]`.
+
+### 7. Mastering failure shipped unmastered audio silently (`tts_job.py`)
+
+The raw-export fallback (`AudioSegment.export`) has zero limiting. The +1.01 dBTP / 3,552 clipping
+  events were produced on this path — mastering had timed out and the fallback ran without anyone
+  noticing.
+
+**Fix:** `validate_audio_quality` already measured true peak, LUFS, and silence gaps on every job —
+  it just never failed the job. Now it does: - `true_peak_dbfs > −1.0 dBTP` → `RuntimeError` -
+  `|integrated_lufs − TARGET_LUFS| > 2.5 LU` → `RuntimeError` - `long_silence_gaps_count > 0` →
+  `RuntimeError`
+
+`alimiter` limit corrected to `0.891` (was `0.794`), `DEFAULT_TRUE_PEAK` to `−1.5` (was `−2.0`).
+
+### 8. Reference voice not validated before GPU work (`voices/validate.py`)
+
+A corrupt or too-short reference WAV would fail mid-job after minutes of GPU time.
+
+**Fix:** validated at job start — duration 5–120 s, noise floor ≤ −55 dBFS.
+
+## Files changed
+
+| File | What changed | |---|---| | `app/core/tts_engine.py` | Codec rate constants,
+  `_compute_max_new_tokens` | | `app/core/exceptions.py` | `ChunkExhaustedError` | |
+  `app/domains/synthesis/quality_check.py` | Acoustic gate, F0 octave correction, 4-strategy retry |
+  | `app/domains/job/tts_job.py` | Tail F0 gate, `NarrationError` propagation, final-file quality
+  gate | | `app/domains/narration/strategy.py` | Speakability check at narration stage, fallback
+  removal | | `app/domains/synthesis/mastering.py` | Limiter tightening | |
+  `app/domains/voices/validate.py` | Reference voice validation (new) | | `app/utils/text.py` |
+  `is_speakable_text` tuple return, softened snake_case rule |
+
+16 files changed, +1,493 / −149 lines. **259 tests passing.**
+
+## Test plan
+
+- [ ] Deploy to staging; submit an article that previously hallucinated — expect clean audio or
+  `ChunkExhaustedError` with clear logs, not silent `done` - [ ] Verify `NarrationError` surfaces as
+  a job failure (not silent raw-text synthesis) when the LLM truncates critically - [ ] Verify
+  final-file gate fires when mastering subprocess is forced to fail - [ ] Monitor
+  `ChunkExhaustedError` rate over first 20 production jobs — target < 5% - [ ] Monitor
+  `is_speakable_text` rejection rate — target < 1% of narrated chunks
+
+### Continuous Integration
+
+- **release**: Rewrite release workflow with structured AI-free notes
+  ([`308a55f`](https://github.com/getsimpledirect/ghost-narrator/commit/308a55fd51a3dc81646b7ba0b6e777522cac1c55))
+
+.github/workflows/release.yml: - Replace raw commit-dump approach with a Python script that parses
+  the PSR-generated CHANGELOG.md section for the current version - Strip PSR hash-link lines from
+  section bodies before rendering - Emit sections only when they contain content — empty sections
+  are silently skipped, so docs-only releases don't show empty Bug Fixes headers - Auto-detect
+  configuration default changes via regex (VAR → newval patterns) and render a Configuration Changes
+  table only when matches are found - Generate "What's Unchanged" dynamically: candidate bullets are
+  suppressed when their trigger scopes (api, n8n, redis, storage, etc.) appear in the CHANGELOG, so
+  only genuinely untouched subsystems are listed - Derive release title in format "v{VERSION}
+  {emoji} {Descriptive Title}": dominant section determines emoji; up to two commit scopes
+  (tts-service, hardware, n8n, etc.) are resolved to readable English and combined with an action
+  word (Fixes, Improvements, Performance, etc.) - Create release with softprops/action-gh-release
+  then update title via gh release edit so the name file written by Python drives the final title
+
+
 ## v2.12.1 (2026-04-20)
 
 ### Bug Fixes
