@@ -231,6 +231,25 @@ async def run_tts_job(
         # without a restart, synthesis would immediately raise SynthesisError.
         engine.uncancel_job(job_id)
 
+        # Validate reference voice quality — fail fast before any GPU work
+        from app.config import VOICE_SAMPLE_PATH
+        from app.domains.voices.validate import validate_reference_wav
+
+        voice_errors = validate_reference_wav(VOICE_SAMPLE_PATH)
+        if voice_errors:
+            error_msg = '; '.join(voice_errors)
+            logger.error('[%s] Reference voice validation failed: %s', job_id, error_msg)
+            await job_store.update(
+                job_id,
+                {
+                    'status': 'failed',
+                    'error': f'Reference voice invalid: {error_msg}',
+                    'completed_at': time.time(),
+                    'duration_seconds': time.time() - start_time,
+                },
+            )
+            return
+
         # Obtain reference F0 for speaker-drift gating — pre-computed from voice sample
         _reference_f0 = getattr(engine, 'reference_f0', None)
 
