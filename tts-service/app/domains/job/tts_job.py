@@ -390,6 +390,27 @@ async def run_tts_job(
                                 f'[{job_id}] Phase 2: segment synthesis '
                                 f'({len(sentence_segments)} × ~{seg_words}-word segments)'
                             )
+                            logger.info(
+                                '[%s] Segment plan: %d segments, word counts: %s',
+                                job_id,
+                                len(sentence_segments),
+                                [len(s.split()) for s in sentence_segments],
+                            )
+
+                            _MAX_SEGMENT_WORDS = int(seg_words * 1.3)
+                            _oversized = [
+                                (i, len(s.split()))
+                                for i, s in enumerate(sentence_segments)
+                                if len(s.split()) > _MAX_SEGMENT_WORDS
+                            ]
+                            if _oversized:
+                                _err = (
+                                    f'Segment splitter produced oversized segment(s): '
+                                    f'{_oversized} (max allowed: {_MAX_SEGMENT_WORDS} words, '
+                                    f'seg_words={seg_words}). This would cause TTS drift.'
+                                )
+                                logger.error('[%s] %s', job_id, _err)
+                                raise RuntimeError(_err)
 
                             # Tail conditioning: HIGH_VRAM conditions each segment on the
                             # last 2.5s of the preceding segment, anchoring voice timbre

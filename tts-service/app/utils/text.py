@@ -264,46 +264,117 @@ _TRANSITION_STARTERS: Final[tuple[str, ...]] = (
 )
 
 
-def split_into_large_segments(text: str, target_words: int) -> list[str]:
-    """Group paragraphs into large segments of ~target_words for segment synthesis.
+# Sentence boundary: lookbehind for sentence-final punctuation, lookahead
+# for uppercase / opening quote — used to split within oversized paragraphs.
+_SENTENCE_BOUNDARY_RE: Final[re.Pattern[str]] = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\u201c])')
 
-    Accumulates paragraphs until the target word count is reached. A paragraph
-    boundary is only used as a split point when the accumulated words would exceed
-    target_words — preserving long-range prosody within each synthesized segment.
+
+def split_into_large_segments(text: str, target_words: int) -> list[str]:
+    """Split text into segments each no larger than target_words × 1.1.
+
+    Splitting cascades through three stages so the hard cap is always
+    respected regardless of input paragraph structure:
+
+    Stage 1 — paragraph split (fast path for well-formatted narration).
+    Stage 2 — sentence split for any paragraph that exceeds target_words × 1.1.
+    Stage 3 — emergency word-count split when no sentence boundaries exist.
+    Stage 4 — accumulate the expanded unit list into final ~target_words segments.
 
     Args:
         text: Full narration text.
-        target_words: Desired words per segment (e.g. SINGLE_SHOT_SEGMENT_WORDS=3000).
+        target_words: Desired words per segment (e.g. 650).
 
     Returns:
-        List of large text segments, each close to target_words in length.
+        List of segments, each ≤ target_words × 1.1 words (except when a
+        single sentence is longer, which is logged as an error).
     """
+    # ── Stage 1: paragraph split ─────────────────────────────────────────────
     paragraphs = [p.strip() for p in re.split(r'\n\n+', text) if p.strip()]
+
+    # ── Stage 2 & 3: expand oversized paragraphs ─────────────────────────────
+    max_para_words = int(target_words * 1.1)
+    expanded: list[str] = []
+
+    for para in paragraphs:
+        wc = len(para.split())
+        if wc <= max_para_words:
+            expanded.append(para)
+            continue
+
+        # Paragraph exceeds cap — split at sentence boundaries.
+        sentences = [s.strip() for s in _SENTENCE_BOUNDARY_RE.split(para) if s.strip()]
+
+        if len(sentences) <= 1:
+            # Emergency: no sentence boundaries found — split by word count.
+            logger.warning(
+                'split_into_large_segments: %d-word paragraph has no sentence '
+                'boundaries; falling back to word-count split',
+                wc,
+            )
+            words = para.split()
+            for i in range(0, len(words), target_words):
+                expanded.append(' '.join(words[i : i + target_words]))
+            continue
+
+        # Accumulate sentences into sub-paragraphs of ~target_words each.
+        sub_paras: list[str] = []
+        sub: list[str] = []
+        sub_wc = 0
+        for sent in sentences:
+            sw = len(sent.split())
+            if sub_wc + sw > target_words and sub:
+                sub_paras.append(' '.join(sub))
+                sub = [sent]
+                sub_wc = sw
+            else:
+                sub.append(sent)
+                sub_wc += sw
+        if sub:
+            sub_paras.append(' '.join(sub))
+        expanded.extend(sub_paras)
+        logger.info(
+            'split_into_large_segments: %d-word paragraph split into '
+            '%d sentence-level sub-paragraphs',
+            wc,
+            len(sub_paras),
+        )
+
+    # ── Stage 4: accumulate expanded units into final segments ────────────────
     segments: list[str] = []
     current: list[str] = []
     current_words = 0
 
-    for para in paragraphs:
-        para_words = len(para.split())
-        if current_words + para_words > target_words and current:
+    for unit in expanded:
+        uw = len(unit.split())
+        if current_words + uw > target_words and current:
             segments.append('\n\n'.join(current))
-            current = [para]
-            current_words = para_words
+            current = [unit]
+            current_words = uw
         else:
-            current.append(para)
-            current_words += para_words
+            current.append(unit)
+            current_words += uw
 
     if current:
         segments.append('\n\n'.join(current))
 
-    # Merge trailing segments shorter than 40 words into the preceding segment.
-    # Qwen3-TTS produces codec artifacts (clicks, truncated phonemes) on very
-    # short inputs — a single paragraph at the end becomes a standalone synthesis
-    # call that clips mid-decode because there are too few tokens to close cleanly.
+    # Merge trailing short segments — Qwen3-TTS clips mid-decode on very
+    # short inputs (too few tokens to close the codec cleanly).
     _MIN_SEGMENT_WORDS = 40
     if len(segments) >= 2 and len(segments[-1].split()) < _MIN_SEGMENT_WORDS:
         segments[-2] = segments[-2] + '\n\n' + segments[-1]
         segments.pop()
+
+    # Safety log: warn if any segment still exceeds the hard cap.
+    max_final = int(target_words * 1.3)
+    for seg in segments:
+        seg_wc = len(seg.split())
+        if seg_wc > max_final:
+            logger.error(
+                'split_into_large_segments: segment with %d words exceeds '
+                'hard cap %d — TTS synthesis may drift',
+                seg_wc,
+                max_final,
+            )
 
     return segments if segments else [text]
 
