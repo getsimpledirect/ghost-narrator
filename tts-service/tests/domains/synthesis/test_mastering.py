@@ -80,3 +80,22 @@ def test_master_audio_filter_chain_includes_limiter():
     # Filter chain should include loudness normalization (no highpass/eq - preserve natural tone)
     for af_cmd in af_commands:
         assert 'loudnorm' in af_cmd, f'loudnorm filter missing from: {af_cmd}'
+
+
+def test_default_true_peak_is_minus_1_5():
+    from app.domains.synthesis.mastering import DEFAULT_TRUE_PEAK
+
+    assert DEFAULT_TRUE_PEAK <= -1.5, (
+        f'DEFAULT_TRUE_PEAK must be ≤ -1.5 dBTP to meet distribution spec, got {DEFAULT_TRUE_PEAK}'
+    )
+
+
+def test_alimiter_command_contains_correct_limit():
+    """The alimiter limit value should correspond to ≤ -1.0 dBFS (0.891)."""
+    import inspect
+    from app.domains.synthesis import mastering
+
+    src = inspect.getsource(mastering.master_audio)
+    assert 'limit=0.891' in src or 'limit=0.8' in src, (
+        'alimiter limit must be 0.891 or lower (stricter) in master_audio'
+    )

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 from pathlib import Path
 from typing import Optional
@@ -39,6 +40,35 @@ try:
     from qwen_tts import Qwen3TTSModel  # type: ignore[import]
 except ImportError:
     Qwen3TTSModel = None  # type: ignore[assignment,misc]
+
+
+# Qwen3-TTS-12Hz emits 12 audio codec tokens per second of output audio.
+# Do NOT change this constant without verifying the model's codec rate — a
+# wrong value here directly enables the hallucination loop bug this function
+# is designed to prevent. Evidence: all model IDs contain "-12Hz-" and
+# hardware.py derives _CODEC_TOKENS_PER_WORD = 5.54 = 12 × (60 s / 130 WPM).
+_TTS_CODEC_TOKENS_PER_SECOND: int = 12
+
+# 143 WPM → 0.42 s/word — conservative narration pace upper bound (60 / 143 = 0.419).
+# Pairs with _TTS_CODEC_TOKENS_PER_SECOND = 12: 1 word ≈ 0.42 s × 12 tokens/s = 5.04 tokens.
+_SECONDS_PER_WORD: float = 0.42
+
+# 1.3× headroom — tight enough to cut off hallucinations within ~30 s of audio
+# past the expected end, while accommodating natural slow passages.
+_MAX_TOKENS_HEADROOM: float = 1.3
+
+_MIN_MAX_NEW_TOKENS: int = 300
+
+
+def _compute_max_new_tokens(word_count: int) -> int:
+    """Compute a safe max_new_tokens bound for the given text word count.
+
+    Prevents runaway autoregressive decoding when the model gets stuck
+    in a hallucination loop.
+    """
+    expected_seconds = word_count * _SECONDS_PER_WORD
+    bound = int(math.ceil(expected_seconds * _TTS_CODEC_TOKENS_PER_SECOND * _MAX_TOKENS_HEADROOM))
+    return max(bound, _MIN_MAX_NEW_TOKENS)
 
 
 class TTSEngine:
@@ -139,6 +169,14 @@ class TTSEngine:
                         'Voice clone prompt cached (mode: %s)',
                         'x-vector-only' if use_x_vector_only else 'ICL',
                     )
+                    # Pre-compute reference F0 for per-chunk speaker-drift gating
+                    try:
+                        from app.domains.synthesis.quality_check import _estimate_median_f0
+
+                        self._reference_f0 = _estimate_median_f0(str(voice_path))
+                        logger.info('Reference voice F0: %.0f Hz', self._reference_f0 or 0)
+                    except Exception as _f0_exc:
+                        logger.debug('Reference F0 computation failed (non-fatal): %s', _f0_exc)
                 else:
                     logger.warning(
                         'Voice sample not found at %s — will load per-job',
@@ -173,6 +211,11 @@ class TTSEngine:
     @property
     def is_ready(self) -> bool:
         return self._ready
+
+    @property
+    def reference_f0(self) -> float | None:
+        """Median F0 of the reference voice sample, Hz. None if not yet computed."""
+        return self._reference_f0
 
     def synthesize_to_file(
         self,
@@ -255,6 +298,13 @@ class TTSEngine:
                 # Strip None values; extract seed before forwarding to the model
                 gen_kw = {k: v for k, v in (generation_kwargs or {}).items() if v is not None}
                 seed = gen_kw.pop('seed', None)
+                # Bound max_new_tokens from word count — prevents hallucination loops.
+                # gen_kw already has None-values stripped and seed popped; mutate in place so
+                # both generate_voice_clone calls (primary and fp16-fallback) inherit the bound.
+                _wc = len(text.split())
+                _computed_max = _compute_max_new_tokens(_wc)
+                if 'max_new_tokens' not in gen_kw or gen_kw['max_new_tokens'] > _computed_max:
+                    gen_kw['max_new_tokens'] = _computed_max
                 if seed is not None:
                     try:
                         import random as _random
@@ -355,6 +405,7 @@ def get_tts_engine() -> TTSEngine:
             _engine._cancelled_jobs: set[str] = set()
             _engine._cached_voice_path: Optional[str] = None
             _engine._cached_voice_prompt = None
+            _engine._reference_f0: float | None = None
     return _engine
 
 

@@ -30,6 +30,8 @@ import math
 import re as _re
 import threading
 
+import numpy as np
+import soundfile as _sf
 from pydub import AudioSegment as _AudioSegment
 
 
@@ -45,6 +47,199 @@ _MAX_WER_DURATION_MS: int = 120_000
 _ASR_UNAVAILABLE = object()
 _asr_pipeline = None
 _asr_lock = threading.Lock()
+
+
+def _compute_onset_rate(wav_path: str) -> float:
+    """Energy-based onset rate in onsets/second. Uses only numpy + soundfile."""
+    try:
+        data, sr = _sf.read(wav_path, dtype='float32', always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if len(data) == 0:
+            return 0.0
+        frame_size = max(1, int(sr * 0.025))
+        hop_size = max(1, int(sr * 0.010))
+        rms_frames = np.array(
+            [
+                np.sqrt(np.mean(data[i : i + frame_size] ** 2))
+                for i in range(0, len(data) - frame_size + 1, hop_size)
+            ]
+        )
+        if len(rms_frames) < 2:
+            return 0.0
+        # Count frames where RMS rises > 3 dB (×1.41) above previous frame and > noise floor
+        onsets = np.sum((rms_frames[1:] > rms_frames[:-1] * 1.41) & (rms_frames[1:] > 0.01))
+        duration_s = len(data) / sr
+        return float(onsets) / duration_s if duration_s > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def _compute_spectral_flatness(wav_path: str) -> float:
+    """Spectral flatness (Wiener entropy) of voiced frames. 0 = tonal, 1 = noise."""
+    try:
+        data, sr = _sf.read(wav_path, dtype='float32', always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if len(data) == 0:
+            return 0.0
+        n_fft = 512
+        hop = 128
+        eps = 1e-10
+        # Manual short-time magnitude spectrum (no extra deps)
+        window = np.hanning(n_fft)
+        frames = [
+            data[i : i + n_fft] * window
+            for i in range(0, len(data) - n_fft, hop)
+            if len(data[i : i + n_fft]) == n_fft
+        ]
+        if not frames:
+            return 0.0
+        spectra = np.abs(np.fft.rfft(np.stack(frames), axis=1))  # (T, F)
+        # Keep only voiced frames (mean magnitude above noise floor)
+        voiced_mask = spectra.mean(axis=1) > 0.005
+        if not voiced_mask.any():
+            return 0.0
+        voiced = spectra[voiced_mask]  # (T_voiced, F)
+        geo_mean = np.exp(np.mean(np.log(voiced + eps), axis=1))
+        arith_mean = np.mean(voiced, axis=1)
+        flatness_per_frame = geo_mean / (arith_mean + eps)
+        return float(flatness_per_frame.mean())
+    except Exception:
+        return 0.0
+
+
+def _estimate_median_f0(wav_path: str) -> float | None:
+    """Autocorrelation-based F0 estimate (Hz). Returns None if no voiced frames.
+
+    Uses a stricter voicing threshold (0.5) and octave-down correction to
+    avoid the classic autocorrelation octave error: when even harmonics are
+    strong, the peak at 2× the true period can exceed the true-period peak,
+    causing the estimator to return F0/2 (or 2×F0 depending on direction).
+    Returns None if fewer than 10 voiced frames are found.
+    """
+    try:
+        data, sr = _sf.read(wav_path, dtype='float32', always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        frame_size = int(sr * 0.030)
+        hop_size = frame_size // 2
+        min_lag = max(1, int(sr / 500))
+        max_lag = min(len(data) // 2, int(sr / 60))
+        if max_lag <= min_lag:
+            return None
+        f0_values: list[float] = []
+        for start in range(0, len(data) - frame_size, hop_size):
+            frame = data[start : start + frame_size].astype(np.float64)
+            if np.sqrt(np.mean(frame**2)) < 0.01:
+                continue  # skip silence
+            frame -= frame.mean()
+            corr = np.correlate(frame, frame, mode='full')
+            corr = corr[len(corr) // 2 :]
+            if max_lag >= len(corr):
+                continue
+            peak_lag = min_lag + int(np.argmax(corr[min_lag:max_lag]))
+            # Stricter voicing threshold — 0.3 passes noise frames; 0.5 does not.
+            if corr[0] <= 0 or corr[peak_lag] <= 0.5 * corr[0]:
+                continue
+            # Octave-down correction: if the half-period has comparable autocorrelation
+            # (within 10%), the true fundamental is an octave lower.
+            half_lag = peak_lag // 2
+            if half_lag >= min_lag and corr[half_lag] >= 0.9 * corr[peak_lag]:
+                peak_lag = half_lag
+            f0_values.append(sr / peak_lag)
+        # Require at least 10 voiced frames for a reliable median.
+        if len(f0_values) < 10:
+            return None
+        return float(np.median(f0_values))
+    except Exception:
+        return None
+
+
+# Seconds of audio per word at 150 WPM (conversational narration)
+_SECONDS_PER_WORD: float = 0.40
+
+# F0 deviation threshold in semitones — beyond this, the chunk is a different "speaker"
+_MAX_F0_DEVIATION_SEMITONES: float = 3.0
+
+
+def _chunk_passes_acoustic_gate(
+    wav_path: str,
+    word_count: int,
+    reference_f0: float | None,
+    onset_rate_ceiling: float = 6.5,
+    flatness_ceiling: float = 0.025,
+) -> bool:
+    """Return False if the WAV exhibits any hallucination signature.
+
+    Checks (any failure → False):
+    1. Duration < 100ms → empty output
+    2. Duration > 1.6 × expected_from_word_count → hallucinating (ran too long)
+    3. Duration < 0.4 × expected_from_word_count → truncated (ran too short)
+    4. Onset rate > onset_rate_ceiling → rapid garble
+    5. Spectral flatness of voiced frames > flatness_ceiling → noisy garble
+    6. |F0_median − reference_f0| > 3 semitones → speaker drift (only if reference given)
+    """
+    try:
+        from pydub import AudioSegment as _AS
+
+        seg = _AS.from_wav(wav_path)
+        duration_ms = len(seg)
+    except Exception:
+        return False  # Unreadable → treat as failed
+
+    # 1. Empty audio
+    if duration_ms < 100:
+        logger.debug('Acoustic gate: empty audio (%dms)', duration_ms)
+        return False
+
+    # 2 & 3. Duration ratio
+    if word_count > 0:
+        expected_ms = word_count * _SECONDS_PER_WORD * 1000
+        if duration_ms > expected_ms * 1.6:
+            logger.debug(
+                'Acoustic gate: hallucination — %dms audio for %d words (expected ~%dms)',
+                duration_ms,
+                word_count,
+                int(expected_ms),
+            )
+            return False
+        if duration_ms < expected_ms * 0.4:
+            logger.debug(
+                'Acoustic gate: truncation — %dms audio for %d words (expected ~%dms)',
+                duration_ms,
+                word_count,
+                int(expected_ms),
+            )
+            return False
+
+    # 4. Onset rate
+    rate = _compute_onset_rate(wav_path)
+    if rate > onset_rate_ceiling:
+        logger.debug('Acoustic gate: onset rate %.1f > %.1f /s', rate, onset_rate_ceiling)
+        return False
+
+    # 5. Spectral flatness
+    flatness = _compute_spectral_flatness(wav_path)
+    if flatness > flatness_ceiling:
+        logger.debug('Acoustic gate: spectral flatness %.3f > %.3f', flatness, flatness_ceiling)
+        return False
+
+    # 6. Speaker drift
+    if reference_f0 is not None and reference_f0 > 0:
+        chunk_f0 = _estimate_median_f0(wav_path)
+        if chunk_f0 is not None and chunk_f0 > 0:
+            semitones = abs(12 * math.log2(chunk_f0 / reference_f0))
+            if semitones > _MAX_F0_DEVIATION_SEMITONES:
+                logger.debug(
+                    'Acoustic gate: speaker drift %.1f st (ref=%.0fHz chunk=%.0fHz)',
+                    semitones,
+                    reference_f0,
+                    chunk_f0,
+                )
+                return False
+
+    return True
 
 
 def _get_asr_pipeline():
@@ -127,66 +322,50 @@ async def _quality_check_and_resynthesize(
     executor,
     generation_kwargs: dict | None = None,
     wer_threshold: float = 0.10,
+    reference_f0: float | None = None,
 ) -> list[str]:
-    """Check audio quality of each chunk and re-synthesize bad ones.
+    """Check each chunk through the acoustic gate; re-synthesize failures.
 
-    Runs three checks in order, short-circuiting to re-synthesis on first failure:
+    Runs checks in order:
+    1. _chunk_passes_acoustic_gate — duration ratio, onset rate, spectral flatness, F0
+    2. WER via Whisper (optional, skipped if unavailable or chunk > 2 min)
 
-    1. Duration < 100ms — almost certainly a failed synthesis.
-    2. Silence ratio > 50% — hallucinated silence (model emitted silence tokens).
-    3. WER > wer_threshold — skipped/repeated/hallucinated words detected by
-       Whisper transcription. Requires the Whisper base model (~150 MB) to be
-       cached; skipped gracefully if unavailable. Only runs on segments shorter
-       than _MAX_WER_DURATION_MS (2 minutes) to avoid excessive CPU time on
-       single-shot full-article audio.
-
-    Re-synthesizes each failing chunk once. If re-synthesis also fails the
-    checks, the re-synthesized path is used anyway — one retry is the limit.
+    Raises ChunkExhaustedError if any chunk fails all 3 retry strategies.
     """
-
     checked_paths = list(chunk_wav_paths)
     resynth_count = 0
 
     for i, wav_path in enumerate(chunk_wav_paths):
+        word_count = len(chunk_texts[i].split()) if i < len(chunk_texts) else 0
+        if word_count == 0:
+            logger.debug('[%s] Chunk %d: word_count=0, duration-ratio gate disabled', job_id, i)
         try:
-            seg = _AudioSegment.from_wav(wav_path)
-            duration_ms = len(seg)
+            passed_gate = _chunk_passes_acoustic_gate(wav_path, word_count, reference_f0)
+        except Exception as exc:
+            logger.debug('[%s] Acoustic gate check for chunk %d skipped: %s', job_id, i, exc)
+            passed_gate = True  # fail-open on gate error
 
-            # Check 1: too short
-            if duration_ms < 100:
-                logger.warning(
-                    '[%s] Chunk %d is only %dms — re-synthesizing', job_id, i, duration_ms
-                )
-                checked_paths[i] = await _resynthesize_chunk(
-                    i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
-                )
-                resynth_count += 1
-                continue
+        if not passed_gate:
+            logger.warning('[%s] Chunk %d failed acoustic gate — re-synthesizing', job_id, i)
+            checked_paths[i] = await _resynthesize_with_strategies(
+                i,
+                wav_path,
+                chunk_texts,
+                job_id,
+                engine,
+                loop,
+                executor,
+                generation_kwargs,
+                reference_f0,
+            )
+            resynth_count += 1
+            continue
 
-            # Check 2: silence ratio
-            silence_threshold = -40.0
-            silence_ms = 0
-            chunk_size = 50  # ms
-            for j in range(0, duration_ms, chunk_size):
-                c = seg[j : j + chunk_size]
-                if c.dBFS < silence_threshold:
-                    silence_ms += chunk_size
-            silence_ratio = silence_ms / duration_ms
+        # WER check (optional, only for short segments)
+        try:
+            from pydub import AudioSegment as _AS
 
-            if silence_ratio > 0.5:
-                logger.warning(
-                    '[%s] Chunk %d is %.0f%% silence — re-synthesizing',
-                    job_id,
-                    i,
-                    silence_ratio * 100,
-                )
-                checked_paths[i] = await _resynthesize_chunk(
-                    i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
-                )
-                resynth_count += 1
-                continue
-
-            # Check 3: WER — only for segments within the transcription budget
+            duration_ms = len(_AS.from_wav(wav_path))
             if (
                 i < len(chunk_texts)
                 and chunk_texts[i].strip()
@@ -203,7 +382,7 @@ async def _quality_check_and_resynthesize(
                             wer * 100,
                             wer_threshold * 100,
                         )
-                        checked_paths[i] = await _resynthesize_chunk(
+                        checked_paths[i] = await _resynthesize_with_strategies(
                             i,
                             wav_path,
                             chunk_texts,
@@ -212,14 +391,14 @@ async def _quality_check_and_resynthesize(
                             loop,
                             executor,
                             generation_kwargs,
+                            reference_f0,
                         )
                         resynth_count += 1
-
         except Exception as exc:
-            logger.debug('[%s] Quality check for chunk %d skipped: %s', job_id, i, exc)
+            logger.debug('[%s] WER check for chunk %d skipped: %s', job_id, i, exc)
 
     if resynth_count > 0:
-        logger.info('[%s] Re-synthesized %d chunks after quality check', job_id, resynth_count)
+        logger.info('[%s] Re-synthesized %d/%d chunks', job_id, resynth_count, len(chunk_wav_paths))
 
     return checked_paths
 
@@ -233,6 +412,7 @@ async def _check_segment_consistency(
     executor,
     generation_kwargs: dict | None = None,
     loudness_tolerance_db: float = 3.0,
+    reference_f0: float | None = None,
 ) -> list[str]:
     """Re-synthesize segments whose loudness deviates > tolerance_db from the median.
 
@@ -279,8 +459,16 @@ async def _check_segment_consistency(
                 deviation,
                 median_dbfs,
             )
-            checked[i] = await _resynthesize_chunk(
-                i, wav_path, chunk_texts, job_id, engine, loop, executor, generation_kwargs
+            checked[i] = await _resynthesize_with_strategies(
+                i,
+                wav_path,
+                chunk_texts,
+                job_id,
+                engine,
+                loop,
+                executor,
+                generation_kwargs,
+                reference_f0=reference_f0,
             )
             resynth_count += 1
 
@@ -295,7 +483,7 @@ async def _check_segment_consistency(
     return checked
 
 
-async def _resynthesize_chunk(
+async def _resynthesize_with_strategies(
     chunk_idx: int,
     wav_path: str,
     chunk_texts: list[str],
@@ -304,31 +492,150 @@ async def _resynthesize_chunk(
     loop,
     executor,
     generation_kwargs: dict | None = None,
+    reference_f0: float | None = None,
 ) -> str:
-    """Re-synthesize a single chunk. Returns the path (may be original if re-synth fails)."""
+    """Re-synthesize with up to 4 increasingly conservative strategies.
+
+    Strategy 0: raise repetition_penalty to 1.2 (targets repetition-loop hallucinations)
+    Strategy 1: split at nearest any-punctuation boundary around midpoint (both directions)
+    Strategy 2: quarter the text (halve again), same bidirectional split
+    Strategy 3: aggressive text sanitization (strip parentheticals/digits/ALL-CAPS), then retry
+
+    Raises ChunkExhaustedError if all strategies fail the acoustic gate.
+    """
+    from app.core.exceptions import ChunkExhaustedError, SynthesisError
+
     if chunk_idx >= len(chunk_texts):
         return wav_path
 
+    original_text = chunk_texts[chunk_idx]
+
+    def _split_at_punctuation(text: str, target_fraction: float = 0.5) -> list[str]:
+        """Split text near target_fraction, searching outward for any punctuation."""
+        words = text.split()
+        if len(words) <= 5:
+            return [text]
+        pivot = int(len(words) * target_fraction)
+        _ANY_PUNCT_ENDS = ('.', ',', ';', ':', '!', '?', '—', '–')
+        split_at = pivot  # fallback: split at pivot
+        # Search outward from pivot: alternating left/right
+        found = False
+        for offset in range(0, max(pivot, len(words) - pivot) + 1):
+            for candidate in (pivot - offset, pivot + offset):
+                if 0 < candidate < len(words):
+                    if words[candidate - 1].endswith(_ANY_PUNCT_ENDS):
+                        split_at = candidate
+                        found = True
+                        break
+            if found:
+                break
+        part_a = ' '.join(words[:split_at])
+        part_b = ' '.join(words[split_at:])
+        return [p for p in (part_a, part_b) if p.strip()]
+
+    def _sanitize_text(text: str) -> str:
+        """Strip parentheticals, numeric quantities, and ALL-CAPS tokens."""
+        import re as _re
+
+        # Remove content in parentheses
+        text = _re.sub(r'\([^)]{0,200}\)', '', text)
+        # Replace numeric sequences with spoken approximation
+        text = _re.sub(r'\b\d[\d,./]*\b', 'some', text)
+        # Remove ALL-CAPS words (often acronyms/jargon that trip the model)
+        text = _re.sub(r'\b[A-Z]{3,}\b', '', text)
+        # Collapse whitespace
+        text = _re.sub(r'\s+', ' ', text).strip()
+        return text or text  # return empty-safe
+
+    async def _try_halves(halves: list[str], attempt: int, retry_kw: dict) -> str | None:
+        """Synthesize halves, combine, return combined wav_path if gate passes. None otherwise."""
+        import tempfile
+        from pydub import AudioSegment as _AS
+
+        with tempfile.TemporaryDirectory() as td:
+            sub_paths = []
+            all_ok = True
+            for si, half_text in enumerate(halves):
+                sp = f'{td}/half_{si}.wav'
+                synth_fn = _make_synth_fn(engine, retry_kw, job_id)
+                await loop.run_in_executor(executor, synth_fn, half_text, sp)
+                if not _chunk_passes_acoustic_gate(sp, len(half_text.split()), reference_f0):
+                    all_ok = False
+                    break
+                sub_paths.append(sp)
+            if all_ok and len(sub_paths) >= 1:
+                combined = _AS.from_wav(sub_paths[0])
+                for sp in sub_paths[1:]:
+                    combined = combined + _AS.from_wav(sp)
+                combined.export(wav_path, format='wav')
+                total_wc = sum(len(h.split()) for h in halves)
+                if _chunk_passes_acoustic_gate(wav_path, total_wc, reference_f0):
+                    logger.info(
+                        '[%s] Chunk %d passed on split strategy %d', job_id, chunk_idx, attempt
+                    )
+                    return wav_path
+        return None
+
+    # Strategy 0: repetition_penalty=1.2 — most conservative change
+    retry_kw0 = dict(generation_kwargs or {})
+    retry_kw0['repetition_penalty'] = 1.2
     try:
-        retry_kwargs = dict(generation_kwargs or {})
+        synth_fn = _make_synth_fn(engine, retry_kw0, job_id)
+        await loop.run_in_executor(executor, synth_fn, original_text, wav_path)
+        if _chunk_passes_acoustic_gate(wav_path, len(original_text.split()), reference_f0):
+            logger.info(
+                '[%s] Chunk %d passed on strategy 0 (repetition_penalty)', job_id, chunk_idx
+            )
+            return wav_path
+    except (SynthesisError, RuntimeError, OSError) as exc:
+        logger.warning('[%s] Strategy 0 for chunk %d raised: %s', job_id, chunk_idx, exc)
 
-        # Strip leading punctuation that causes the model to emit silence tokens
-        # before speech. Direct-quote openings (", ', ", ') and other non-word
-        # characters at the start are the most common systemic silence triggers —
-        # the model "reads" the opening punctuation as a pause cue. Stripping them
-        # gives the model a word-first entry point on the retry.
-        retry_text = chunk_texts[chunk_idx].lstrip(
-            '\'""\u2018\u2019\u201c\u201d\u2026\u2013\u2014\u2022\u00b7*#'
-        )
-        retry_text = retry_text.strip()
-        if not retry_text:
-            retry_text = chunk_texts[chunk_idx]
+    # Strategy 1: split at midpoint (any punctuation, bidirectional search)
+    halves = _split_at_punctuation(original_text, target_fraction=0.5)
+    if len(halves) > 1:
+        retry_kw1 = dict(generation_kwargs or {})
+        try:
+            result = await _try_halves(halves, attempt=1, retry_kw=retry_kw1)
+            if result is not None:
+                return result
+        except (SynthesisError, RuntimeError, OSError) as exc:
+            logger.warning('[%s] Strategy 1 for chunk %d raised: %s', job_id, chunk_idx, exc)
 
-        # run_in_executor only accepts positional args; use partial to bind
-        # generation_kwargs as a keyword so it doesn't collide with job_id.
-        synth_fn = functools.partial(engine.synthesize_to_file, generation_kwargs=retry_kwargs)
-        await loop.run_in_executor(executor, synth_fn, retry_text, wav_path, job_id)
-        return wav_path
-    except Exception as exc:
-        logger.warning(f'[{job_id}] Re-synthesis of chunk {chunk_idx} failed: {exc}')
-        return wav_path  # Return original path
+    # Strategy 2: quarter split (halve each half)
+    quarter_texts: list[str] = []
+    for half in _split_at_punctuation(original_text, target_fraction=0.5) or [original_text]:
+        quarter_texts.extend(_split_at_punctuation(half, target_fraction=0.5))
+    quarter_texts = [q for q in quarter_texts if q.strip()]
+    if len(quarter_texts) > 1:
+        retry_kw2 = dict(generation_kwargs or {})
+        try:
+            result = await _try_halves(quarter_texts, attempt=2, retry_kw=retry_kw2)
+            if result is not None:
+                return result
+        except (SynthesisError, RuntimeError, OSError) as exc:
+            logger.warning('[%s] Strategy 2 for chunk %d raised: %s', job_id, chunk_idx, exc)
+
+    # Strategy 3: aggressive text sanitization
+    sanitized = _sanitize_text(original_text)
+    if sanitized.strip():
+        retry_kw3 = dict(generation_kwargs or {})
+        try:
+            synth_fn = _make_synth_fn(engine, retry_kw3, job_id)
+            await loop.run_in_executor(executor, synth_fn, sanitized, wav_path)
+            if _chunk_passes_acoustic_gate(wav_path, len(sanitized.split()), reference_f0):
+                logger.info(
+                    '[%s] Chunk %d passed on strategy 3 (sanitized text)', job_id, chunk_idx
+                )
+                return wav_path
+        except (SynthesisError, RuntimeError, OSError) as exc:
+            logger.warning('[%s] Strategy 3 for chunk %d raised: %s', job_id, chunk_idx, exc)
+
+    raise ChunkExhaustedError(
+        f'Chunk {chunk_idx} failed all 4 synthesis strategies',
+        chunk_idx=chunk_idx,
+    )
+
+
+def _make_synth_fn(engine, kwargs: dict, job_id: str = ''):
+    """Return a callable that calls engine.synthesize_to_file with given kwargs."""
+    return functools.partial(engine.synthesize_to_file, job_id=job_id, generation_kwargs=kwargs)

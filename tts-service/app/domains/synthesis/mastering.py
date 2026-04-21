@@ -41,7 +41,7 @@ from app.config import AUDIO_SAMPLE_RATE, MP3_BITRATE, TARGET_LUFS
 logger = logging.getLogger(__name__)
 
 DEFAULT_TARGET_LUFS: Final[float] = TARGET_LUFS
-DEFAULT_TRUE_PEAK: Final[float] = -2.0
+DEFAULT_TRUE_PEAK: Final[float] = -1.5
 DEFAULT_LRA: Final[float] = 9.0  # Podcast standard; 7.0 over-compressed natural emphasis
 
 
@@ -165,7 +165,7 @@ def master_audio(
                     'areverse,'
                     f'{_COMPRESSOR},'
                     f'{loudnorm_filter},'
-                    'alimiter=level_in=1:level_out=1:limit=0.794:attack=5:release=150:level=disabled'
+                    'alimiter=level_in=1:level_out=1:limit=0.891:attack=5:release=50:level=disabled'
                 ),
                 '-ar',
                 str(sample_rate),

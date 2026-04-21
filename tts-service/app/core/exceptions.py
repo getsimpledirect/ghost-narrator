@@ -161,3 +161,14 @@ class JobCancelledError(TTSServiceError):
     """Job was cancelled."""
 
     pass
+
+
+class ChunkExhaustedError(SynthesisError):
+    """Raised when a chunk fails all retry attempts after quality validation.
+
+    chunk_idx: zero-based index of the exhausted chunk in the synthesis batch.
+    """
+
+    def __init__(self, message: str, chunk_idx: int) -> None:
+        self.chunk_idx = chunk_idx
+        super().__init__(message, details=f'chunk_idx={chunk_idx}')

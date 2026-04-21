@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import math
 import os
 import shutil
 import time
@@ -44,7 +45,9 @@ from typing import Optional
 from pydub import AudioSegment as _AudioSegment
 
 from app.core.exceptions import (
+    ChunkExhaustedError,
     JobDeletedError,
+    NarrationError,
     SynthesisError,
     StorageError,
     AudioProcessingError,
@@ -230,6 +233,28 @@ async def run_tts_job(
         # without a restart, synthesis would immediately raise SynthesisError.
         engine.uncancel_job(job_id)
 
+        # Validate reference voice quality — fail fast before any GPU work
+        from app.config import VOICE_SAMPLE_PATH
+        from app.domains.voices.validate import validate_reference_wav
+
+        voice_errors = validate_reference_wav(VOICE_SAMPLE_PATH)
+        if voice_errors:
+            error_msg = '; '.join(voice_errors)
+            logger.error('[%s] Reference voice validation failed: %s', job_id, error_msg)
+            await job_store.update(
+                job_id,
+                {
+                    'status': 'failed',
+                    'error': f'Reference voice invalid: {error_msg}',
+                    'completed_at': time.time(),
+                    'duration_seconds': time.time() - start_time,
+                },
+            )
+            return
+
+        # Obtain reference F0 for speaker-drift gating — pre-computed from voice sample
+        _reference_f0 = getattr(engine, 'reference_f0', None)
+
         # Fetch generation config once (async Redis read) before entering thread pool
         generation_kwargs, _overrides = await get_effective_config()
 
@@ -295,6 +320,8 @@ async def run_tts_job(
                                     f'[{job_id}] Narration complete — '
                                     f'{len(narrated_segments)} segments'
                                 )
+                            except NarrationError:
+                                raise  # critical truncation — do not fall back to raw text
                             except Exception as exc:
                                 logger.warning(
                                     f'[{job_id}] Narration failed, using raw text: {exc}'
@@ -396,32 +423,79 @@ async def run_tts_job(
                                 if use_tail_conditioning:
                                     # Per-segment quality check on HIGH_VRAM so the tail
                                     # reference is always from a known-good segment.
-                                    [checked_path] = await _quality_check_and_resynthesize(
-                                        [segment_path],
-                                        [clean_seg],
-                                        job_id,
-                                        engine,
-                                        loop,
-                                        executor,
-                                        generation_kwargs,
-                                    )
-                                    segment_wavs.append(checked_path)
-                                    # Extract tail for next segment; skip on failure (non-fatal)
                                     try:
-                                        tail_wav = str(job_dir / f'tail_{seg_idx:04d}.wav')
-                                        tail_voice_path = await loop.run_in_executor(
-                                            executor,
-                                            _extract_tail_wav,
-                                            checked_path,
-                                            2500,
-                                            tail_wav,
-                                        )
-                                    except Exception as _tail_exc:
-                                        logger.warning(
-                                            '[%s] Tail extraction failed (non-fatal): %s',
+                                        [checked_path] = await _quality_check_and_resynthesize(
+                                            [segment_path],
+                                            [clean_seg],
                                             job_id,
-                                            _tail_exc,
+                                            engine,
+                                            loop,
+                                            executor,
+                                            generation_kwargs,
+                                            reference_f0=_reference_f0,
                                         )
+                                    except ChunkExhaustedError as exc:
+                                        raise RuntimeError(
+                                            f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                            'Job aborted to prevent shipping broken audio.'
+                                        ) from exc
+                                    segment_wavs.append(checked_path)
+                                    # Gate tail propagation on F0 match — prevents drift
+                                    # cascade when a synthesized segment drifts in pitch.
+                                    _tail_f0_ok = True
+                                    if _reference_f0 is not None and _reference_f0 > 0:
+                                        try:
+                                            from app.domains.synthesis.quality_check import (
+                                                _estimate_median_f0,
+                                            )
+
+                                            _seg_f0 = await loop.run_in_executor(
+                                                executor, _estimate_median_f0, checked_path
+                                            )
+                                            if _seg_f0 is not None and _seg_f0 > 0:
+                                                _semitones = abs(
+                                                    12 * math.log2(_seg_f0 / _reference_f0)
+                                                )
+                                                if _semitones > 3.0:
+                                                    logger.warning(
+                                                        '[%s] Segment %d tail F0=%.0f Hz vs ref %.0f Hz '
+                                                        '(%.1f st) — not propagating tail to next segment',
+                                                        job_id,
+                                                        seg_idx,
+                                                        _seg_f0,
+                                                        _reference_f0,
+                                                        _semitones,
+                                                    )
+                                                    _tail_f0_ok = False
+                                            else:
+                                                # F0 undetectable (silent/unvoiced segment) — safer
+                                                # to reset than to propagate a potentially bad tail.
+                                                _tail_f0_ok = False
+                                        except (ValueError, RuntimeError, OSError) as _f0_exc:
+                                            logger.warning(
+                                                '[%s] Tail F0 check failed (non-fatal): %s',
+                                                job_id,
+                                                _f0_exc,
+                                            )
+                                    # Extract tail for next segment; skip on failure (non-fatal)
+                                    if _tail_f0_ok:
+                                        try:
+                                            tail_wav = str(job_dir / f'tail_{seg_idx:04d}.wav')
+                                            tail_voice_path = await loop.run_in_executor(
+                                                executor,
+                                                _extract_tail_wav,
+                                                checked_path,
+                                                2500,
+                                                tail_wav,
+                                            )
+                                        except Exception as _tail_exc:
+                                            logger.warning(
+                                                '[%s] Tail extraction failed (non-fatal): %s',
+                                                job_id,
+                                                _tail_exc,
+                                            )
+                                            tail_voice_path = None
+                                    else:
                                         tail_voice_path = None
                                 else:
                                     segment_wavs.append(segment_path)
@@ -442,29 +516,43 @@ async def run_tts_job(
                                 logger.info(
                                     f'[{job_id}] Consistency check across {len(segment_wavs)} segments...'
                                 )
-                                segment_wavs = await _check_segment_consistency(
-                                    segment_wavs,
-                                    segment_texts,
-                                    job_id,
-                                    engine,
-                                    loop,
-                                    executor,
-                                    generation_kwargs,
-                                )
+                                try:
+                                    segment_wavs = await _check_segment_consistency(
+                                        segment_wavs,
+                                        segment_texts,
+                                        job_id,
+                                        engine,
+                                        loop,
+                                        executor,
+                                        generation_kwargs,
+                                        reference_f0=_reference_f0,
+                                    )
+                                except ChunkExhaustedError as exc:
+                                    raise RuntimeError(
+                                        f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                        'Job aborted to prevent shipping broken audio.'
+                                    ) from exc
                             else:
                                 # Batch quality check for lower tiers (silence/too-short detection)
                                 logger.info(
                                     f'[{job_id}] Quality check on {len(segment_wavs)} segments...'
                                 )
-                                segment_wavs = await _quality_check_and_resynthesize(
-                                    segment_wavs,
-                                    segment_texts,
-                                    job_id,
-                                    engine,
-                                    loop,
-                                    executor,
-                                    generation_kwargs,
-                                )
+                                try:
+                                    segment_wavs = await _quality_check_and_resynthesize(
+                                        segment_wavs,
+                                        segment_texts,
+                                        job_id,
+                                        engine,
+                                        loop,
+                                        executor,
+                                        generation_kwargs,
+                                        reference_f0=_reference_f0,
+                                    )
+                                except ChunkExhaustedError as exc:
+                                    raise RuntimeError(
+                                        f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                        'Job aborted to prevent shipping broken audio.'
+                                    ) from exc
 
                             if len(segment_wavs) > 1:
                                 merged_wav = await loop.run_in_executor(
@@ -493,15 +581,22 @@ async def run_tts_job(
                         logger.info(
                             f'[{job_id}] Quality check on {len(chunk_wav_paths)} audio file(s)...'
                         )
-                        chunk_wav_paths = await _quality_check_and_resynthesize(
-                            chunk_wav_paths,
-                            all_chunks,
-                            job_id,
-                            engine,
-                            loop,
-                            executor,
-                            generation_kwargs,
-                        )
+                        try:
+                            chunk_wav_paths = await _quality_check_and_resynthesize(
+                                chunk_wav_paths,
+                                all_chunks,
+                                job_id,
+                                engine,
+                                loop,
+                                executor,
+                                generation_kwargs,
+                                reference_f0=_reference_f0,
+                            )
+                        except ChunkExhaustedError as exc:
+                            raise RuntimeError(
+                                f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                'Job aborted to prevent shipping broken audio.'
+                            ) from exc
 
                     # Step 3: Skip per-chunk normalization — it causes inconsistent loudness
                     # between chunks (single-pass loudnorm is inaccurate). Final mastering
@@ -560,7 +655,9 @@ async def run_tts_job(
         # GPU slot released — next queued job can start its pipeline.
         logger.info(f'[{job_id}] GPU slot released')
 
-        # Step 6: Quality validation (non-fatal, log only)
+        # Step 6: Quality validation — gate on final file metrics.
+        # validate_audio_quality already runs; we now fail the job if the output
+        # exceeds safe thresholds rather than shipping broken audio silently.
         try:
             quality = await loop.run_in_executor(
                 executor,
@@ -569,6 +666,29 @@ async def run_tts_job(
             )
             if quality:
                 logger.info(f'[{job_id}] Quality metrics: {quality}')
+                _tp = quality.get('true_peak_dbfs')
+                _lufs = quality.get('integrated_lufs')
+                _silences = quality.get('long_silence_gaps_count', 0)
+                from app.config import TARGET_LUFS as _TARGET_LUFS
+
+                _lufs_target = float(_TARGET_LUFS)
+                if _tp is not None and _tp > -1.0:
+                    raise RuntimeError(
+                        f'[{job_id}] Final audio exceeds true-peak limit: {_tp:.1f} dBTP > -1.0 dBTP. '
+                        'Mastering limiter likely did not run (check mastering logs).'
+                    )
+                if _lufs is not None and abs(_lufs - _lufs_target) > 2.5:
+                    raise RuntimeError(
+                        f'[{job_id}] Final audio LUFS outside tolerance: {_lufs:.1f} LUFS '
+                        f'(target {_lufs_target:.1f} ± 2.5). Mastering may have failed.'
+                    )
+                if _silences and _silences > 0:
+                    raise RuntimeError(
+                        f'[{job_id}] Final audio contains {_silences} long silence gap(s). '
+                        'Check synthesis and mastering logs.'
+                    )
+        except RuntimeError:
+            raise  # propagate quality gate failures
         except Exception as exc:
             logger.warning(f'[{job_id}] Quality check failed (non-fatal): {exc}')
 
