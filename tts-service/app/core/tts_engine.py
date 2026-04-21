@@ -49,8 +49,8 @@ except ImportError:
 # hardware.py derives _CODEC_TOKENS_PER_WORD = 5.54 = 12 × (60 s / 130 WPM).
 _TTS_CODEC_TOKENS_PER_SECOND: int = 12
 
-# 143 WPM → 0.42 s/word — conservative narration pace upper bound.
-# Matches _CODEC_TOKENS_PER_WORD = 5.54 = 12 × (60/130) in hardware.py.
+# 143 WPM → 0.42 s/word — conservative narration pace upper bound (60 / 143 = 0.419).
+# Pairs with _TTS_CODEC_TOKENS_PER_SECOND = 12: 1 word ≈ 0.42 s × 12 tokens/s = 5.04 tokens.
 _SECONDS_PER_WORD: float = 0.42
 
 # 1.3× headroom — tight enough to cut off hallucinations within ~30 s of audio
