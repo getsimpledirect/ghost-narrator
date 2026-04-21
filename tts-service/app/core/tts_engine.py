@@ -158,6 +158,14 @@ class TTSEngine:
                         'Voice clone prompt cached (mode: %s)',
                         'x-vector-only' if use_x_vector_only else 'ICL',
                     )
+                    # Pre-compute reference F0 for per-chunk speaker-drift gating
+                    try:
+                        from app.domains.synthesis.quality_check import _estimate_median_f0
+
+                        self._reference_f0 = _estimate_median_f0(str(voice_path))
+                        logger.info('Reference voice F0: %.0f Hz', self._reference_f0 or 0)
+                    except Exception as _f0_exc:
+                        logger.debug('Reference F0 computation failed (non-fatal): %s', _f0_exc)
                 else:
                     logger.warning(
                         'Voice sample not found at %s — will load per-job',
@@ -192,6 +200,11 @@ class TTSEngine:
     @property
     def is_ready(self) -> bool:
         return self._ready
+
+    @property
+    def reference_f0(self) -> float | None:
+        """Median F0 of the reference voice sample, Hz. None if not yet computed."""
+        return self._reference_f0
 
     def synthesize_to_file(
         self,
@@ -381,6 +394,7 @@ def get_tts_engine() -> TTSEngine:
             _engine._cancelled_jobs: set[str] = set()
             _engine._cached_voice_path: Optional[str] = None
             _engine._cached_voice_prompt = None
+            _engine._reference_f0: float | None = None
     return _engine
 
 

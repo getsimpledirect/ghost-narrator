@@ -40,3 +40,12 @@ class TestMaxNewTokensBounding:
         tokens = _compute_max_new_tokens(word_count=300)
         # 300 × 0.4 × 50 × 1.4 = 8400
         assert tokens >= 6000
+
+
+def test_tts_engine_has_reference_f0_property():
+    from app.core.tts_engine import get_tts_engine
+
+    engine = get_tts_engine()
+    # reference_f0 is None when engine is not initialized (no voice sample loaded)
+    assert hasattr(engine, 'reference_f0')
+    assert engine.reference_f0 is None  # before initialize()
