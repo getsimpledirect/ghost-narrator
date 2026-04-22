@@ -164,10 +164,9 @@ _SECONDS_PER_WORD: float = 0.40
 # Tightened to 2.5 (was 3.0): F0 is a hard identity signal, not a soft metric.
 _MAX_F0_DEVIATION_SEMITONES: float = 2.5
 
-# When true, acoustic gate logs failures but always returns pass.  Set via env var so
-# the first deployment week can collect real metric distributions without rejecting jobs.
-# Default is 'true' (shadow mode); set DRY_RUN_GATE=false to enable enforcement.
-_DRY_RUN_GATE: bool = _os.environ.get('DRY_RUN_GATE', 'true').lower() in ('1', 'true', 'yes')
+# When true, acoustic gate logs failures but always returns pass — shadow/calibration mode.
+# Default is 'false' (enforce); set DRY_RUN_GATE=true to observe without rejecting.
+_DRY_RUN_GATE: bool = _os.environ.get('DRY_RUN_GATE', 'false').lower() in ('1', 'true', 'yes')
 
 
 def _gate_result(passed: bool, reason: str) -> tuple[bool, str]:

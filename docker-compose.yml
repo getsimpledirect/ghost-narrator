@@ -249,6 +249,9 @@ services:
       # Leave blank to use x-vector-only mode (no transcription needed).
       - VOICE_SAMPLE_REF_TEXT=${VOICE_SAMPLE_REF_TEXT:-}
       - TTS_LANGUAGE=${TTS_LANGUAGE:-auto}
+      # Acoustic gate: set false to enforce rejection, true for shadow/calibration mode.
+      # Default false — dry-run requires explicit opt-in, not the other way around.
+      - DRY_RUN_GATE=${DRY_RUN_GATE:-false}
       - MAX_CHUNK_WORDS=${MAX_CHUNK_WORDS:-200}
       - HARDWARE_TIER=${HARDWARE_TIER:-}
       - SELECTED_LLM_NUM_CTX=${SELECTED_LLM_NUM_CTX:-}
