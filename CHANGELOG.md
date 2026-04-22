@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v2.13.3 (2026-04-22)
+
+### Bug Fixes
+
+- **tts-service**: Propagate DRY_RUN_GATE into container; flip default to false
+  ([`d9340a9`](https://github.com/getsimpledirect/ghost-narrator/commit/d9340a9f0e0832d7c2b3a6a5be47d9e643ea3758))
+
+- docker-compose.yml: add DRY_RUN_GATE=${DRY_RUN_GATE:-false} to tts-service environment block so
+  the value from .env reaches the container (was silently ignored — env var never forwarded) -
+  quality_check.py: change _DRY_RUN_GATE default from 'true' to 'false' so a missing env var
+  enforces the gate rather than silently bypassing it
+
+Shadow mode (DRY_RUN_GATE=true) now requires explicit opt-in; the safe default is enforcement. This
+  matches the semantics of every other quality gate in the pipeline.
+
+
 ## v2.13.2 (2026-04-21)
 
 ### Bug Fixes
