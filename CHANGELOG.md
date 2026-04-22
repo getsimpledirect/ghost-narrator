@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v2.13.7 (2026-04-22)
+
+### Bug Fixes
+
+- **config**: Handle empty-string env vars from docker-compose ${VAR:-} expansion
+  ([`d5c0b94`](https://github.com/getsimpledirect/ghost-narrator/commit/d5c0b94620c4be9310fb8988507278dedb60f544))
+
+docker-compose.yml passes "" (empty string) for AUDIO_SAMPLE_RATE, TARGET_LUFS, MP3_BITRATE, and
+  SINGLE_SHOT_SEGMENT_WORDS when they are absent from .env, using the ${VAR:-} syntax.
+  os.environ.get(key, default) only uses the default when the key is absent — not when it is
+  present-but-empty — so int("") and float("") raised ValueError at import time, crashing the
+  service on startup.
+
+- config.py: switch affected lines to `os.environ.get(key) or fallback` pattern so an empty string
+  falls through to the hardware-tier default, matching the documented behaviour ("leave blank to use
+  hardware-tier defaults") - Covers: AUDIO_SAMPLE_RATE, TARGET_LUFS, MP3_BITRATE,
+  SINGLE_SHOT_SEGMENT_WORDS
+
+
 ## v2.13.6 (2026-04-22)
 
 ### Bug Fixes
