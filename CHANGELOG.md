@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v2.13.8 (2026-04-22)
+
+### Bug Fixes
+
+- **quality-check**: Scale mid-phrase drop threshold with chunk duration
+  ([`11b326a`](https://github.com/getsimpledirect/ghost-narrator/commit/11b326ae9f35854b4263a43ce8151d8f2e13388d))
+
+The fixed threshold of >3 drops rejected healthy long-form narration: a 400-word (~160s) segment
+  contains 20+ sentence boundaries, many of which register as 0.3-1.5s amplitude dips under the
+  rolling-median check. Production logs showed a clean retry producing only 6 drops in 160s (1 per
+  27s — natural cadence) still being aborted after exhausting all 4 resynthesis strategies.
+
+- tts-service/app/domains/synthesis/quality_check.py: - tighten drop-duration window from 0.3-1.5s
+  to 0.6-2.0s; natural Qwen3-TTS punctuation pauses are 200-500ms, so the previous 0.3s floor
+  counted them as drops - scale rejection threshold from fixed >3 to >max(3, duration_s / 20); ~1
+  drop per 20s of audio tolerated, floor preserves short-chunk behaviour - include duration-aware
+  tolerance in the failure reason string - update docstring listing the 9 gate checks
+
+- tts-service/tests/domains/synthesis/test_quality_check.py: - retarget existing drop tests to
+  drop_dur_s=0.8 so they sit unambiguously inside the new 0.6-2.0s window -
+  test_too_short_drops_ignored now uses 400ms drops to validate the 600ms floor covers the
+  natural-pause range - add test_threshold_scales_with_duration: 160s chunk + 6 drops now passes
+  (would have failed before) - add test_threshold_scaling_still_rejects_excessive_drops: 100s chunk
+  + 8 drops still fails — scaling loosens, does not remove the gate
+
+
 ## v2.13.7 (2026-04-22)
 
 ### Bug Fixes
