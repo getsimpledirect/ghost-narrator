@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v2.13.9 (2026-04-22)
+
+### Chores
+
+- **tts-service**: Add MIT license header to remaining test files
+  ([`8cef539`](https://github.com/getsimpledirect/ghost-narrator/commit/8cef53996579fde574fc3203085b6ad37aafc3e8))
+
+Three non-empty test files were missed by the earlier blanket sweep in 30ca49d. Brings the
+  tts-service/tests/ tree to full MIT header coverage on all files that contain code. Empty
+  __init__.py package markers remain header-less, matching existing convention.
+
+- tts-service/tests/core/test_tts_engine.py: prepend 21-line MIT header -
+  tts-service/tests/utils/test_normalize.py: prepend 21-line MIT header -
+  tts-service/tests/utils/test_text_pause.py: prepend 21-line MIT header
+
+### Refactoring
+
+- **tts-service**: Expose package API via __init__ re-exports
+  ([`0315a05`](https://github.com/getsimpledirect/ghost-narrator/commit/0315a05e84dc7911d3accdc4f826f4378d7930fd))
+
+Align three outlier packages with the re-export convention already used in storage/, synthesis/, and
+  api/.
+
+- app/domains/voices: VoiceRegistry, validate_and_save, validate_reference_wav -
+  app/domains/tts_config: initialize, get/save/clear_overrides, get_effective_config,
+  get_tier_defaults - app/api/rate_limit_middleware: RateLimitMiddleware
+
+
 ## v2.13.8 (2026-04-22)
 
 ### Bug Fixes
