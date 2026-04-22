@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v2.13.4 (2026-04-22)
+
+### Bug Fixes
+
+- Forward all user-configurable env vars and add TTS_LANGUAGE to installer
+  ([`a6e7c44`](https://github.com/getsimpledirect/ghost-narrator/commit/a6e7c448708f01cd4c9efd18eb056e1cf8b6f970))
+
+- docker-compose.yml: add SINGLE_SHOT_SEGMENT_WORDS, SINGLE_SHOT_MAX_WORDS, SINGLE_SHOT_OVERLAP_MS,
+  MP3_BITRATE, AUDIO_SAMPLE_RATE, TARGET_LUFS, and MAX_JOB_DURATION_SECONDS to tts-service
+  environment block — these were documented in README but silently dropped by Docker Compose when
+  unlisted - .env.example: add TTS_LANGUAGE, SINGLE_SHOT_SEGMENT_WORDS/MAX_WORDS/OVERLAP_MS,
+  MAX_JOB_DURATION_SECONDS, LOG_LEVEL, LOG_FORMAT as commented template entries - install.sh: add
+  TTS_LANGUAGE prompt in voice setup section so non-English users can set the language code (zh, ja,
+  de, etc.) at install time
+
+### Chores
+
+- Sync scripts and env.example with fp16 and DRY_RUN_GATE
+  ([`ca8135a`](https://github.com/getsimpledirect/ghost-narrator/commit/ca8135a1943aa49efb237158ee1c21cff2953300))
+
+- scripts/init/vllm-init.sh: fix stale bf16→fp16 in TTS reserve comment - .env.example: add
+  DRY_RUN_GATE commented entry under Audio Quality Override
+
+### Documentation
+
+- Sync bf16→fp16 and add DRY_RUN_GATE across all docs
+  ([`2dbade9`](https://github.com/getsimpledirect/ghost-narrator/commit/2dbade9262b2099a1b68c9d0cc53c74bccd201f7))
+
+- tts-service/README.md, QUICKSTART.md, docs/ARCHITECTURE.md: replace remaining stale bf16
+  references with fp16 for HIGH_VRAM tier - tts-service/README.md, docs/ARCHITECTURE.md: add
+  DRY_RUN_GATE env var entry (default false = enforce, true = shadow/calibration) - test cleanup:
+  remove unused imports and variable in test_tts_job.py and test_narration_strategy.py (pre-existing
+  lint noise)
+
+
 ## v2.13.3 (2026-04-22)
 
 ### Bug Fixes
