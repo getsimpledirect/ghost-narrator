@@ -85,9 +85,11 @@ GCS_AUDIO_PREFIX: Final[str] = os.environ.get('GCS_AUDIO_PREFIX', 'audio/article
 _ec = _get_engine_config()
 
 # Audio quality (from ENGINE_CONFIG — overridable via env)
-MP3_BITRATE: Final[str] = os.environ.get('MP3_BITRATE', _ec.mp3_bitrate)
-AUDIO_SAMPLE_RATE: Final[int] = int(os.environ.get('AUDIO_SAMPLE_RATE', str(_ec.sample_rate)))
-TARGET_LUFS: Final[float] = float(os.environ.get('TARGET_LUFS', str(_ec.target_lufs)))
+# Use `or` not positional default: docker-compose passes "" when the var is absent from .env,
+# and os.environ.get(key, default) only falls back when the key is missing, not when empty.
+MP3_BITRATE: Final[str] = os.environ.get('MP3_BITRATE') or _ec.mp3_bitrate
+AUDIO_SAMPLE_RATE: Final[int] = int(os.environ.get('AUDIO_SAMPLE_RATE') or str(_ec.sample_rate))
+TARGET_LUFS: Final[float] = float(os.environ.get('TARGET_LUFS') or str(_ec.target_lufs))
 
 # TTS chunk words (from ENGINE_CONFIG)
 # Increased from 200 to 400 - larger chunks provide more context for the LLM
@@ -115,7 +117,7 @@ SINGLE_SHOT_MAX_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_MAX_WORDS', 
 # Leave unset to let the VRAM probe choose (recommended). Set explicitly only to pin a
 # specific value regardless of available VRAM, e.g. for debugging or constrained hardware.
 # Hard ceiling: 700 words for 1.7B model, 400 words for 0.6B model.
-SINGLE_SHOT_SEGMENT_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_SEGMENT_WORDS', '400'))
+SINGLE_SHOT_SEGMENT_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_SEGMENT_WORDS') or '400')
 
 # Overlap between segments for crossfade (in milliseconds)
 SINGLE_SHOT_OVERLAP_MS: Final[int] = int(os.environ.get('SINGLE_SHOT_OVERLAP_MS', '500'))
