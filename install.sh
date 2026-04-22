@@ -376,6 +376,17 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
         info "Using x-vector-only mode (no transcript)"
     fi
 
+    # ── TTS Language ──────────────────────────────────────────────────────────
+    echo ""
+    info "TTS output language"
+    echo "  'auto' works for English and lets the model detect the language automatically."
+    echo "  For non-English voices set a BCP-47 code: zh, ja, de, fr, es, ko, etc."
+    echo ""
+    read -r -p "TTS language [auto]: " TTS_LANG
+    TTS_LANG="${TTS_LANG:-auto}"
+    _set_env "TTS_LANGUAGE" "$TTS_LANG"
+    ok "TTS language set to ${TTS_LANG}"
+
     rm -f .env.bak
     ok ".env configured"
 else

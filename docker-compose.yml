@@ -257,6 +257,14 @@ services:
       - SELECTED_LLM_NUM_CTX=${SELECTED_LLM_NUM_CTX:-}
       # MAX_WORKERS is used for CPU mode parallel synthesis
       - MAX_WORKERS=${MAX_WORKERS:-4}
+      # Segment synthesis — leave blank to auto-probe from VRAM at startup (recommended)
+      - SINGLE_SHOT_SEGMENT_WORDS=${SINGLE_SHOT_SEGMENT_WORDS:-}
+      - SINGLE_SHOT_MAX_WORDS=${SINGLE_SHOT_MAX_WORDS:-400}
+      - SINGLE_SHOT_OVERLAP_MS=${SINGLE_SHOT_OVERLAP_MS:-500}
+      # Audio quality — leave blank to use hardware-tier defaults
+      - MP3_BITRATE=${MP3_BITRATE:-}
+      - AUDIO_SAMPLE_RATE=${AUDIO_SAMPLE_RATE:-}
+      - TARGET_LUFS=${TARGET_LUFS:-}
       # Google Cloud Storage
       - GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-}
       - GCS_AUDIO_PREFIX=${GCS_AUDIO_PREFIX:-audio/articles}
@@ -265,6 +273,7 @@ services:
       # Redis job store
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - REDIS_JOB_TTL=${REDIS_JOB_TTL:-86400}
+      - MAX_JOB_DURATION_SECONDS=${MAX_JOB_DURATION_SECONDS:-28800}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
