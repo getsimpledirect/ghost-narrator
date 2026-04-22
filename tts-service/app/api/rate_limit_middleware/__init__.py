@@ -20,3 +20,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+"""ASGI middleware that enforces per-API-key rate limits on incoming requests."""
+
+from app.api.rate_limit_middleware.rate_limit import RateLimitMiddleware
+
+__all__ = ['RateLimitMiddleware']

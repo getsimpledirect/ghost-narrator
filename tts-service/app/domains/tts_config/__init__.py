@@ -20,3 +20,22 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+"""Redis-backed store for TTS generation config overrides layered on top of tier defaults."""
+
+from app.domains.tts_config.store import (
+    clear_overrides,
+    get_effective_config,
+    get_overrides,
+    get_tier_defaults,
+    initialize,
+    save_overrides,
+)
+
+__all__ = [
+    'clear_overrides',
+    'get_effective_config',
+    'get_overrides',
+    'get_tier_defaults',
+    'initialize',
+    'save_overrides',
+]
