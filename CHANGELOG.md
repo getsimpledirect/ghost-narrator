@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v2.13.6 (2026-04-22)
+
+### Bug Fixes
+
+- **quality-check**: Add windowed F0 gate, mid-phrase drop detection, retry seed variation
+  ([`da6b7ba`](https://github.com/getsimpledirect/ghost-narrator/commit/da6b7ba70138e2df41e1ca6c84e4cc4d2fd54058))
+
+Addresses three failure modes observed in long-form synthesis where the existing whole-chunk
+  acoustic gate passed bad regions:
+
+- tts-service/app/domains/synthesis/quality_check.py: - Add windowed F0 gate (Fix 1): 3 s sliding
+  windows with 50% overlap, each analyzed independently for F0 drift from reference. Rejects chunk
+  if >5% of windows show >6 semitones drift. Catches garbled regions that whole-chunk median
+  smoothing masks — a 20 s garbled region inside a 180 s chunk shifts the overall median ~11% (under
+  the 2.5 st hard threshold) but produces >11% bad windows. Gate is a no-op when reference_f0 is
+  None. - Add mid-phrase drop detection (Fix 2): rejects chunk if >3 drops of 0.3–1.5 s where RMS
+  falls below 10% of the rolling 2 s local median. Catches mid-sentence amplitude collapses from
+  Qwen3-TTS coherence loss. Up to 3 drops tolerated — natural hesitation pauses can look similar. -
+  Both analyses share a single soundfile.read() call and run inside a non-fatal try/except so gate
+  errors fail open, consistent with existing gate behavior. - Vary seed across retry strategies (Fix
+  3): each of the 4 re-synthesis strategies now receives seed = (original_seed + attempt × 7919) %
+  2³¹. Prime offset prevents all seeds landing on the same residue class modulo any small number.
+  Previously all retries reused the original seed, which could replay the same failing decoding
+  path. - Update _chunk_passes_acoustic_gate docstring to list all 9 checks.
+
+- tts-service/tests/domains/synthesis/test_quality_check.py: - TestWindowedF0Gate: localized drift
+  fails, uniform pitch passes, no-ref skip - TestMidPhraseDropDetection: >3 drops fail, ≤3 pass,
+  <300 ms ignored - TestRetrySeeds: source inspection confirms prime-offset arithmetic present;
+  arithmetic correctness verified directly
+
+- docs/ARCHITECTURE.md: - Stage 4 section rewritten: removes three non-existent checks (silence
+  ratio, clipping, low energy) and documents the actual acoustic gate (hard/soft/regional checks)
+  including the two new regional checks - "Seed determinism" bullet corrected to "Seed variation
+  across retries"
+
+- .gitignore: add AI coding tool artifacts (CLAUDE.md, .claude/, graphify-out/, .code-review-graph/,
+  .opencode/, .swarm/, .claude-flow/, AGENTS.md)
+
+
 ## v2.13.5 (2026-04-22)
 
 ### Bug Fixes
