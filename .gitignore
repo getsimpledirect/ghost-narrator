@@ -82,8 +82,18 @@ desktop.ini
 # ─── Git Worktrees ────────────────────────────────────────────────────────────
 .worktrees/
 
-# ─── Internal workflow artifacts (superpowers plans/specs — not for public repo) ─
+# ─── AI coding tools — never commit ──────────────────────────────────────────
 docs/superpowers/
+CLAUDE.md
+AGENTS.md
+AGENT.md
+.claude/
+.code-review-graph/
+.claude.local.md
+graphify-out/
+.opencode/
+.swarm/
+.claude-flow/
 
 # ─── Model weights / checkpoints ───────────────────────────────────────────────
 *.pt

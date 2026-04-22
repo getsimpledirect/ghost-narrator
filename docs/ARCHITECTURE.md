@@ -158,7 +158,7 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 - **Tail conditioning** — each segment is conditioned on the last 2.5s of the preceding segment, anchoring voice timbre and speaking rate across synthesis boundaries
 - **WER-based re-synthesis** — each segment is transcribed by Whisper base (CPU) and re-synthesized if word error rate exceeds 10%; catches hallucinated, skipped, and repeated words that silence-ratio checks cannot detect
 - **Loudness consistency check** — after all segments are synthesized, any segment deviating more than ±3 dB from the median dBFS is re-synthesized; prevents volume-level drift between segments
-- **Seed determinism** — a SHA-256-derived seed is set per job (torch + numpy + random + cuDNN deterministic mode) so retries produce the same audio
+- **Seed variation across retries** — a SHA-256-derived seed is set per job for the initial synthesis pass (torch + numpy + random); each of the 4 retry strategies uses a different seed (`original_seed + attempt × 7919 mod 2³¹`) to explore distinct autoregressive decoding paths rather than replaying the same failing sample
 - **Pre-computed voice reference** — voice embedding cached at startup, saves 2-5s per job
 - **LLM completeness check** — second LLM call verifies no facts were dropped during narration (short articles only, combined ≤ 4000 words)
 
@@ -575,11 +575,25 @@ The TTS service implements a multi-stage pipeline with hardware-adaptive quality
 - **GPU mode**: Sequential synthesis (optimal for CUDA memory management)
 
 **Stage 4: Per-Segment Quality Check (all tiers)**
-- Silence ratio check: re-synthesize if > 40% of the segment is silence
-- Clipping check: re-synthesize if peak amplitude exceeds 0.98
-- Low energy check: re-synthesize if RMS < 0.005
-- **HIGH_VRAM only — WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, re-synthesize (catches hallucinated/skipped/repeated words that silence checks cannot detect)
+
+Acoustic gate hard checks (any one rejects and triggers re-synthesis):
+- Empty audio: duration < 100 ms
+- Hallucination runaway: duration > 1.6× expected (based on word count at 150 WPM)
+- Severe truncation: duration < 0.4× expected
+- Speaker drift: whole-chunk median F0 deviates > 2.5 semitones from reference voice F0
+
+Acoustic gate soft checks (both must trip simultaneously to reject):
+- Onset rate > 8.0 /s AND spectral flatness > 0.18 — the co-occurrence pattern of Qwen3-TTS hallucination noise; a single tripped threshold is logged but the chunk passes
+
+Regional checks (run after soft checks; only reached by chunks that passed all above):
+- **Windowed F0 gate**: 3 s sliding windows (50% overlap) reject the chunk if > 5% show > 6 semitones of F0 drift from reference — catches a garbled region inside a long chunk that whole-chunk median smoothing misses (e.g. 20 s garble inside 180 s shifts the median ~11%, under the 2.5 st hard threshold, but produces > 11% bad windows)
+- **Mid-phrase drop detection**: rejects if > 3 drops of 0.3–1.5 s where RMS falls below 10% of the rolling 2 s local median — catches mid-sentence amplitude collapses from Qwen3-TTS coherence loss
+
+Optional checks (skip if unavailable):
+- **WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, re-synthesize (catches hallucinated/skipped/repeated words that acoustic checks cannot detect)
 - **HIGH_VRAM only — loudness consistency**: after all segments pass quality checks, any segment deviating > ±3 dB from the median dBFS is re-synthesized; prevents volume drift between segments
+
+Re-synthesis retries up to 4 strategies: `repetition_penalty=1.2` → midpoint split → quarter split → aggressive text sanitization. Each strategy uses a different seed (`original_seed + attempt × 7919 mod 2³¹`) to explore distinct autoregressive decoding paths rather than repeating the same failing sample.
 
 **Stage 5: Dynamic Gap Insertion + Crossfade**
 - Analyzes segment endings to determine appropriate pause duration

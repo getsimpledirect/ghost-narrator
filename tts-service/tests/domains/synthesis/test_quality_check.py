@@ -371,3 +371,122 @@ class TestResynthesizeStrategies:
         assert 'except Exception' not in src
         # Must have narrow catches
         assert 'SynthesisError' in src
+
+
+class TestWindowedF0Gate:
+    """Fix 1: windowed sub-chunk analysis catches localized F0 failures."""
+
+    def test_localized_f0_drift_fails(self, tmp_path):
+        """A chunk with a garbled tail (different F0) is rejected despite good overall median."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        sr = 22050
+        # 30 s: first 20 s at 120 Hz (ref), last 10 s at 480 Hz (24 semitones drift).
+        # Whole-chunk median stays near 120 Hz (2/3 of frames are good), passing the
+        # hard F0 check — only the windowed gate catches this.
+        good = _make_sine(120.0, 20.0, sr=sr)
+        bad = _make_sine(480.0, 10.0, sr=sr)
+        signal = np.concatenate([good, bad])
+        p = str(tmp_path / 'garbled_chunk.wav')
+        _write_wav(p, signal)
+        # word_count=75 → expected 30 s — matches actual duration exactly
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=75, reference_f0=120.0)
+        assert passed is False
+        assert 'windowed gate' in reason
+
+    def test_uniform_f0_passes(self, tmp_path):
+        """A chunk with consistent F0 throughout passes the windowed gate."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        sr = 22050
+        # Pure 120 Hz sine: predictable autocorrelation, ~0.74 semitones from ref 115 Hz
+        signal = _make_sine(120.0, 20.0, sr=sr, amp=0.4)
+        p = str(tmp_path / 'uniform_f0.wav')
+        _write_wav(p, signal)
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=115.0)
+        assert passed is True, f'Uniform-pitch audio incorrectly rejected: {reason}'
+
+    def test_windowed_gate_skipped_without_reference(self, tmp_path):
+        """Windowed F0 gate is a no-op when reference_f0 is None."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        sr = 22050
+        # Mixed-frequency signal that would trip the windowed gate if ref were provided
+        signal = np.concatenate([_make_sine(120.0, 10.0, sr=sr), _make_sine(480.0, 10.0, sr=sr)])
+        p = str(tmp_path / 'mixed_f0_no_ref.wav')
+        _write_wav(p, signal)
+        passed, _reason = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=None)
+        assert passed is True
+
+
+class TestMidPhraseDropDetection:
+    """Fix 2: mid-phrase drop detection catches 0.3-1.5 s amplitude collapses."""
+
+    def _make_drop_signal(
+        self,
+        sr: int,
+        n_drops: int,
+        drop_dur_s: float = 0.6,
+        total_s: float = 20.0,
+    ) -> np.ndarray:
+        """200 Hz sine with n_drops amplitude collapses spaced evenly."""
+        data = _make_sine(200.0, total_s, sr=sr, amp=0.4)
+        drop_samples = int(sr * drop_dur_s)
+        spacing = int(sr * total_s / (n_drops + 1))
+        for k in range(1, n_drops + 1):
+            start = k * spacing
+            end = min(start + drop_samples, len(data))
+            data[start:end] = data[start:end] * 0.005  # near-silent
+        return data
+
+    def test_too_many_drops_fails(self, tmp_path):
+        """A chunk with 4 mid-phrase drops (>3 threshold) is rejected."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        sr = 22050
+        p = str(tmp_path / 'drops_4.wav')
+        _write_wav(p, self._make_drop_signal(sr, n_drops=4, drop_dur_s=0.6))
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=None)
+        assert passed is False
+        assert 'mid-phrase drops' in reason
+
+    def test_few_drops_passes(self, tmp_path):
+        """A chunk with 2 mid-phrase drops (≤3 threshold) passes the gate."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        sr = 22050
+        p = str(tmp_path / 'drops_2.wav')
+        _write_wav(p, self._make_drop_signal(sr, n_drops=2, drop_dur_s=0.6))
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=None)
+        assert passed is True, f'Expected pass with 2 drops, got: {reason}'
+
+    def test_too_short_drops_ignored(self, tmp_path):
+        """Drops shorter than 300 ms are not counted (natural phoneme variation)."""
+        from app.domains.synthesis.quality_check import _chunk_passes_acoustic_gate
+
+        sr = 22050
+        p = str(tmp_path / 'short_drops.wav')
+        # 6 drops of 100 ms each — below the 300 ms minimum, so n_drops stays 0
+        _write_wav(p, self._make_drop_signal(sr, n_drops=6, drop_dur_s=0.1))
+        passed, reason = _chunk_passes_acoustic_gate(p, word_count=50, reference_f0=None)
+        assert passed is True, f'Sub-300 ms drops should not count: {reason}'
+
+
+class TestRetrySeeds:
+    """Fix 3: retry strategies use different seeds to explore diverse generation paths."""
+
+    def test_seed_variation_in_source(self):
+        """Each retry strategy must vary the seed using prime-offset arithmetic."""
+        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
+        import inspect
+
+        src = inspect.getsource(_resynthesize_with_strategies)
+        assert 'original_seed' in src
+        assert '7919' in src  # prime offset used for seed spread
+
+    def test_seed_values_are_distinct(self):
+        """Prime-offset arithmetic must produce 4 unique seed values per run."""
+        original_seed = 42
+        seeds = [(original_seed + i * 7919) % (2 ** 31) for i in range(4)]
+        assert len(set(seeds)) == 4
+        assert all(0 <= s < 2 ** 31 for s in seeds)

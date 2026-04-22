@@ -197,11 +197,21 @@ def _chunk_passes_acoustic_gate(
     6. Onset rate > onset_rate_ceiling (8.0 /s)
     7. Spectral flatness > flatness_ceiling (0.18)
 
+    Regional checks — run after soft checks (only reached by chunks that passed 1-7):
+    8. Windowed F0 gate: >5% of 3 s windows show >6 st drift from reference_f0.
+       Catches garbled regions that whole-chunk median smoothing misses (e.g. 20 s of
+       garble inside a 180 s chunk shifts the overall median by ~11%, well under the
+       2.5 st hard threshold, but produces >11% bad windows). Skipped when
+       reference_f0 is None.
+    9. Mid-phrase drop: >3 drops of 0.3-1.5 s where RMS falls below 10% of the
+       rolling 2 s local median. Catches mid-sentence amplitude collapses caused by
+       Qwen3-TTS emitting near-silent tokens before recovering coherence.
+
     When only one soft check trips, an INFO line is logged and the chunk passes.
     Healthy Qwen3-TTS output routinely exceeds one threshold in isolation; the
     co-occurrence pattern is the hallucination signature.
 
-    When _DRY_RUN_GATE is true, failures are logged but (True, '') is returned.
+    When _DRY_RUN_GATE is true, all failures are logged but (True, '') is returned.
     """
     # ── Hard checks ──────────────────────────────────────────────────────────
 
@@ -287,6 +297,122 @@ def _chunk_passes_acoustic_gate(
             flatness,
             flatness_ceiling,
         )
+
+    # ── Windowed sub-chunk analysis + mid-phrase drop detection ──────────────
+    # Runs after the cheaper whole-chunk soft checks. Both analyses share a
+    # single soundfile.read() to avoid redundant I/O.
+    try:
+        data, sr_local = _sf.read(wav_path, dtype='float32', always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+
+        # Fix 1: Windowed F0 gate — a 20s garbled region inside a 180s chunk
+        # only shifts the overall median by ~11% (well under the 2.5st hard
+        # threshold), but produces >5% bad 3s windows — caught here.
+        if reference_f0 and reference_f0 > 0:
+            window_s = 3.0
+            window_samples = int(sr_local * window_s)
+            hop_samples = window_samples // 2  # 50% overlap
+
+            n_bad_windows = 0
+            total_windows = 0
+            for start_idx in range(0, len(data) - window_samples, hop_samples):
+                win = data[start_idx : start_idx + window_samples]
+                total_windows += 1
+
+                win_rms = float(np.sqrt(np.mean(win**2)))
+                if win_rms < 0.02:  # < −34 dBFS — natural pause, skip
+                    continue
+
+                frame_size = int(sr_local * 0.030)
+                hop_size = frame_size // 2
+                min_lag = max(1, int(sr_local / 500))
+                max_lag = min(len(win) // 2, int(sr_local / 60))
+                win_f0s: list[float] = []
+                for frame_start in range(0, len(win) - frame_size, hop_size):
+                    frame = win[frame_start : frame_start + frame_size].astype(np.float64)
+                    if np.sqrt(np.mean(frame**2)) < 0.01:
+                        continue
+                    frame -= frame.mean()
+                    corr = np.correlate(frame, frame, mode='full')
+                    corr = corr[len(corr) // 2 :]
+                    if max_lag >= len(corr):
+                        continue
+                    peak_lag = min_lag + int(np.argmax(corr[min_lag:max_lag]))
+                    if corr[0] > 0 and corr[peak_lag] > 0.5 * corr[0]:
+                        half_lag = peak_lag // 2
+                        if half_lag >= min_lag and corr[half_lag] >= 0.9 * corr[peak_lag]:
+                            peak_lag = half_lag
+                        win_f0s.append(sr_local / peak_lag)
+
+                if len(win_f0s) < 3:
+                    continue  # unvoiced window (consonant clusters) — skip
+
+                win_f0_med = float(np.median(win_f0s))
+                win_semitones = abs(12 * math.log2(win_f0_med / reference_f0))
+                if win_semitones > 6.0:
+                    n_bad_windows += 1
+                    logger.info(
+                        'Windowed gate: bad window at t=%.1fs, F0=%.0fHz (%.1fst from ref)',
+                        start_idx / sr_local,
+                        win_f0_med,
+                        win_semitones,
+                    )
+
+            # >5% bad windows (min 3) indicates a genuine regional failure.
+            # Qwen3-TTS has occasional 1-2s F0 excursions on phoneme transitions
+            # that are inaudible — the 5% floor tolerates those.
+            if total_windows > 0 and n_bad_windows > max(2, total_windows * 0.05):
+                reason = (
+                    f'windowed gate: {n_bad_windows}/{total_windows} 3s windows '
+                    f'showed F0 drift >6 semitones'
+                )
+                logger.info('Acoustic gate: %s', reason)
+                return _gate_result(False, reason)
+
+        # Fix 2: Mid-phrase drop detection — catches 0.3-1.5s amplitude
+        # collapses mid-sentence when Qwen3-TTS briefly loses coherence and
+        # emits near-silent tokens before recovering.
+        hop_s_rms = 0.05
+        rms_frame_len = int(sr_local * hop_s_rms)
+        if rms_frame_len > 0:
+            rms_per_frame = np.array(
+                [
+                    float(np.sqrt(np.mean(data[i : i + rms_frame_len] ** 2)))
+                    for i in range(0, len(data) - rms_frame_len, rms_frame_len)
+                ]
+            )
+
+            window_2s_frames = max(1, int(2.0 / hop_s_rms))
+            n_drops = 0
+            in_drop = False
+            drop_start: int = 0
+            for i in range(window_2s_frames, len(rms_per_frame)):
+                local = rms_per_frame[max(0, i - window_2s_frames) : i + 1]
+                local_med = float(np.median(local))
+                if local_med < 0.01:
+                    in_drop = False
+                    continue
+                if rms_per_frame[i] < local_med * 0.1:
+                    if not in_drop:
+                        drop_start = i
+                        in_drop = True
+                else:
+                    if in_drop:
+                        drop_dur_s = (i - drop_start) * hop_s_rms
+                        if 0.3 <= drop_dur_s <= 1.5:
+                            n_drops += 1
+                        in_drop = False
+
+            # Up to 3 drops tolerated — natural hesitation pauses can look like
+            # brief drops. More than 3 is the synthesis-instability signature.
+            if n_drops > 3:
+                reason = f'mid-phrase drops: {n_drops} drops of 0.3-1.5s found'
+                logger.info('Acoustic gate: %s', reason)
+                return _gate_result(False, reason)
+
+    except Exception as exc:
+        logger.debug('Windowed gate check failed (non-fatal): %s', exc)
 
     return True, ''
 
@@ -629,9 +755,12 @@ async def _resynthesize_with_strategies(
                     return wav_path
         return None
 
+    original_seed = (generation_kwargs or {}).get('seed', 0)
+
     # Strategy 0: repetition_penalty=1.2 — most conservative change
     retry_kw0 = dict(generation_kwargs or {})
     retry_kw0['repetition_penalty'] = 1.2
+    retry_kw0['seed'] = original_seed  # attempt 0: keep seed, only sampling param changes
     try:
         synth_fn = _make_synth_fn(engine, retry_kw0, job_id)
         await loop.run_in_executor(executor, synth_fn, original_text, wav_path)
@@ -647,6 +776,7 @@ async def _resynthesize_with_strategies(
     halves = _split_at_punctuation(original_text, target_fraction=0.5)
     if len(halves) > 1:
         retry_kw1 = dict(generation_kwargs or {})
+        retry_kw1['seed'] = (original_seed + 7919) % (2**31)
         try:
             result = await _try_halves(halves, attempt=1, retry_kw=retry_kw1)
             if result is not None:
@@ -661,6 +791,7 @@ async def _resynthesize_with_strategies(
     quarter_texts = [q for q in quarter_texts if q.strip()]
     if len(quarter_texts) > 1:
         retry_kw2 = dict(generation_kwargs or {})
+        retry_kw2['seed'] = (original_seed + 15838) % (2**31)
         try:
             result = await _try_halves(quarter_texts, attempt=2, retry_kw=retry_kw2)
             if result is not None:
@@ -672,6 +803,7 @@ async def _resynthesize_with_strategies(
     sanitized = _sanitize_text(original_text)
     if sanitized.strip():
         retry_kw3 = dict(generation_kwargs or {})
+        retry_kw3['seed'] = (original_seed + 23757) % (2**31)
         try:
             synth_fn = _make_synth_fn(engine, retry_kw3, job_id)
             await loop.run_in_executor(executor, synth_fn, sanitized, wav_path)
