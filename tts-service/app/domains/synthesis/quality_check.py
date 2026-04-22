@@ -203,9 +203,11 @@ def _chunk_passes_acoustic_gate(
        garble inside a 180 s chunk shifts the overall median by ~11%, well under the
        2.5 st hard threshold, but produces >11% bad windows). Skipped when
        reference_f0 is None.
-    9. Mid-phrase drop: >3 drops of 0.3-1.5 s where RMS falls below 10% of the
+    9. Mid-phrase drop: drops of 0.6-2.0 s where RMS falls below 10% of the
        rolling 2 s local median. Catches mid-sentence amplitude collapses caused by
-       Qwen3-TTS emitting near-silent tokens before recovering coherence.
+       Qwen3-TTS emitting near-silent tokens before recovering coherence. Threshold
+       scales with chunk duration: max(3, duration_s / 20) — a fixed count rejects
+       natural pause density in long chunks.
 
     When only one soft check trips, an INFO line is logged and the chunk passes.
     Healthy Qwen3-TTS output routinely exceeds one threshold in isolation; the
@@ -370,9 +372,11 @@ def _chunk_passes_acoustic_gate(
                 logger.info('Acoustic gate: %s', reason)
                 return _gate_result(False, reason)
 
-        # Fix 2: Mid-phrase drop detection — catches 0.3-1.5s amplitude
+        # Fix 2: Mid-phrase drop detection — catches 0.6-2.0s amplitude
         # collapses mid-sentence when Qwen3-TTS briefly loses coherence and
-        # emits near-silent tokens before recovering.
+        # emits near-silent tokens before recovering. The 0.6s lower bound
+        # excludes natural punctuation pauses (typically 200-500ms in
+        # Qwen3-TTS output), which the previous 0.3s bound over-counted.
         hop_s_rms = 0.05
         rms_frame_len = int(sr_local * hop_s_rms)
         if rms_frame_len > 0:
@@ -400,14 +404,22 @@ def _chunk_passes_acoustic_gate(
                 else:
                     if in_drop:
                         drop_dur_s = (i - drop_start) * hop_s_rms
-                        if 0.3 <= drop_dur_s <= 1.5:
+                        if 0.6 <= drop_dur_s <= 2.0:
                             n_drops += 1
                         in_drop = False
 
-            # Up to 3 drops tolerated — natural hesitation pauses can look like
-            # brief drops. More than 3 is the synthesis-instability signature.
-            if n_drops > 3:
-                reason = f'mid-phrase drops: {n_drops} drops of 0.3-1.5s found'
+            # Threshold scales with chunk duration: ~1 drop per 20s of audio
+            # tolerated, with a floor of 3. A fixed count rejects natural pause
+            # density in long chunks — a 160s narration segment contains 20+
+            # sentence boundaries, some of which register as drops even with
+            # the tightened 0.6s minimum.
+            duration_s = len(data) / sr_local
+            max_tolerated_drops = max(3, int(duration_s / 20))
+            if n_drops > max_tolerated_drops:
+                reason = (
+                    f'mid-phrase drops: {n_drops} drops of 0.6-2.0s found '
+                    f'(tolerance {max_tolerated_drops} over {duration_s:.0f}s)'
+                )
                 logger.info('Acoustic gate: %s', reason)
                 return _gate_result(False, reason)
 
