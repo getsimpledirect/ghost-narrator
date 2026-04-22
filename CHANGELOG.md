@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v2.13.5 (2026-04-22)
+
+### Bug Fixes
+
+- **install**: Harden installer — secrets, validation, LLM override, summary
+  ([`97a9641`](https://github.com/getsimpledirect/ghost-narrator/commit/97a9641dc414accfff339925cf604b6a751ea5b1))
+
+- Move secret auto-generation (N8N_ENCRYPTION_KEY, REDIS_PASSWORD, N8N_GHOST_WEBHOOK_SECRET,
+  TTS_API_KEY) outside the configure prompt so they are always generated even when user skips
+  interactive setup; TTS_API_KEY is required by validate_config() and was silently missing on skip -
+  Change 'Configure .env now?' default from N to Y — first-time users always need to configure - Add
+  HARDWARE_TIER input validation loop; reject values other than cpu_only|low_vram|mid_vram|high_vram
+  with a clear error message - Create secrets/ directory unconditionally; docker-compose.yml
+  bind-mounts it and older Docker versions error when the host path does not exist - Add external
+  LLM override prompt (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL_NAME) for users who want a hosted
+  OpenAI-compatible API instead of bundled Ollama/vLLM - Rewrite completion summary as numbered
+  steps with actual n8n workflow import instructions, Ghost webhook setup steps, TTS API docs URL,
+  and a highlighted block showing N8N_GHOST_WEBHOOK_SECRET so it cannot be missed
+
+
 ## v2.13.4 (2026-04-22)
 
 ### Bug Fixes
