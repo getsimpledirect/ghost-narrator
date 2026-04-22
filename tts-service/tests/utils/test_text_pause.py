@@ -1,3 +1,25 @@
+# MIT License
+#
+# Copyright (c) 2026 Ayush Naik
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 from app.utils.text import parse_pause_markers, clean_text_for_tts, PAUSE_MS, LONG_PAUSE_MS
 
 
@@ -90,18 +112,21 @@ class TestIsSpeakableText:
 class TestIsSpeakableTextTuple:
     def test_clean_text_returns_true_none(self):
         from app.utils.text import is_speakable_text
+
         ok, reason = is_speakable_text('This is a perfectly normal sentence about software.')
         assert ok is True
         assert reason is None
 
     def test_url_returns_false_with_reason(self):
         from app.utils.text import is_speakable_text
+
         ok, reason = is_speakable_text('Visit https://example.com for more.')
         assert ok is False
         assert reason is not None and 'URL' in reason
 
     def test_code_fence_returns_false_with_reason(self):
         from app.utils.text import is_speakable_text
+
         ok, reason = is_speakable_text('```python\nprint("hello")\n```')
         assert ok is False
         assert reason is not None
@@ -109,12 +134,14 @@ class TestIsSpeakableTextTuple:
     def test_short_snake_case_passes(self):
         """open_source and well_known (2 components) must NOT be rejected."""
         from app.utils.text import is_speakable_text
+
         ok, _ = is_speakable_text('The open_source movement and well_known projects.')
         assert ok is True
 
     def test_long_snake_case_fails(self):
         """get_voice_clone_prompt (3+ components) must be rejected."""
         from app.utils.text import is_speakable_text
+
         ok, reason = is_speakable_text('Call get_voice_clone_prompt to initialize.')
         assert ok is False
         assert reason is not None
