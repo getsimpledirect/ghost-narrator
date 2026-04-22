@@ -151,7 +151,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         tier=HardwareTier.HIGH_VRAM,
         tts_model='Qwen/Qwen3-TTS-12Hz-1.7B-Base',
         tts_device='cuda',
-        tts_precision='fp16',  # fp16: extra mantissa bits improve pitch stability on Ada (sm_89)
+        tts_precision='bf16',  # bf16: wider exponent avoids logit saturation that correlates with mid-phrase amplitude drops on long AR sequences
         # vLLM fp8: Qwen3.5-9B ≈ 9.7 GB weights + fp8 KV ≈ 4.8 GB at 65 K tokens = 14.5 GB;
         # leaves ~3.5 GB headroom on 24 GB L4 alongside TTS (~5.1 GB runtime).
         llm_model='Qwen/Qwen3.5-9B',
