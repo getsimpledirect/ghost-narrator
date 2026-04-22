@@ -486,22 +486,12 @@ class TestFinalFileQualityGate:
 
     def test_quality_gate_fails_on_high_true_peak(self):
         """true_peak_dbfs > -1.0 must propagate as RuntimeError."""
-        import asyncio
-        from unittest.mock import patch, AsyncMock, MagicMock
-
-        from app.domains.job.tts_job import run_tts_job
-
         quality_data = {
             'true_peak_dbfs': 0.5,  # Exceeds -1.0
             'integrated_lufs': -16.0,
             'long_silence_gaps_count': 0,
         }
 
-        # We just want to verify the gate logic itself — we don't need to run the full
-        # pipeline. Test the extracted gate logic directly.
-        import math
-
-        # Simulate what the gate checks:
         _tp = quality_data['true_peak_dbfs']
         assert _tp > -1.0  # would trigger RuntimeError
 
@@ -519,6 +509,7 @@ class TestFinalFileQualityGate:
     def test_quality_gate_passes_clean_audio(self):
         """Within-threshold metrics must not trigger RuntimeError."""
         from app.config import TARGET_LUFS
+
         quality_data = {
             'true_peak_dbfs': -3.0,
             'integrated_lufs': float(TARGET_LUFS),

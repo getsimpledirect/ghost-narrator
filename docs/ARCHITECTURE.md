@@ -690,7 +690,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | CPU only | 0 GB | Ollama (CPU) + TTS (CPU) + n8n + Redis | 0 GB | ~4 GB | Any machine with 4+ cores |
 | Low (4–12 GB) | 4–12 GB | Ollama (GPU) + TTS-0.6B fp32 (GPU) + n8n + Redis | ~4–6 GB | ~6 GB | All CUDA GPUs; fp32 avoids fp16 overflow on older hardware |
 | Mid (12–18 GB) | 12–18 GB | vLLM (GPU) + TTS-1.7B fp16 (GPU) + n8n + Redis | ~10–14 GB | ~8 GB | RTX 3080 12GB+ / A10G |
-| High (18+ GB) | 18+ GB | vLLM (GPU) + TTS-1.7B bf16 (GPU) + n8n + Redis | ~15–20 GB | ~10 GB | A100 / RTX 4090 / L4 |
+| High (18+ GB) | 18+ GB | vLLM (GPU) + TTS-1.7B fp16 (GPU) + n8n + Redis | ~15–20 GB | ~10 GB | A100 / RTX 4090 / L4 |
 
 **Component breakdown:**
 
@@ -700,7 +700,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | vLLM (Qwen/Qwen3.5-4B fp8, GPU) | ~4.3 GB | ~2 GB | MID_VRAM LLM — fp8 quant, 8K context window |
 | Ollama (qwen3.5:4b Q4_K_M, GPU) | ~3.4 GB | ~1.5 GB | LOW_VRAM LLM |
 | Ollama (qwen3.5:2b Q4_K_M, CPU) | 0 GB | ~1.7 GB | CPU_ONLY LLM |
-| Qwen3-TTS-1.7B bf16 (GPU) | ~5.1 GB | ~6 GB | HIGH_VRAM — 1.5–2x faster on Tensor Cores, imperceptible quality diff vs fp32 |
+| Qwen3-TTS-1.7B fp16 (GPU) | ~5.1 GB | ~6 GB | HIGH_VRAM — 1.5–2x faster on Tensor Cores, imperceptible quality diff vs fp32 |
 | Qwen3-TTS-1.7B fp16 (GPU) | ~5.1 GB | ~6 GB | MID_VRAM TTS model |
 | Qwen3-TTS-0.6B fp32 (GPU) | ~1.2 GB | ~3 GB | LOW_VRAM tier — fp32 for stability on all CUDA GPUs |
 | Qwen3-TTS (CPU mode) | 0 GB VRAM | ~1 GB | **Recommended for most setups** |
@@ -724,6 +724,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 - `REDIS_URL=redis://redis:6379/0` — Redis connection URL
 - `REDIS_JOB_TTL=86400` — Job retention in seconds (24 hours)
 - `LLM_MODEL_NAME=qwen3.5:4b` — Override auto-detected LLM model for narration rewrite (Ollama tag for cpu/low_vram; HuggingFace ID for mid/high_vram)
+- `DRY_RUN_GATE=false` — Acoustic quality gate mode. `false` = enforce (reject segments failing quality checks); `true` = shadow/calibration mode (log failures, pass all through)
 
 ---
 

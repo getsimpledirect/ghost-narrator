@@ -478,7 +478,7 @@ class TestNarrationFallbackRemoval:
         )
 
         # Simulate a validation result that triggers CRITICAL_WORD_RATIO
-        from app.domains.narration.validator import NarrationValidator, ValidationResult
+        from app.domains.narration.validator import ValidationResult
 
         critical_result = ValidationResult(
             passed=False,
@@ -486,7 +486,7 @@ class TestNarrationFallbackRemoval:
             missing_entities=[],
         )
 
-        with patch.object(strategy, '_client') as mock_client_attr:
+        with patch.object(strategy, '_client'):
             with patch(
                 'app.domains.narration.strategy._call_llm_with_retry',
                 new_callable=AsyncMock,
@@ -542,6 +542,4 @@ class TestNarrationFallbackRemoval:
                 return_value=critical_result,
             ):
                 with pytest.raises(NarrationError, match='Critical truncation'):
-                    asyncio.run(
-                        strategy.narrate('A long paragraph with many words ' * 20)
-                    )
+                    asyncio.run(strategy.narrate('A long paragraph with many words ' * 20))

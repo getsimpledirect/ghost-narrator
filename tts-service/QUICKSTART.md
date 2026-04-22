@@ -145,7 +145,7 @@ The service auto-detects hardware and selects the appropriate Qwen3-TTS model:
 | CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 48kHz |
 | Low (<12 GB) | <12 GB | Qwen3-TTS-12Hz-0.6B-Base | 192kbps, 48kHz |
 | Mid (12–18 GB) | 12–18 GB | Qwen3-TTS-12Hz-1.7B-Base | 256kbps, 48kHz |
-| High (18+ GB) | 18+ GB | Qwen3-TTS-12Hz-1.7B-Base (bf16) | 320kbps, 48kHz, −14 LUFS |
+| High (18+ GB) | 18+ GB | Qwen3-TTS-12Hz-1.7B-Base (fp16) | 320kbps, 48kHz, −14 LUFS |
 
 Override with `HARDWARE_TIER=cpu_only|low_vram|mid_vram|high_vram` in `.env`.
 
