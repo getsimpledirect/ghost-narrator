@@ -141,10 +141,13 @@ if [ ! -f tts-service/voices/default/reference.wav ] && [ -f tts-service/voices/
     ok "Voice sample moved from legacy location to tts-service/voices/default/reference.wav"
 fi
 
+# ─── Ensure secrets directory exists ──────────────────────────────────────────
+mkdir -p secrets
+
 # ─── Configure .env ───────────────────────────────────────────────────────────
 echo ""
-read -r -p "Configure .env now? [y/N] " CONFIGURE_ENV
-if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
+read -r -p "Configure .env now? [Y/n] " CONFIGURE_ENV
+if [[ ! "$CONFIGURE_ENV" =~ ^[Nn]$ ]]; then
 
     # ── Credentials ──────────────────────────────────────────────────────────
     read -r -p "Server external IP (for webhook URLs): " SERVER_IP
@@ -202,49 +205,52 @@ if [[ "$CONFIGURE_ENV" =~ ^[Yy]$ ]]; then
         mv "$tmpfile" .env
     fi
 
-    # Auto-generate secrets if missing
-    if grep -qE "N8N_ENCRYPTION_KEY=(changeme|your-encryption-key-here|)$" .env 2>/dev/null; then
-        ENC_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
-        tmpfile=$(mktemp)
-        grep -v '^N8N_ENCRYPTION_KEY=' .env > "$tmpfile"
-        echo "N8N_ENCRYPTION_KEY=${ENC_KEY}" >> "$tmpfile"
-        mv "$tmpfile" .env
-        ok "Generated N8N_ENCRYPTION_KEY"
-    fi
-    if [ -z "$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2)" ]; then
-        REDIS_PASS=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
-        tmpfile=$(mktemp)
-        grep -v '^REDIS_PASSWORD=' .env > "$tmpfile"
-        echo "REDIS_PASSWORD=${REDIS_PASS}" >> "$tmpfile"
-        mv "$tmpfile" .env
-        info "Generated REDIS_PASSWORD"
-    fi
-    if [ -z "$(grep '^N8N_GHOST_WEBHOOK_SECRET=' .env | cut -d= -f2)" ]; then
-        WEBHOOK_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
-        tmpfile=$(mktemp)
-        grep -v '^N8N_GHOST_WEBHOOK_SECRET=' .env > "$tmpfile"
-        echo "N8N_GHOST_WEBHOOK_SECRET=${WEBHOOK_SECRET}" >> "$tmpfile"
-        mv "$tmpfile" .env
-        info "Generated N8N_GHOST_WEBHOOK_SECRET — set this same value in Ghost's webhook settings"
-    fi
-    if [ -z "$(grep '^TTS_API_KEY=' .env | cut -d= -f2)" ]; then
-        TTS_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
-        tmpfile=$(mktemp)
-        grep -v '^TTS_API_KEY=' .env > "$tmpfile"
-        echo "TTS_API_KEY=${TTS_KEY}" >> "$tmpfile"
-        mv "$tmpfile" .env
-        info "Generated TTS_API_KEY"
+    # ── External LLM override (optional) ─────────────────────────────────────
+    echo ""
+    info "LLM backend: $([ "$VLLM_TIER" = true ] && echo 'vLLM (GPU — bundled)' || echo 'Ollama (CPU — bundled)')"
+    echo "  Override only to use an external OpenAI-compatible API instead"
+    echo "  (e.g. a hosted vLLM endpoint, OpenRouter, or any OpenAI-compatible provider)."
+    echo ""
+    read -r -p "Use an external LLM API instead of bundled Ollama/vLLM? [y/N] " EXTERNAL_LLM
+    if [[ "$EXTERNAL_LLM" =~ ^[Yy]$ ]]; then
+        read -r -p "LLM base URL (e.g. https://api.openai.com/v1): " EXT_LLM_URL
+        if [ -n "$EXT_LLM_URL" ]; then
+            _set_env "LLM_BASE_URL" "$EXT_LLM_URL"
+            ok "LLM_BASE_URL set to ${EXT_LLM_URL}"
+        fi
+        read -r -s -p "LLM API key: " EXT_LLM_KEY
+        echo ""
+        if [ -n "$EXT_LLM_KEY" ]; then
+            _set_env "LLM_API_KEY" "$EXT_LLM_KEY"
+            ok "LLM_API_KEY saved"
+        fi
+        read -r -p "LLM model name (e.g. gpt-4o, Qwen/Qwen3-32B): " EXT_LLM_MODEL
+        if [ -n "$EXT_LLM_MODEL" ]; then
+            _set_env "LLM_MODEL_NAME" "$EXT_LLM_MODEL"
+            ok "LLM_MODEL_NAME set to ${EXT_LLM_MODEL}"
+        fi
     fi
 
     # ── Hardware tier override ────────────────────────────────────────────────
     echo ""
     info "Hardware tier: auto-detected above (recommended)"
     echo "  Override only if auto-detection is wrong: cpu_only | low_vram | mid_vram | high_vram"
-    read -r -p "Hardware tier override (leave blank to keep auto-detected): " HW_TIER
-    if [ -n "$HW_TIER" ]; then
-        sed -i.bak "s/HARDWARE_TIER=.*/HARDWARE_TIER=${HW_TIER}/" .env
-        ok "Hardware tier set to ${HW_TIER}"
-    fi
+    while true; do
+        read -r -p "Hardware tier override (leave blank to keep auto-detected): " HW_TIER
+        if [ -z "$HW_TIER" ]; then
+            break
+        fi
+        case "$HW_TIER" in
+            cpu_only|low_vram|mid_vram|high_vram)
+                sed -i.bak "s/HARDWARE_TIER=.*/HARDWARE_TIER=${HW_TIER}/" .env
+                ok "Hardware tier set to ${HW_TIER}"
+                break
+                ;;
+            *)
+                err "Invalid tier '${HW_TIER}'. Must be one of: cpu_only | low_vram | mid_vram | high_vram"
+                ;;
+        esac
+    done
 
     # ── Storage Backend ───────────────────────────────────────────────────────
     echo ""
@@ -396,6 +402,45 @@ else
     fi
 fi
 
+# ─── Auto-generate required secrets (always — idempotent) ────────────────────
+echo ""
+info "Checking required secrets..."
+if grep -qE "N8N_ENCRYPTION_KEY=(changeme|your-encryption-key-here|)$" .env 2>/dev/null; then
+    ENC_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    tmpfile=$(mktemp)
+    grep -v '^N8N_ENCRYPTION_KEY=' .env > "$tmpfile"
+    echo "N8N_ENCRYPTION_KEY=${ENC_KEY}" >> "$tmpfile"
+    mv "$tmpfile" .env
+    ok "Generated N8N_ENCRYPTION_KEY"
+fi
+if [ -z "$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2)" ]; then
+    REDIS_PASS=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
+    tmpfile=$(mktemp)
+    grep -v '^REDIS_PASSWORD=' .env > "$tmpfile"
+    echo "REDIS_PASSWORD=${REDIS_PASS}" >> "$tmpfile"
+    mv "$tmpfile" .env
+    ok "Generated REDIS_PASSWORD"
+fi
+WEBHOOK_SECRET_VALUE=""
+if [ -z "$(grep '^N8N_GHOST_WEBHOOK_SECRET=' .env | cut -d= -f2)" ]; then
+    WEBHOOK_SECRET_VALUE=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
+    tmpfile=$(mktemp)
+    grep -v '^N8N_GHOST_WEBHOOK_SECRET=' .env > "$tmpfile"
+    echo "N8N_GHOST_WEBHOOK_SECRET=${WEBHOOK_SECRET_VALUE}" >> "$tmpfile"
+    mv "$tmpfile" .env
+    ok "Generated N8N_GHOST_WEBHOOK_SECRET"
+else
+    WEBHOOK_SECRET_VALUE=$(grep '^N8N_GHOST_WEBHOOK_SECRET=' .env | cut -d= -f2)
+fi
+if [ -z "$(grep '^TTS_API_KEY=' .env | cut -d= -f2)" ]; then
+    TTS_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '=\n/')
+    tmpfile=$(mktemp)
+    grep -v '^TTS_API_KEY=' .env > "$tmpfile"
+    echo "TTS_API_KEY=${TTS_KEY}" >> "$tmpfile"
+    mv "$tmpfile" .env
+    ok "Generated TTS_API_KEY"
+fi
+
 # ─── Pull Docker Images ───────────────────────────────────────────────────────
 echo ""
 info "Pulling Docker images (this may take a few minutes on first run)..."
@@ -412,18 +457,35 @@ docker compose build tts-service 2>/dev/null || warn "Build failed — check Doc
 # ─── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}══════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}  Installation complete!${NC}"
+echo -e "${GREEN}  Installation complete! Next steps:${NC}"
 echo -e "${GREEN}══════════════════════════════════════════════════════════════${NC}"
-echo ""
-echo "  Start the stack:"
-echo -e "    ${BLUE}docker compose up -d${NC}"
-echo ""
-echo "  View logs:"
-echo -e "    ${BLUE}docker compose logs -f${NC}"
-echo ""
-echo "  Open n8n dashboard:"
 SERVER_IP=$(grep SERVER_EXTERNAL_IP .env 2>/dev/null | cut -d= -f2 || echo "YOUR_SERVER_IP")
-echo -e "    ${BLUE}http://${SERVER_IP}:5678${NC}"
 echo ""
-echo "  Import n8n workflows from: n8n/workflows/"
+echo "  1. Start the stack:"
+echo -e "       ${BLUE}docker compose up -d${NC}"
+echo ""
+echo "  2. Watch startup (model download takes 5–20 min on first run):"
+echo -e "       ${BLUE}docker compose logs -f${NC}"
+echo ""
+echo "  3. Import n8n workflows:"
+echo -e "       Open ${BLUE}http://${SERVER_IP}:5678${NC}"
+echo "       Go to Workflows → ⋮ menu → Import from file"
+echo "       Import all JSON files from: n8n/workflows/"
+echo ""
+echo "  4. Add Ghost webhook:"
+echo "       Ghost Admin → Settings → Integrations → Add custom integration"
+echo "       Add webhook: Event = Post published"
+echo -e "       URL: ${BLUE}http://${SERVER_IP}:5678/webhook/ghost-published${NC}"
+if [ -n "${WEBHOOK_SECRET_VALUE:-}" ]; then
+    echo ""
+    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${YELLOW}  Ghost webhook secret — paste this into Ghost's Secret field:${NC}"
+    echo ""
+    echo -e "    ${BOLD}${WEBHOOK_SECRET_VALUE}${NC}"
+    echo ""
+    echo "  (Also stored in .env as N8N_GHOST_WEBHOOK_SECRET)"
+    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+fi
+echo ""
+echo "  TTS API docs: http://${SERVER_IP}:8020/docs"
 echo ""
