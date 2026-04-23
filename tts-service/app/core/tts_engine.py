@@ -105,11 +105,40 @@ class TTSEngine:
                     'bf16': torch.bfloat16,
                 }
                 dtype = _PRECISION_MAP.get(ENGINE_CONFIG.tts_precision, torch.float32)
-                self._model = Qwen3TTSModel.from_pretrained(
-                    SELECTED_TTS_MODEL,
-                    device_map=DEVICE,
-                    dtype=dtype,
-                )
+
+                # Attention implementation selection. qwen_tts's own fallback
+                # when flash-attn is missing is a "manual PyTorch" path slower
+                # than SDPA. Pin SDPA by default (always available on torch 2+,
+                # no extra deps), auto-upgrade to flash_attention_2 when the
+                # flash-attn package is importable, or honour TTS_ATTN_IMPL.
+                _attn_impl = os.environ.get('TTS_ATTN_IMPL', '').strip().lower()
+                if not _attn_impl:
+                    try:
+                        import flash_attn  # type: ignore[import-not-found]  # noqa: F401
+
+                        _attn_impl = 'flash_attention_2'
+                    except ImportError:
+                        _attn_impl = 'sdpa'
+
+                try:
+                    self._model = Qwen3TTSModel.from_pretrained(
+                        SELECTED_TTS_MODEL,
+                        device_map=DEVICE,
+                        dtype=dtype,
+                        attn_implementation=_attn_impl,
+                    )
+                    logger.info('Qwen3-TTS attention: %s', _attn_impl)
+                except (ValueError, ImportError, TypeError) as _attn_exc:
+                    logger.warning(
+                        'attn_implementation=%s rejected (%s) — falling back to model default',
+                        _attn_impl,
+                        _attn_exc,
+                    )
+                    self._model = Qwen3TTSModel.from_pretrained(
+                        SELECTED_TTS_MODEL,
+                        device_map=DEVICE,
+                        dtype=dtype,
+                    )
 
                 # Apply torch.compile() to Qwen3TTSModel's nn.Module sub-components.
                 # Qwen3TTSModel is a Python wrapper class, not an nn.Module itself —
