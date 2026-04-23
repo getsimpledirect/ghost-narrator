@@ -405,20 +405,21 @@ async def run_tts_job(
                                 [len(s.split()) for s in sentence_segments],
                             )
 
-                            _MAX_SEGMENT_WORDS = int(seg_words * 1.3)
-                            _oversized = [
-                                (i, len(s.split()))
-                                for i, s in enumerate(sentence_segments)
-                                if len(s.split()) > _MAX_SEGMENT_WORDS
-                            ]
-                            if _oversized:
-                                _err = (
-                                    f'Segment splitter produced oversized segment(s): '
-                                    f'{_oversized} (max allowed: {_MAX_SEGMENT_WORDS} words, '
-                                    f'seg_words={seg_words}). This would cause TTS drift.'
+                            # A segment occasionally exceeds seg_words when a single sentence
+                            # is long — don't preemptively fragment it. Sentence prosody is
+                            # worth preserving even at 80-90 words (~35s, still well inside
+                            # Qwen3-TTS's competent range). If an oversized segment does
+                            # fail the acoustic gate, the response ladder's split step
+                            # halves it at punctuation and retries.
+                            _max_seg = max((len(s.split()) for s in sentence_segments), default=0)
+                            if _max_seg > seg_words:
+                                logger.info(
+                                    '[%s] Longest segment: %d words (target %d); '
+                                    'response ladder handles any acoustic drift',
+                                    job_id,
+                                    _max_seg,
+                                    seg_words,
                                 )
-                                logger.error('[%s] %s', job_id, _err)
-                                raise RuntimeError(_err)
 
                             segment_wavs: list[str] = []
                             segment_texts: list[str] = []
