@@ -196,13 +196,6 @@ class TTSEngine:
                 except Exception as _cudnn_exc:
                     logger.warning('cuDNN determinism setup failed (non-fatal): %s', _cudnn_exc)
 
-                # Probe free VRAM now — after model load AND torch.compile() — so
-                # compile scratch buffers are already allocated and the measurement
-                # reflects the true synthesis runtime budget.
-                from app.core.hardware import probe_optimal_segment_words
-
-                probe_optimal_segment_words(SELECTED_TTS_MODEL)
-
                 # All prerequisites met — set ready before warmup so the warmup's
                 # synthesize_to_file() call passes the readiness guard.
                 self._ready = True

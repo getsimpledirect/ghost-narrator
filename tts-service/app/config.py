@@ -91,35 +91,8 @@ MP3_BITRATE: Final[str] = os.environ.get('MP3_BITRATE') or _ec.mp3_bitrate
 AUDIO_SAMPLE_RATE: Final[int] = int(os.environ.get('AUDIO_SAMPLE_RATE') or str(_ec.sample_rate))
 TARGET_LUFS: Final[float] = float(os.environ.get('TARGET_LUFS') or str(_ec.target_lufs))
 
-# TTS chunk words (from ENGINE_CONFIG)
-# Increased from 200 to 400 - larger chunks provide more context for the LLM
-# which improves entity preservation and reduces validation failures
-try:
-    MAX_CHUNK_WORDS: Final[int] = max(
-        10,
-        min(
-            int(os.environ.get('MAX_CHUNK_WORDS', str(_ec.tts_chunk_words or 400))),
-            1000,
-        ),
-    )
-except ValueError:
-    MAX_CHUNK_WORDS: Final[int] = 400  # Default to 400
-
-# Single-shot synthesis settings
-# NOTE: tts_job.py uses get_optimal_segment_words() (hardware.py) as the live
-# threshold — probed from free VRAM after model load and clamped to the model's
-# empirical noise ceiling (400 words for 1.7B, 300 words for 0.6B).
-# SINGLE_SHOT_MAX_WORDS is kept as a manual override / pre-probe fallback only.
-# Set SINGLE_SHOT_SEGMENT_WORDS in .env to override the dynamic probe entirely.
-SINGLE_SHOT_MAX_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_MAX_WORDS', '400'))
-
-# Manual override for the dynamic segment size probe (hardware.get_optimal_segment_words).
-# Leave unset to let the VRAM probe choose (recommended). Set explicitly only to pin a
-# specific value regardless of available VRAM, e.g. for debugging or constrained hardware.
-# Hard ceiling: 700 words for 1.7B model, 400 words for 0.6B model.
-SINGLE_SHOT_SEGMENT_WORDS: Final[int] = int(os.environ.get('SINGLE_SHOT_SEGMENT_WORDS') or '400')
-
-# Overlap between segments for crossfade (in milliseconds)
+# Segment crossfade overlap, in milliseconds. Applied between concatenated
+# studio segments by concatenate_audio_with_overlap().
 SINGLE_SHOT_OVERLAP_MS: Final[int] = int(os.environ.get('SINGLE_SHOT_OVERLAP_MS', '500'))
 
 # Webhook settings

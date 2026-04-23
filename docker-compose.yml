@@ -252,14 +252,13 @@ services:
       # Acoustic gate: set false to enforce rejection, true for shadow/calibration mode.
       # Default false — dry-run requires explicit opt-in, not the other way around.
       - DRY_RUN_GATE=${DRY_RUN_GATE:-false}
-      - MAX_CHUNK_WORDS=${MAX_CHUNK_WORDS:-200}
       - HARDWARE_TIER=${HARDWARE_TIER:-}
       - SELECTED_LLM_NUM_CTX=${SELECTED_LLM_NUM_CTX:-}
       # MAX_WORKERS is used for CPU mode parallel synthesis
       - MAX_WORKERS=${MAX_WORKERS:-4}
-      # Segment synthesis — leave blank to auto-probe from VRAM at startup (recommended)
+      # Studio segment sizing — leave blank to use the active tier default
+      # (CPU 100 / LOW 80 / MID 70 / HIGH 60). Clamped to 30-300.
       - SINGLE_SHOT_SEGMENT_WORDS=${SINGLE_SHOT_SEGMENT_WORDS:-}
-      - SINGLE_SHOT_MAX_WORDS=${SINGLE_SHOT_MAX_WORDS:-400}
       - SINGLE_SHOT_OVERLAP_MS=${SINGLE_SHOT_OVERLAP_MS:-500}
       # Audio quality — leave blank to use hardware-tier defaults
       - MP3_BITRATE=${MP3_BITRATE:-}

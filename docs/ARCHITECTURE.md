@@ -1361,7 +1361,7 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 - Check `REDIS_URL` environment variable
 
 **Out of memory errors:**
-- Reduce `MAX_CHUNK_WORDS` from 200 to 150 (if not using single-shot mode)
+- Set `SINGLE_SHOT_SEGMENT_WORDS=40` to force shorter studio segments
 - Reduce `MAX_WORKERS` if using many parallel workers
 - Streaming concatenation automatically activates for large files (>10 chunks)
 - Monitor memory usage: `docker stats tts-service`

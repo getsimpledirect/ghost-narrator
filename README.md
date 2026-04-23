@@ -176,9 +176,7 @@ Publish an article. Ghost Narrator handles the rest.
 | `GCS_BUCKET_NAME` | GCS bucket for audio | *(local if unset)* |
 | `S3_BUCKET_NAME` | S3 bucket for audio | *(local if unset)* |
 | `MAX_WORKERS` | Parallel workers (CPU mode) | `4` |
-| `MAX_CHUNK_WORDS` | Words per TTS chunk | `200` |
-| `SINGLE_SHOT_MAX_WORDS` | Max words for single-pass synthesis | `400` |
-| `SINGLE_SHOT_SEGMENT_WORDS` | Words per segment — overrides the tier's `studio_segment_words` (CPU 100 / LOW 80 / MID 70 / HIGH 60) | *(tier default)* |
+| `SINGLE_SHOT_SEGMENT_WORDS` | Words per studio segment — overrides the tier default (CPU 100 / LOW 80 / MID 70 / HIGH 60); clamped to 30-300 | *(tier default)* |
 | `SINGLE_SHOT_OVERLAP_MS` | Overlap crossfade between segments (ms) | `500` |
 | `GHOST_SITE2_URL` | Second Ghost site | *(single site)* |
 

@@ -60,7 +60,7 @@ from app.config import (
     SINGLE_SHOT_OVERLAP_MS,
 )
 from app.domains.narration.factory import get_narration_strategy
-from app.core.hardware import ENGINE_CONFIG
+from app.core.hardware import ENGINE_CONFIG, get_studio_segment_words
 from app.domains.synthesis.quality import validate_audio_quality, apply_final_mastering
 from app.domains.synthesis.quality_check import (
     _quality_check_and_resynthesize,
@@ -355,7 +355,7 @@ async def run_tts_job(
                     #
                     #  ≤ seg_words → single synthesis call (very short content)
                     #  > seg_words → multi-segment synthesis with crossfade concat
-                    seg_words = ENGINE_CONFIG.studio_segment_words
+                    seg_words = get_studio_segment_words()
                     await _check_status()
 
                     with _span('tts.synthesis'):

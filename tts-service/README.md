@@ -102,8 +102,6 @@ Create a `.env` file:
 ```env
 VOICE_SAMPLE_PATH=./voices/default/reference.wav
 TTS_LANGUAGE=en
-MAX_CHUNK_WORDS=200
-SINGLE_SHOT_MAX_WORDS=400
 SINGLE_SHOT_OVERLAP_MS=500
 DEVICE=cpu
 STORAGE_BACKEND=local
@@ -249,9 +247,7 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | `VOICE_SAMPLE_PATH` | `/app/voices/default/reference.wav` | Path to reference voice WAV |
 | `VOICE_SAMPLE_REF_TEXT` | *(empty)* | Transcription of the reference audio. When set, uses ICL mode (higher-quality cloning). When empty, uses x-vector-only mode (no transcription needed — default). |
 | `TTS_LANGUAGE` | `en` | BCP-47 language code |
-| `MAX_CHUNK_WORDS` | `200` | Max words per synthesis chunk |
-| `SINGLE_SHOT_MAX_WORDS` | `400` | Max words for single-pass synthesis (fallback if VRAM probe unavailable) |
-| `SINGLE_SHOT_SEGMENT_WORDS` | *(auto)* | Words per segment — auto-probed from free VRAM at startup; override to force a fixed size |
+| `SINGLE_SHOT_SEGMENT_WORDS` | *(tier default)* | Words per studio segment — overrides the active tier default (CPU 100 / LOW 80 / MID 70 / HIGH 60); clamped to 30-300 |
 | `SINGLE_SHOT_OVERLAP_MS` | `500` | Overlap crossfade in milliseconds |
 | `DEVICE` | `cpu` | PyTorch device: `cpu` or `cuda` |
 | `MAX_WORKERS` | `4` | Thread pool size for parallel synthesis (CPU mode) |
@@ -399,8 +395,7 @@ docker exec -it tts-service python -c "import torch; print('OK')"
 ### Out of memory errors
 
 If the service crashes with OOM:
-- Reduce `MAX_CHUNK_WORDS` to 150 to shrink per-chunk memory
-- Set `SINGLE_SHOT_SEGMENT_WORDS=200` to force smaller synthesis segments
+- Set `SINGLE_SHOT_SEGMENT_WORDS=40` to force shorter studio segments
 - Increase system swap space
 - Use GPU mode if available
 
