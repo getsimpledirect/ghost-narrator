@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import threading
 from pathlib import Path
 from typing import Optional
@@ -183,18 +184,27 @@ class TTSEngine:
                         voice_path,
                     )
 
-                # Enable cuDNN deterministic mode for reproducible synthesis.
-                # deterministic=True forces cuDNN to use the same algorithm for
-                # the same input shapes; benchmark=False stops cuDNN from running
-                # a benchmark pass (which selects non-deterministic fast paths).
-                # Both are set once at init and persist for the process lifetime.
+                # cuDNN benchmark mode — searches for the fastest conv algorithm for
+                # each input shape on first call, reuses it thereafter. Seed-driven
+                # variant diversity in best_of_n is unaffected (it lives above the
+                # cuDNN layer), and per-seed reproducibility across runs isn't a
+                # production requirement. Opt out via TTS_CUDNN_BENCHMARK=false.
+                _cudnn_benchmark = os.environ.get('TTS_CUDNN_BENCHMARK', 'true').lower() in (
+                    '1',
+                    'true',
+                    'yes',
+                )
                 try:
                     if torch.cuda.is_available():
-                        torch.backends.cudnn.deterministic = True
-                        torch.backends.cudnn.benchmark = False
-                        logger.info('cuDNN deterministic mode enabled')
+                        torch.backends.cudnn.deterministic = not _cudnn_benchmark
+                        torch.backends.cudnn.benchmark = _cudnn_benchmark
+                        logger.info(
+                            'cuDNN benchmark=%s (deterministic=%s)',
+                            _cudnn_benchmark,
+                            not _cudnn_benchmark,
+                        )
                 except Exception as _cudnn_exc:
-                    logger.warning('cuDNN determinism setup failed (non-fatal): %s', _cudnn_exc)
+                    logger.warning('cuDNN setup failed (non-fatal): %s', _cudnn_exc)
 
                 # All prerequisites met — set ready before warmup so the warmup's
                 # synthesize_to_file() call passes the readiness guard.
@@ -205,7 +215,6 @@ class TTSEngine:
                 # real job.  Without this, Chunk 0 of the first article can have
                 # different acoustic characteristics (cold-start artefact) that
                 # trips the acoustic gate's duration or onset checks.
-                import os
                 import tempfile
 
                 try:
