@@ -223,8 +223,8 @@ def synthesize_single_shot(
         output_path: Path where the WAV file will be saved.
         job_id: Job identifier for process tracking.
         generation_kwargs: Generation parameters forwarded to the TTS engine.
-        voice_path: Optional explicit WAV path for voice conditioning (e.g. tail
-            of the previous segment for inter-segment voice consistency).
+        voice_path: Optional explicit WAV path for voice conditioning. When None,
+            the default reference audio at VOICE_SAMPLE_PATH is used.
 
     Returns:
         The output path of the generated WAV file.
@@ -247,12 +247,9 @@ def synthesize_single_shot(
         voice_override=voice_path,
     )
     # Trim leading and trailing silence from the raw synthesis output.
-    # Leading silence: Qwen3-TTS sometimes emits silence tokens before the first
-    # word, causing >50% silence quality-check failures and wasted re-synthesis.
-    # Trailing silence: ensures the tail-conditioning reference (last 2.5 s of this
-    # segment) ends on speech rather than silence, preventing cascading silence
-    # across segment boundaries when the tail is used as voice_override for the
-    # next segment.
+    # Qwen3-TTS sometimes emits silence tokens before the first word (causing
+    # >50% silence quality-check failures) or trailing dead air. Both are
+    # clipped so the segment contains speech-only content before concat.
     try:
         seg = AudioSegment.from_wav(result)
         trimmed = _trim_silence(seg)
@@ -275,7 +272,7 @@ async def synthesize_single_shot_async(
 
     Runs the synchronous single-shot synthesis in a thread pool.
     voice_path, when provided, conditions the TTS model on that WAV's voice
-    characteristics (used for inter-segment tail conditioning).
+    characteristics; when None, the default reference audio is used.
     """
     if not _executor:
         raise SynthesisError(
@@ -293,20 +290,6 @@ async def synthesize_single_shot_async(
         generation_kwargs,
         voice_path,
     )
-
-
-def _extract_tail_wav(wav_path: str, duration_ms: int, output_path: str) -> str:
-    """Extract the last duration_ms of a WAV file as a voice conditioning reference.
-
-    Used for inter-segment tail conditioning: the tail of segment N is passed as
-    the voice reference for segment N+1, anchoring timbre and speaking rate across
-    the segment boundary. pydub clips to available length if the segment is shorter
-    than duration_ms, so short final segments are handled gracefully.
-    """
-    seg = AudioSegment.from_wav(wav_path)
-    tail = seg[-duration_ms:]
-    tail.export(output_path, format='wav')
-    return output_path
 
 
 async def synthesize_chunks_sequential(

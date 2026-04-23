@@ -34,7 +34,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-import math
 import os
 import shutil
 import time
@@ -61,7 +60,7 @@ from app.config import (
     SINGLE_SHOT_OVERLAP_MS,
 )
 from app.domains.narration.factory import get_narration_strategy
-from app.core.hardware import ENGINE_CONFIG, HardwareTier, get_optimal_segment_words
+from app.core.hardware import ENGINE_CONFIG
 from app.domains.synthesis.quality import validate_audio_quality, apply_final_mastering
 from app.domains.synthesis.quality_check import (
     _quality_check_and_resynthesize,
@@ -76,7 +75,6 @@ from app.domains.synthesis.service import (
     get_executor,
     synthesize_single_shot_async,
     synthesize_with_pauses,
-    _extract_tail_wav,
 )
 from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
 
@@ -347,14 +345,17 @@ async def run_tts_job(
                     # count. Choosing the path after narration (not before) is critical —
                     # we cannot know the output word count until the LLM finishes.
                     #
-                    # seg_words is the VRAM-probed optimal segment size (computed at
-                    # startup after model + torch.compile() load). On HIGH_VRAM this is
-                    # typically 650 words (noise ceiling), on CPU/LOW_VRAM 300 words.
+                    # seg_words is the studio-quality segment size per hardware tier
+                    # (EngineConfig.studio_segment_words). Short segments (60-100 words)
+                    # keep every synthesis call inside Qwen3-TTS's competent AR horizon,
+                    # so voice timbre, pitch, and pacing stay stable throughout long
+                    # narration. All segments condition on the same clean reference audio
+                    # (VOICE_SAMPLE_PATH) to anchor voice identity; AR drift is bounded
+                    # per-segment and does not propagate across segment boundaries.
                     #
-                    #  ≤ seg_words → full single-shot (zero boundary artifacts)
-                    #  > seg_words → segment single-shot (sentence-boundary splits +
-                    #                crossfade merge, seg_words words per segment)
-                    seg_words = get_optimal_segment_words()
+                    #  ≤ seg_words → single synthesis call (very short content)
+                    #  > seg_words → multi-segment synthesis with crossfade concat
+                    seg_words = ENGINE_CONFIG.studio_segment_words
                     await _check_status()
 
                     with _span('tts.synthesis'):
@@ -379,8 +380,15 @@ async def run_tts_job(
                             all_chunks = [clean_text_for_tts(full_narrated_text)]
                             logger.info(f'[{job_id}] Single-shot synthesis complete')
                         else:
-                            # Long content: split at paragraph boundaries, synthesize each
-                            # segment in single-shot mode with tail conditioning, then merge.
+                            # Long content: split at paragraph boundaries into short
+                            # studio segments (~60-100 words per tier), synthesize each
+                            # with consistent reference conditioning, then merge.
+                            # Short segments keep every synthesis call inside Qwen3-TTS's
+                            # competent AR horizon — voice timbre, pitch, and pacing stay
+                            # stable because no call ever runs long enough to accumulate
+                            # drift. Every segment conditions on the same clean reference
+                            # (VOICE_SAMPLE_PATH) rather than the previous segment's tail,
+                            # so per-segment AR drift cannot propagate across boundaries.
                             from app.utils.text import split_into_large_segments, clean_text_for_tts
 
                             sentence_segments = split_into_large_segments(
@@ -412,17 +420,8 @@ async def run_tts_job(
                                 logger.error('[%s] %s', job_id, _err)
                                 raise RuntimeError(_err)
 
-                            # Tail conditioning: HIGH_VRAM conditions each segment on the
-                            # last 2.5s of the preceding segment, anchoring voice timbre
-                            # and speaking rate across synthesis boundaries.
-                            use_tail_conditioning = (
-                                ENGINE_CONFIG.tier == HardwareTier.HIGH_VRAM
-                                and len(sentence_segments) > 1
-                            )
-
                             segment_wavs: list[str] = []
                             segment_texts: list[str] = []
-                            tail_voice_path: Optional[str] = None
 
                             for seg_idx, segment_text in enumerate(sentence_segments):
                                 if not segment_text.strip():
@@ -438,89 +437,9 @@ async def run_tts_job(
                                     output_path=segment_wav,
                                     job_id=job_id,
                                     generation_kwargs=generation_kwargs,
-                                    voice_path=tail_voice_path,
+                                    voice_path=None,
                                 )
-
-                                if use_tail_conditioning:
-                                    # Per-segment quality check on HIGH_VRAM so the tail
-                                    # reference is always from a known-good segment.
-                                    try:
-                                        [checked_path] = await _quality_check_and_resynthesize(
-                                            [segment_path],
-                                            [clean_seg],
-                                            job_id,
-                                            engine,
-                                            loop,
-                                            executor,
-                                            generation_kwargs,
-                                            reference_f0=_reference_f0,
-                                        )
-                                    except ChunkExhaustedError as exc:
-                                        raise RuntimeError(
-                                            f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
-                                            'Job aborted to prevent shipping broken audio.'
-                                        ) from exc
-                                    segment_wavs.append(checked_path)
-                                    # Gate tail propagation on F0 match — prevents drift
-                                    # cascade when a synthesized segment drifts in pitch.
-                                    _tail_f0_ok = True
-                                    if _reference_f0 is not None and _reference_f0 > 0:
-                                        try:
-                                            from app.domains.synthesis.quality_check import (
-                                                _estimate_median_f0,
-                                            )
-
-                                            _seg_f0 = await loop.run_in_executor(
-                                                executor, _estimate_median_f0, checked_path
-                                            )
-                                            if _seg_f0 is not None and _seg_f0 > 0:
-                                                _semitones = abs(
-                                                    12 * math.log2(_seg_f0 / _reference_f0)
-                                                )
-                                                if _semitones > 3.0:
-                                                    logger.warning(
-                                                        '[%s] Segment %d tail F0=%.0f Hz vs ref %.0f Hz '
-                                                        '(%.1f st) — not propagating tail to next segment',
-                                                        job_id,
-                                                        seg_idx,
-                                                        _seg_f0,
-                                                        _reference_f0,
-                                                        _semitones,
-                                                    )
-                                                    _tail_f0_ok = False
-                                            else:
-                                                # F0 undetectable (silent/unvoiced segment) — safer
-                                                # to reset than to propagate a potentially bad tail.
-                                                _tail_f0_ok = False
-                                        except (ValueError, RuntimeError, OSError) as _f0_exc:
-                                            logger.warning(
-                                                '[%s] Tail F0 check failed (non-fatal): %s',
-                                                job_id,
-                                                _f0_exc,
-                                            )
-                                    # Extract tail for next segment; skip on failure (non-fatal)
-                                    if _tail_f0_ok:
-                                        try:
-                                            tail_wav = str(job_dir / f'tail_{seg_idx:04d}.wav')
-                                            tail_voice_path = await loop.run_in_executor(
-                                                executor,
-                                                _extract_tail_wav,
-                                                checked_path,
-                                                2500,
-                                                tail_wav,
-                                            )
-                                        except Exception as _tail_exc:
-                                            logger.warning(
-                                                '[%s] Tail extraction failed (non-fatal): %s',
-                                                job_id,
-                                                _tail_exc,
-                                            )
-                                            tail_voice_path = None
-                                    else:
-                                        tail_voice_path = None
-                                else:
-                                    segment_wavs.append(segment_path)
-
+                                segment_wavs.append(segment_path)
                                 segment_texts.append(clean_seg)
                                 logger.info(
                                     f'[{job_id}] Segment {seg_idx + 1}'
@@ -530,50 +449,51 @@ async def run_tts_job(
                             if not segment_wavs:
                                 raise RuntimeError('Segment synthesis produced no audio files')
 
+                            # Batch quality check: silence / duration / drop / drift / WER
+                            # gates per segment, with strategy retries for failures.
                             await _check_status()
-                            if use_tail_conditioning:
-                                # Consistency check: re-synthesize any segment whose
-                                # loudness deviates > 6 dB from the median across segments.
-                                logger.info(
-                                    f'[{job_id}] Consistency check across {len(segment_wavs)} segments...'
+                            logger.info(
+                                f'[{job_id}] Quality check on {len(segment_wavs)} segments...'
+                            )
+                            try:
+                                segment_wavs = await _quality_check_and_resynthesize(
+                                    segment_wavs,
+                                    segment_texts,
+                                    job_id,
+                                    engine,
+                                    loop,
+                                    executor,
+                                    generation_kwargs,
+                                    reference_f0=_reference_f0,
                                 )
-                                try:
-                                    segment_wavs = await _check_segment_consistency(
-                                        segment_wavs,
-                                        segment_texts,
-                                        job_id,
-                                        engine,
-                                        loop,
-                                        executor,
-                                        generation_kwargs,
-                                        reference_f0=_reference_f0,
-                                    )
-                                except ChunkExhaustedError as exc:
-                                    raise RuntimeError(
-                                        f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
-                                        'Job aborted to prevent shipping broken audio.'
-                                    ) from exc
-                            else:
-                                # Batch quality check for lower tiers (silence/too-short detection)
-                                logger.info(
-                                    f'[{job_id}] Quality check on {len(segment_wavs)} segments...'
+                            except ChunkExhaustedError as exc:
+                                raise RuntimeError(
+                                    f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                    'Job aborted to prevent shipping broken audio.'
+                                ) from exc
+
+                            # Loudness consistency: re-synthesize any segment whose
+                            # loudness deviates > 3 dB from the median across segments.
+                            await _check_status()
+                            logger.info(
+                                f'[{job_id}] Loudness consistency check across {len(segment_wavs)} segments...'
+                            )
+                            try:
+                                segment_wavs = await _check_segment_consistency(
+                                    segment_wavs,
+                                    segment_texts,
+                                    job_id,
+                                    engine,
+                                    loop,
+                                    executor,
+                                    generation_kwargs,
+                                    reference_f0=_reference_f0,
                                 )
-                                try:
-                                    segment_wavs = await _quality_check_and_resynthesize(
-                                        segment_wavs,
-                                        segment_texts,
-                                        job_id,
-                                        engine,
-                                        loop,
-                                        executor,
-                                        generation_kwargs,
-                                        reference_f0=_reference_f0,
-                                    )
-                                except ChunkExhaustedError as exc:
-                                    raise RuntimeError(
-                                        f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
-                                        'Job aborted to prevent shipping broken audio.'
-                                    ) from exc
+                            except ChunkExhaustedError as exc:
+                                raise RuntimeError(
+                                    f'Audio quality gate: chunk {exc.chunk_idx} failed all synthesis strategies. '
+                                    'Job aborted to prevent shipping broken audio.'
+                                ) from exc
 
                             if len(segment_wavs) > 1:
                                 merged_wav = await loop.run_in_executor(

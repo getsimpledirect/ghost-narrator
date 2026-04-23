@@ -263,9 +263,8 @@ class TTSEngine:
                 (temperature, repetition_penalty, top_k, top_p,
                 temperature_sub_talker, top_k_sub_talker, do_sample_sub_talker,
                 max_new_tokens, seed). Merged on top of tier defaults at call time.
-            voice_override: Explicit WAV path for voice conditioning (e.g. tail of
-                previous segment). Takes priority over voice_path_or_job_id and the
-                VOICE_SAMPLE_PATH default.
+            voice_override: Explicit WAV path for voice conditioning. Takes priority
+                over voice_path_or_job_id and the VOICE_SAMPLE_PATH default.
         """
         if not self._ready or self._model is None:
             raise TTSEngineError('Engine not initialized — call initialize() first')
@@ -273,7 +272,8 @@ class TTSEngine:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Determine voice_path — voice_override (tail conditioning) wins over defaults
+        # Determine voice_path — voice_override wins over voice_path_or_job_id
+        # and the VOICE_SAMPLE_PATH default.
         from app.config import VOICE_SAMPLE_PATH
 
         actual_job_id = job_id
@@ -303,9 +303,10 @@ class TTSEngine:
 
             with self._synthesis_lock:
                 voice_path_str = str(voice_path)
-                # Reuse cached prompt if same voice, otherwise create a new one.
-                # Tail-conditioning passes a fresh WAV each call — cache will miss,
-                # but create_voice_clone_prompt is fast (~0.5s) vs synthesis (~30s).
+                # Reuse cached prompt when the same reference voice is used on
+                # every call (the common case — consistent reference conditioning).
+                # An explicit voice_override forces a fresh prompt build, which
+                # costs ~0.5s vs ~30s synthesis — an acceptable overhead.
                 if (
                     voice_path_str == self._cached_voice_path
                     and self._cached_voice_prompt is not None
@@ -318,7 +319,8 @@ class TTSEngine:
                         ref_text=VOICE_SAMPLE_REF_TEXT,
                         x_vector_only_mode=use_x_vector_only,
                     )
-                    # Only cache default voice — tail WAVs change every segment
+                    # Only cache when no explicit override — overrides are rare
+                    # and caching each one would pollute the cache slot.
                     if not voice_override:
                         self._cached_voice_prompt = prompt
                         self._cached_voice_path = voice_path_str

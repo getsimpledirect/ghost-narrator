@@ -61,6 +61,9 @@ class EngineConfig:
     narration_strategy: str  # "chunked" or "single_shot"
     narration_chunk_words: int  # LLM narration chunk size
     tts_chunk_words: int  # TTS synthesis chunk size
+    studio_segment_words: (
+        int  # Studio-quality segment size — stays inside the model's competent AR horizon
+    )
     synthesis_workers: int
     mp3_bitrate: str
     sample_rate: int
@@ -87,6 +90,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_strategy='chunked',
         narration_chunk_words=500,
         tts_chunk_words=200,  # Increased for smoother flow
+        studio_segment_words=100,  # CPU-only: larger to amortize per-segment overhead
         synthesis_workers=4,
         mp3_bitrate='192k',
         sample_rate=48000,  # Higher fidelity
@@ -110,6 +114,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_strategy='chunked',
         narration_chunk_words=500,
         tts_chunk_words=200,  # Increased for smoother flow
+        studio_segment_words=80,
         synthesis_workers=1,
         mp3_bitrate='192k',
         sample_rate=48000,  # Higher fidelity
@@ -134,6 +139,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_strategy='single_shot',
         narration_chunk_words=400,  # 400 words ≈ 600 tokens; gives ~6000+ tokens for output
         tts_chunk_words=250,  # Increased for smoother flow
+        studio_segment_words=70,
         synthesis_workers=1,
         mp3_bitrate='256k',  # Higher bitrate for studio quality
         sample_rate=48000,  # Higher fidelity
@@ -159,6 +165,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_strategy='single_shot',  # qwen3.5:9b narrates whole articles ≤8000 words in one call
         narration_chunk_words=4000,  # fallback chunk size when article > 8000 words
         tts_chunk_words=200,  # Reduced from 300 — shorter chunks limit per-chunk autoregressive drift
+        studio_segment_words=60,  # HIGH_VRAM: smallest segments for the tightest AR drift control
         synthesis_workers=1,  # GPU synthesis is serial — gpu semaphore + _synthesis_lock
         mp3_bitrate='320k',  # Studio quality
         sample_rate=48000,  # Studio quality
