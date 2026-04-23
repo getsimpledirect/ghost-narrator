@@ -129,3 +129,38 @@ def test_composite_total_is_weighted_sum(tmp_path):
     weights = scorer._load_weights()
     expected = sum(weights[k] * score[k] for k in weights)
     assert abs(score['total'] - expected) < 1e-6
+
+
+def test_skip_wer_does_not_call_asr(tmp_path, monkeypatch):
+    """With skip_wer=True, _transcribe_wav must not be called — the expensive
+    ASR pass is the whole point of skipping. Guard with a monkeypatched sentinel."""
+    wav = str(tmp_path / 'tone.wav')
+    _write_tone(wav, 200.0, duration_s=2.0)
+
+    called = {'n': 0}
+
+    def _should_not_run(_path):
+        called['n'] += 1
+        return 'unexpected'
+
+    monkeypatch.setattr(scorer, '_transcribe_wav', _should_not_run)
+
+    score = scorer.compute_composite_score(
+        wav, text='some spoken text', reference_f0=200.0, skip_wer=True
+    )
+    assert called['n'] == 0
+    # WER component is zeroed out; remaining components sum to 1.0 after rebalance.
+    assert score['wer'] == 0.0
+
+
+def test_skip_wer_total_in_unit_interval(tmp_path):
+    """Skipped-WER total must stay in [0, 1]; skip mode drops WER's contribution
+    to 0, so the total is strictly ≤ the full-WER total for the same audio."""
+    wav = str(tmp_path / 'tone.wav')
+    _write_tone(wav, 200.0, duration_s=2.0)
+
+    score_skip = scorer.compute_composite_score(
+        wav, text='some words', reference_f0=200.0, skip_wer=True
+    )
+    assert 0.0 <= score_skip['total'] <= 1.0
+    assert score_skip['wer'] == 0.0

@@ -94,8 +94,14 @@ def _f0_score(wav_path: str, reference_f0: float | None) -> float:
     return min(1.0, semitones / 5.0)
 
 
-def _wer_score(wav_path: str, text: str) -> float:
-    """Word error rate, normalised. 0 = perfect transcription, 1 = WER ≥ 0.5."""
+def _wer_score(wav_path: str, text: str, weight: float = 1.0) -> float:
+    """Word error rate, normalised. 0 = perfect transcription, 1 = WER ≥ 0.5.
+
+    Skips the (expensive) ASR call entirely when weight is 0 — the caller
+    is opting out of WER contribution and we should not pay for it.
+    """
+    if weight <= 0:
+        return 0.0
     if not text or not text.strip():
         return 0.0
     transcript = _transcribe_wav(wav_path)
@@ -142,19 +148,32 @@ def compute_composite_score(
     wav_path: str,
     text: str,
     reference_f0: float | None,
+    *,
+    skip_wer: bool = False,
 ) -> dict[str, float]:
     """Return per-component scores plus the weighted total.
 
     All values in [0, 1] with 0 = ideal. The returned dict is safe to log and
     compare — best_of_n selection picks the variant with the lowest 'total'.
+
+    When skip_wer is True, the WER component is not computed (Whisper is
+    skipped entirely) and contributes 0 to the total. Used by best_of_n's
+    lazy-WER path — scores are only compared within a single best_of_n call
+    so relative ordering (not absolute magnitude) is what matters, and
+    skipping the rebalance keeps the implementation honest: a score of 0.05
+    means the same thing in skip mode and full mode, there's just less
+    signal contributing.
     """
     if not Path(wav_path).exists():
         return {'total': 1.0, 'f0': 1.0, 'wer': 1.0, 'drops': 1.0, 'flatness': 1.0}
 
     weights = _load_weights()
+    if skip_wer:
+        weights['wer'] = 0.0
+
     components = {
         'f0': _f0_score(wav_path, reference_f0),
-        'wer': _wer_score(wav_path, text),
+        'wer': _wer_score(wav_path, text, weight=weights['wer']),
         'drops': _drops_score(wav_path),
         'flatness': _flatness_score(wav_path),
     }
