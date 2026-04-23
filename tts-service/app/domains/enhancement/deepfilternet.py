@@ -53,6 +53,30 @@ _df_state: Any = None
 _lock = threading.Lock()
 
 
+def _resolve_device() -> str:
+    """Tier-aware device selection matching the Whisper policy.
+
+    CPU_ONLY tier keeps DeepFilterNet on CPU even if CUDA is visible —
+    honouring the operator's intent. GPU tiers prefer CUDA for the
+    ~5-10x speed-up on the post-synthesis enhancement pass.
+    """
+    try:
+        from app.core.hardware import ENGINE_CONFIG, HardwareTier
+
+        if ENGINE_CONFIG.tier == HardwareTier.CPU_ONLY:
+            return 'cpu'
+    except Exception:
+        pass  # hardware module unavailable during tests; fall through
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return 'cuda:0'
+    except Exception:
+        pass
+    return 'cpu'
+
+
 def _get_model() -> Optional[tuple[Any, Any]]:
     """Lazy-load the DeepFilterNet model. Returns (model, df_state) or None."""
     global _model, _df_state
@@ -80,9 +104,26 @@ def _get_model() -> Optional[tuple[Any, Any]]:
             logger.warning('DeepFilterNet model init failed — enhancement disabled (%s)', exc)
             _model = _UNAVAILABLE
             return None
+
+        # init_df() picks a default device (usually CPU even on CUDA boxes
+        # in some df versions). Explicitly move the model so it follows the
+        # tier policy — if .to() fails on a CUDA device, fall back to CPU
+        # rather than refusing to enhance at all.
+        target_device = _resolve_device()
+        try:
+            model = model.to(target_device)
+            actual_device = target_device
+        except Exception as exc:
+            logger.warning(
+                'DeepFilterNet .to(%s) failed (%s) — staying on default device',
+                target_device,
+                exc,
+            )
+            actual_device = 'default'
+
         _model = model
         _df_state = df_state
-        logger.info('DeepFilterNet loaded (sr=%d)', df_state.sr())
+        logger.info('DeepFilterNet loaded on %s (sr=%d)', actual_device, df_state.sr())
         return _model, _df_state
 
 

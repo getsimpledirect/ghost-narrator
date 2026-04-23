@@ -91,6 +91,48 @@ def test_is_available_reflects_model_state(monkeypatch):
     assert dfn.is_available() is True
 
 
+def test_resolve_device_cpu_tier_stays_on_cpu(monkeypatch):
+    """CPU_ONLY tier must not escalate DeepFilterNet to CUDA even if one is present."""
+    from app.core.hardware import HardwareTier
+
+    # Fake ENGINE_CONFIG with CPU_ONLY tier
+    fake_cfg = type('Cfg', (), {'tier': HardwareTier.CPU_ONLY})
+    import app.core.hardware as _hw
+
+    monkeypatch.setattr(_hw, 'ENGINE_CONFIG', fake_cfg)
+    assert dfn._resolve_device() == 'cpu'
+
+
+def test_resolve_device_gpu_tier_prefers_cuda(monkeypatch):
+    """Non-CPU_ONLY tiers target cuda:0 when CUDA is available."""
+    from app.core.hardware import HardwareTier
+
+    fake_cfg = type('Cfg', (), {'tier': HardwareTier.HIGH_VRAM})
+    import app.core.hardware as _hw
+
+    monkeypatch.setattr(_hw, 'ENGINE_CONFIG', fake_cfg)
+
+    import torch
+
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
+    assert dfn._resolve_device() == 'cuda:0'
+
+
+def test_resolve_device_falls_back_to_cpu_without_cuda(monkeypatch):
+    """GPU tier with no actual CUDA runtime → CPU, not a crash."""
+    from app.core.hardware import HardwareTier
+
+    fake_cfg = type('Cfg', (), {'tier': HardwareTier.MID_VRAM})
+    import app.core.hardware as _hw
+
+    monkeypatch.setattr(_hw, 'ENGINE_CONFIG', fake_cfg)
+
+    import torch
+
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: False)
+    assert dfn._resolve_device() == 'cpu'
+
+
 def test_enhance_audio_fallback_when_enhance_raises(tmp_path, monkeypatch):
     """A raised exception inside the df.enhance call path copies input → output."""
     _reset_module_cache()
