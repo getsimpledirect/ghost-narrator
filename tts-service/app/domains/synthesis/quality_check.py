@@ -500,13 +500,33 @@ def _get_asr_pipeline():
         try:
             from transformers import pipeline as _hf_pipeline
 
+            from app.core.hardware import ENGINE_CONFIG, HardwareTier
+
+            # Tier policy: CPU tier keeps Whisper on CPU even if a GPU is
+            # present (respects operator intent). GPU tiers move Whisper to
+            # CUDA — whisper-base is ~150 MB VRAM and runs ~20x faster there.
+            _asr_on_gpu = False
+            if ENGINE_CONFIG.tier != HardwareTier.CPU_ONLY:
+                try:
+                    import torch as _t
+
+                    if _t.cuda.is_available():
+                        _asr_on_gpu = True
+                except Exception:
+                    _asr_on_gpu = False
+            _asr_device = 0 if _asr_on_gpu else 'cpu'
+
             _asr_pipeline = _hf_pipeline(
                 'automatic-speech-recognition',
                 model='openai/whisper-base',
-                device='cpu',
+                device=_asr_device,
                 generate_kwargs={'language': 'english'},
             )
-            logger.info('Whisper base ASR pipeline loaded for WER quality checking')
+            logger.info(
+                'Whisper base ASR pipeline loaded on %s (tier=%s)',
+                'cuda:0' if _asr_on_gpu else 'cpu',
+                ENGINE_CONFIG.tier.value,
+            )
         except Exception as exc:
             logger.warning('WER quality checking disabled — Whisper ASR unavailable: %s', exc)
             _asr_pipeline = _ASR_UNAVAILABLE
