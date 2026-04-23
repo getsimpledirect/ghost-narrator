@@ -1,7 +1,16 @@
 # CHANGELOG
 
 
-## v2.13.9 (2026-04-22)
+## v2.13.9 (2026-04-23)
+
+### Bug Fixes
+
+- **hardware**: Use bf16 on HIGH_VRAM tier to curb mid-phrase drops
+  ([`9389e7f`](https://github.com/getsimpledirect/ghost-narrator/commit/9389e7f8ae3bb4c2568418610f47606979143a65))
+
+- amplitude-drop failures in production first appeared after the fp16 migration - long AR decodes
+  saturate fp16's +-65504 range, producing Inf/NaN logits that surface as near-silent tokens - bf16
+  preserves fp16's memory footprint
 
 ### Chores
 
@@ -15,6 +24,11 @@ Three non-empty test files were missed by the earlier blanket sweep in 30ca49d. 
 - tts-service/tests/core/test_tts_engine.py: prepend 21-line MIT header -
   tts-service/tests/utils/test_normalize.py: prepend 21-line MIT header -
   tts-service/tests/utils/test_text_pause.py: prepend 21-line MIT header
+
+### Documentation
+
+- Sync HIGH_VRAM tier references to bf16
+  ([`b835345`](https://github.com/getsimpledirect/ghost-narrator/commit/b8353458f18da57c3be88b4b82aefa60881c82e8))
 
 ### Refactoring
 
