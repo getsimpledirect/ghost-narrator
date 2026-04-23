@@ -429,6 +429,52 @@ def _chunk_passes_acoustic_gate(
     return True, ''
 
 
+def _count_mid_phrase_drops(wav_path: str) -> int:
+    """Count 0.6-2.0 s amplitude drops below 10% of rolling 2 s RMS median.
+
+    Exposed for the composite scorer. The acoustic gate inlines the same
+    signal with a duration-scaled threshold (max(3, duration_s / 20)) to
+    decide pass/fail; the scorer wants the raw count for a continuous score.
+    """
+    try:
+        data, sr_local = _sf.read(wav_path, dtype='float32', always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        hop_s_rms = 0.05
+        rms_frame_len = int(sr_local * hop_s_rms)
+        if rms_frame_len <= 0 or len(data) < rms_frame_len * 4:
+            return 0
+        rms_per_frame = np.array(
+            [
+                float(np.sqrt(np.mean(data[i : i + rms_frame_len] ** 2)))
+                for i in range(0, len(data) - rms_frame_len, rms_frame_len)
+            ]
+        )
+        window_2s_frames = max(1, int(2.0 / hop_s_rms))
+        n_drops = 0
+        in_drop = False
+        drop_start: int = 0
+        for i in range(window_2s_frames, len(rms_per_frame)):
+            local = rms_per_frame[max(0, i - window_2s_frames) : i + 1]
+            local_med = float(np.median(local))
+            if local_med < 0.01:
+                in_drop = False
+                continue
+            if rms_per_frame[i] < local_med * 0.1:
+                if not in_drop:
+                    drop_start = i
+                    in_drop = True
+            else:
+                if in_drop:
+                    drop_dur_s = (i - drop_start) * hop_s_rms
+                    if 0.6 <= drop_dur_s <= 2.0:
+                        n_drops += 1
+                    in_drop = False
+        return n_drops
+    except Exception:
+        return 0
+
+
 def _get_asr_pipeline():
     """Lazy-load the Whisper base ASR pipeline (CPU, int8 quantized).
 

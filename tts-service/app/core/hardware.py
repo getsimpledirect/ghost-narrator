@@ -64,6 +64,7 @@ class EngineConfig:
     studio_segment_words: (
         int  # Studio-quality segment size — stays inside the model's competent AR horizon
     )
+    best_of_n: int  # Number of synthesis variants per segment; best by composite score is kept
     synthesis_workers: int
     mp3_bitrate: str
     sample_rate: int
@@ -91,6 +92,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_chunk_words=500,
         tts_chunk_words=200,  # Increased for smoother flow
         studio_segment_words=100,  # CPU-only: larger to amortize per-segment overhead
+        best_of_n=1,  # CPU synthesis is slow; oversampling is not practical
         synthesis_workers=4,
         mp3_bitrate='192k',
         sample_rate=48000,  # Higher fidelity
@@ -115,6 +117,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_chunk_words=500,
         tts_chunk_words=200,  # Increased for smoother flow
         studio_segment_words=80,
+        best_of_n=2,
         synthesis_workers=1,
         mp3_bitrate='192k',
         sample_rate=48000,  # Higher fidelity
@@ -140,6 +143,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_chunk_words=400,  # 400 words ≈ 600 tokens; gives ~6000+ tokens for output
         tts_chunk_words=250,  # Increased for smoother flow
         studio_segment_words=70,
+        best_of_n=3,
         synthesis_workers=1,
         mp3_bitrate='256k',  # Higher bitrate for studio quality
         sample_rate=48000,  # Higher fidelity
@@ -166,6 +170,7 @@ _TIER_CONFIGS: dict[HardwareTier, EngineConfig] = {
         narration_chunk_words=4000,  # fallback chunk size when article > 8000 words
         tts_chunk_words=200,  # Reduced from 300 — shorter chunks limit per-chunk autoregressive drift
         studio_segment_words=60,  # HIGH_VRAM: smallest segments for the tightest AR drift control
+        best_of_n=3,
         synthesis_workers=1,  # GPU synthesis is serial — gpu semaphore + _synthesis_lock
         mp3_bitrate='320k',  # Studio quality
         sample_rate=48000,  # Studio quality

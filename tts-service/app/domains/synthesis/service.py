@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -258,6 +259,129 @@ def synthesize_single_shot(
     except Exception as _trim_exc:
         logger.debug('[%s] Post-synthesis silence trim failed (non-fatal): %s', job_id, _trim_exc)
     return result
+
+
+def synthesize_best_of_n(
+    text: str,
+    output_path: str,
+    n_variants: int,
+    reference_f0: Optional[float],
+    job_id: str = 'default',
+    generation_kwargs: Optional[dict] = None,
+    voice_path: Optional[str] = None,
+) -> tuple[str, dict]:
+    """Synthesize N variants, keep the best by composite score.
+
+    Variant 0 uses the caller's seed (or 0 if unset). Variants 1..N-1 use
+    deterministically derived seeds so the same job_id + chunk_idx always
+    explores the same audio space — retries stay reproducible while still
+    exploring distinct autoregressive decoding paths.
+
+    When n_variants <= 1 this reduces to a single synthesis plus a score,
+    so callers can always invoke this function without an N-dependent branch.
+
+    Returns (kept_path, score_dict). kept_path == output_path on success.
+    Raises SynthesisError if every variant fails to synthesize.
+    """
+    from app.domains.synthesis.scorer import compute_composite_score
+
+    if n_variants <= 1:
+        synthesize_single_shot(text, output_path, job_id, generation_kwargs, voice_path)
+        score = compute_composite_score(output_path, text, reference_f0)
+        return output_path, score
+
+    base_seed = int((generation_kwargs or {}).get('seed') or 0)
+    out_path = Path(output_path)
+    out_dir = out_path.parent
+    stem = out_path.stem
+
+    variant_paths: list[str] = []
+    variant_scores: list[dict] = []
+
+    for n in range(n_variants):
+        variant_path = str(out_dir / f'{stem}_v{n}.wav')
+        variant_kw = dict(generation_kwargs or {})
+        if n > 0:
+            # 7919 is a large prime — successive seeds differ across many low
+            # bits of the RNG state, so each variant explores a distinct AR path.
+            variant_kw['seed'] = (base_seed + n * 7919) % (2**31)
+        try:
+            synthesize_single_shot(text, variant_path, job_id, variant_kw, voice_path)
+        except SynthesisError as exc:
+            logger.warning('[%s] Best-of-N variant %d synthesis failed: %s', job_id, n, exc)
+            continue
+        try:
+            score = compute_composite_score(variant_path, text, reference_f0)
+        except Exception as exc:
+            logger.warning('[%s] Best-of-N variant %d scoring failed: %s', job_id, n, exc)
+            score = {'total': 1.0}
+        variant_paths.append(variant_path)
+        variant_scores.append(score)
+
+    if not variant_paths:
+        raise SynthesisError(
+            f'All {n_variants} best-of-N variants failed to synthesize',
+            details=f'text_len={len(text)}',
+        )
+
+    best_idx = min(range(len(variant_paths)), key=lambda i: variant_scores[i]['total'])
+    best_path = variant_paths[best_idx]
+    best_score = variant_scores[best_idx]
+
+    try:
+        if best_path != output_path:
+            shutil.move(best_path, output_path)
+    except OSError as exc:
+        logger.warning('[%s] Best-of-N move failed, falling back to copy: %s', job_id, exc)
+        shutil.copy2(best_path, output_path)
+
+    # Remove the rejected variants (and the best's original location if it was moved).
+    for p in variant_paths:
+        if p != output_path:
+            try:
+                os.unlink(p)
+            except FileNotFoundError:
+                pass
+
+    logger.info(
+        '[%s] Best-of-%d for %s: variant %d kept (score=%.3f, components=%s)',
+        job_id,
+        n_variants,
+        out_path.name,
+        best_idx,
+        best_score.get('total', 1.0),
+        {k: round(v, 3) for k, v in best_score.items() if k != 'total'},
+    )
+    return output_path, best_score
+
+
+async def synthesize_best_of_n_async(
+    text: str,
+    output_path: str,
+    n_variants: int,
+    reference_f0: Optional[float],
+    job_id: str = 'default',
+    generation_kwargs: Optional[dict] = None,
+    voice_path: Optional[str] = None,
+) -> tuple[str, dict]:
+    """Async wrapper for synthesize_best_of_n. Runs on the thread pool."""
+    if not _executor:
+        raise SynthesisError(
+            'Executor not initialized',
+            details='Call initialize_executor() during startup',
+        )
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor,
+        synthesize_best_of_n,
+        text,
+        output_path,
+        n_variants,
+        reference_f0,
+        job_id,
+        generation_kwargs,
+        voice_path,
+    )
 
 
 async def synthesize_single_shot_async(

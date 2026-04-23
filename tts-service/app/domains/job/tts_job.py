@@ -73,7 +73,7 @@ from app.domains.tts_config.store import get_effective_config
 from app.domains.synthesis.service import (
     cleanup_chunk_files,
     get_executor,
-    synthesize_single_shot_async,
+    synthesize_best_of_n_async,
     synthesize_with_pauses,
 )
 from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
@@ -422,6 +422,7 @@ async def run_tts_job(
 
                             segment_wavs: list[str] = []
                             segment_texts: list[str] = []
+                            n_variants = ENGINE_CONFIG.best_of_n
 
                             for seg_idx, segment_text in enumerate(sentence_segments):
                                 if not segment_text.strip():
@@ -432,9 +433,15 @@ async def run_tts_job(
                                     continue
                                 segment_wav = str(job_dir / f'segment_{seg_idx:04d}.wav')
 
-                                segment_path = await synthesize_single_shot_async(
+                                # Per-segment best-of-N: synthesize n_variants, score each
+                                # on F0 drift + WER + drops + flatness, keep the best. On
+                                # CPU tier n_variants=1, so this degrades cleanly to a
+                                # single synth + score.
+                                segment_path, _seg_score = await synthesize_best_of_n_async(
                                     text=clean_seg,
                                     output_path=segment_wav,
+                                    n_variants=n_variants,
+                                    reference_f0=_reference_f0,
                                     job_id=job_id,
                                     generation_kwargs=generation_kwargs,
                                     voice_path=None,
