@@ -567,6 +567,24 @@ async def run_tts_job(
                     raw_size = Path(raw_wav).stat().st_size / (1024 * 1024)
                     logger.info(f'[{job_id}] Raw WAV created ({raw_size:.2f} MB)')
 
+                    # Step 4.5: Neural speech enhancement (DeepFilterNet).
+                    # Runs before mastering so LUFS normalization and the
+                    # true-peak limiter act on the enhanced signal. Falls back
+                    # silently to the unenhanced raw WAV when the package or
+                    # model is unavailable — enhancement is a quality pass,
+                    # never a correctness prerequisite.
+                    await _check_status()
+                    from app.domains.enhancement import enhance_audio
+
+                    logger.info(f'[{job_id}] Applying neural speech enhancement...')
+                    try:
+                        await loop.run_in_executor(executor, enhance_audio, raw_wav, None)
+                    except Exception as enh_exc:
+                        logger.warning(
+                            f'[{job_id}] Enhancement raised unexpectedly: {enh_exc} - '
+                            'proceeding with raw WAV'
+                        )
+
                     # Step 5: Apply final mastering (tier-based LUFS, sample rate, bitrate)
                     await _check_status()
                     logger.info(f'[{job_id}] Applying final mastering...')
