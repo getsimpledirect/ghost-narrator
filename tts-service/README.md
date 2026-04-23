@@ -410,7 +410,7 @@ If the service crashes with OOM:
 - Set `VOICE_SAMPLE_REF_TEXT` to the transcription of your reference audio — enables ICL mode (significantly better voice cloning than x-vector-only)
 - Use `HARDWARE_TIER=high_vram` if your GPU supports it — bf16 precision, larger LLM, quality re-synthesis
 - Ensure language matches reference voice
-- Use `HARDWARE_TIER=mid_vram` or higher — larger TTS model and automatic VRAM-probed segment sizing improve coherence
+- Use `HARDWARE_TIER=mid_vram` or higher — larger TTS model, best-of-3 segment selection, and DeepFilterNet enhancement all improve coherence
 
 ### Jobs lost after restart
 
