@@ -328,49 +328,31 @@ class TestDurationRatioCheck:
         assert passed is True, f'Healthy audio rejected: {reason}'
 
 
-class TestResynthesizeStrategies:
-    """_resynthesize_with_strategies uses 4 input-modifying strategies."""
+class TestSplitAtPunctuation:
+    """_split_at_punctuation: module-level helper used by the response ladder."""
 
-    def test_strategy_0_uses_repetition_penalty(self):
-        """Strategy 0 must set repetition_penalty=1.2 on the kwargs."""
-        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
+    def test_split_returns_single_for_short_text(self):
+        from app.domains.synthesis.quality_check import _split_at_punctuation
 
-        import inspect
+        assert _split_at_punctuation('only three words here') == ['only three words here']
 
-        src = inspect.getsource(_resynthesize_with_strategies)
-        assert 'repetition_penalty' in src
-        assert '1.2' in src
+    def test_split_finds_punctuation_near_pivot(self):
+        from app.domains.synthesis.quality_check import _split_at_punctuation
 
-    def test_split_at_punctuation_bidirectional(self):
-        """_split_at_punctuation must find a split to the right of the pivot if left has none."""
-        # Access the inner helper by running the function partially — instead, test the
-        # behaviour through re-synthesis by checking the source code uses bidirectional search.
-        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
-        import inspect
+        text = 'one two three four five, six seven eight nine ten eleven twelve'
+        halves = _split_at_punctuation(text, target_fraction=0.5)
+        assert len(halves) == 2
+        # Left half must end at the comma, not an arbitrary word.
+        assert halves[0].rstrip().endswith(',') or halves[0].endswith('five,')
 
-        src = inspect.getsource(_resynthesize_with_strategies)
-        # Must search in both directions (pivot - offset AND pivot + offset)
-        assert 'pivot - offset' in src
-        assert 'pivot + offset' in src
+    def test_split_bidirectional_right_of_pivot(self):
+        from app.domains.synthesis.quality_check import _split_at_punctuation
 
-    def test_strategy_3_sanitizes_text(self):
-        """Strategy 3 must strip parentheticals, digits, and ALL-CAPS tokens."""
-        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
-        import inspect
-
-        src = inspect.getsource(_resynthesize_with_strategies)
-        assert '_sanitize_text' in src or 'sanitize' in src.lower()
-
-    def test_exception_handler_is_narrow(self):
-        """Exception handler must not catch ChunkExhaustedError."""
-        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
-        import inspect
-
-        src = inspect.getsource(_resynthesize_with_strategies)
-        # Must NOT have bare 'except Exception'
-        assert 'except Exception' not in src
-        # Must have narrow catches
-        assert 'SynthesisError' in src
+        # No punctuation in left half — the search must find the comma to the right.
+        text = 'one two three four five six seven eight, nine ten eleven twelve'
+        halves = _split_at_punctuation(text, target_fraction=0.4)
+        assert len(halves) == 2
+        assert 'eight,' in halves[0]
 
 
 class TestWindowedF0Gate:
@@ -506,21 +488,68 @@ class TestMidPhraseDropDetection:
         assert 'mid-phrase drops' in reason
 
 
-class TestRetrySeeds:
-    """Fix 3: retry strategies use different seeds to explore diverse generation paths."""
+class TestResponseLadder:
+    """_segment_response_ladder: heal → seed-sweep → split → flag."""
 
-    def test_seed_variation_in_source(self):
-        """Each retry strategy must vary the seed using prime-offset arithmetic."""
-        from app.domains.synthesis.quality_check import _resynthesize_with_strategies
+    def test_ladder_has_four_ordered_steps(self):
+        """Ladder source must reference each of the four steps in order."""
         import inspect
 
-        src = inspect.getsource(_resynthesize_with_strategies)
-        assert 'original_seed' in src
-        assert '7919' in src  # prime offset used for seed spread
+        from app.domains.synthesis.quality_check import _segment_response_ladder
+
+        src = inspect.getsource(_segment_response_ladder)
+        heal_pos = src.find('Step 1: heal')
+        sweep_pos = src.find('Step 2: seed-sweep')
+        split_pos = src.find('Step 3: split')
+        flag_pos = src.find('Step 4: flag')
+        assert -1 < heal_pos < sweep_pos < split_pos < flag_pos
+
+    def test_ladder_raises_when_no_variant_produced(self):
+        """When every synthesis attempt raises, ladder raises ChunkExhaustedError."""
+        import inspect
+
+        from app.domains.synthesis.quality_check import _segment_response_ladder
+
+        src = inspect.getsource(_segment_response_ladder)
+        assert 'ChunkExhaustedError' in src
+        assert 'raise ChunkExhaustedError' in src
+
+    def test_ladder_seed_sweep_uses_best_of_n(self):
+        """Step 2 must call synthesize_best_of_n with the sweep constant."""
+        import inspect
+
+        from app.domains.synthesis.quality_check import _segment_response_ladder
+
+        src = inspect.getsource(_segment_response_ladder)
+        assert 'synthesize_best_of_n' in src
+        assert '_SEED_SWEEP_N' in src
+
+    def test_ladder_flag_path_returns_best_variant(self):
+        """Step 4 copies the best-scoring variant into wav_path and warns."""
+        import inspect
+
+        from app.domains.synthesis.quality_check import _segment_response_ladder
+
+        src = inspect.getsource(_segment_response_ladder)
+        assert 'flagged for review' in src
+        assert 'best_path' in src
+
+
+class TestRetrySeeds:
+    """Seed-sweep variants must explore distinct decoding paths."""
 
     def test_seed_values_are_distinct(self):
-        """Prime-offset arithmetic must produce 4 unique seed values per run."""
+        """Prime-offset arithmetic must produce N unique seed values per run."""
         original_seed = 42
-        seeds = [(original_seed + i * 7919) % (2**31) for i in range(4)]
-        assert len(set(seeds)) == 4
+        seeds = [(original_seed + i * 7919) % (2**31) for i in range(5)]
+        assert len(set(seeds)) == 5
         assert all(0 <= s < 2**31 for s in seeds)
+
+    def test_best_of_n_uses_prime_offset(self):
+        """synthesize_best_of_n must use 7919-based seed offsets so runs stay reproducible."""
+        import inspect
+
+        from app.domains.synthesis.service import synthesize_best_of_n
+
+        src = inspect.getsource(synthesize_best_of_n)
+        assert '7919' in src

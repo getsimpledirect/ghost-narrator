@@ -24,7 +24,6 @@
 
 from __future__ import annotations
 
-import functools
 import logging
 import math
 import os as _os
@@ -429,12 +428,12 @@ def _chunk_passes_acoustic_gate(
     return True, ''
 
 
-def _count_mid_phrase_drops(wav_path: str) -> int:
-    """Count 0.6-2.0 s amplitude drops below 10% of rolling 2 s RMS median.
+def _detect_mid_phrase_drops(wav_path: str) -> list[tuple[float, float]]:
+    """Return (start_s, end_s) for each 0.6-2.0 s amplitude drop below 10%
+    of the rolling 2 s RMS median.
 
-    Exposed for the composite scorer. The acoustic gate inlines the same
-    signal with a duration-scaled threshold (max(3, duration_s / 20)) to
-    decide pass/fail; the scorer wants the raw count for a continuous score.
+    Used by the response ladder to heal drops in place. Empty list when the
+    wav is unreadable or no drops are found.
     """
     try:
         data, sr_local = _sf.read(wav_path, dtype='float32', always_2d=False)
@@ -443,7 +442,7 @@ def _count_mid_phrase_drops(wav_path: str) -> int:
         hop_s_rms = 0.05
         rms_frame_len = int(sr_local * hop_s_rms)
         if rms_frame_len <= 0 or len(data) < rms_frame_len * 4:
-            return 0
+            return []
         rms_per_frame = np.array(
             [
                 float(np.sqrt(np.mean(data[i : i + rms_frame_len] ** 2)))
@@ -451,7 +450,7 @@ def _count_mid_phrase_drops(wav_path: str) -> int:
             ]
         )
         window_2s_frames = max(1, int(2.0 / hop_s_rms))
-        n_drops = 0
+        regions: list[tuple[float, float]] = []
         in_drop = False
         drop_start: int = 0
         for i in range(window_2s_frames, len(rms_per_frame)):
@@ -468,11 +467,20 @@ def _count_mid_phrase_drops(wav_path: str) -> int:
                 if in_drop:
                     drop_dur_s = (i - drop_start) * hop_s_rms
                     if 0.6 <= drop_dur_s <= 2.0:
-                        n_drops += 1
+                        regions.append((drop_start * hop_s_rms, i * hop_s_rms))
                     in_drop = False
-        return n_drops
+        return regions
     except Exception:
-        return 0
+        return []
+
+
+def _count_mid_phrase_drops(wav_path: str) -> int:
+    """Count 0.6-2.0 s amplitude drops below 10% of rolling 2 s RMS median.
+
+    Thin wrapper around _detect_mid_phrase_drops — keeps the existing scorer
+    API stable while exposing region data for healing.
+    """
+    return len(_detect_mid_phrase_drops(wav_path))
 
 
 def _get_asr_pipeline():
@@ -584,7 +592,7 @@ async def _quality_check_and_resynthesize(
             logger.warning(
                 '[%s] Chunk %d failed acoustic gate (%s) — re-synthesizing', job_id, i, gate_reason
             )
-            checked_paths[i] = await _resynthesize_with_strategies(
+            checked_paths[i] = await _segment_response_ladder(
                 i,
                 wav_path,
                 chunk_texts,
@@ -619,7 +627,7 @@ async def _quality_check_and_resynthesize(
                             wer * 100,
                             wer_threshold * 100,
                         )
-                        checked_paths[i] = await _resynthesize_with_strategies(
+                        checked_paths[i] = await _segment_response_ladder(
                             i,
                             wav_path,
                             chunk_texts,
@@ -696,7 +704,7 @@ async def _check_segment_consistency(
                 deviation,
                 median_dbfs,
             )
-            checked[i] = await _resynthesize_with_strategies(
+            checked[i] = await _segment_response_ladder(
                 i,
                 wav_path,
                 chunk_texts,
@@ -720,7 +728,93 @@ async def _check_segment_consistency(
     return checked
 
 
-async def _resynthesize_with_strategies(
+_ANY_PUNCT_ENDS: tuple[str, ...] = ('.', ',', ';', ':', '!', '?', '—', '–')
+
+# Escalation step for the split stage. Tuned for ladder clarity: 5 seeds is
+# enough to cover stochastic failure modes without dominating wall-clock time.
+_SEED_SWEEP_N: int = 5
+# Best-of-N for each half of a split segment. Smaller than the sweep because
+# halves are shorter and already well inside the AR horizon.
+_SPLIT_BEST_OF_N: int = 3
+
+
+def _split_at_punctuation(text: str, target_fraction: float = 0.5) -> list[str]:
+    """Split text near target_fraction, searching outward for any punctuation.
+
+    Used by the response ladder's split step. Returns a single-element list
+    when the text is too short to usefully split (≤5 words).
+    """
+    words = text.split()
+    if len(words) <= 5:
+        return [text]
+    pivot = int(len(words) * target_fraction)
+    split_at = pivot
+    found = False
+    for offset in range(0, max(pivot, len(words) - pivot) + 1):
+        for candidate in (pivot - offset, pivot + offset):
+            if 0 < candidate < len(words):
+                if words[candidate - 1].endswith(_ANY_PUNCT_ENDS):
+                    split_at = candidate
+                    found = True
+                    break
+        if found:
+            break
+    part_a = ' '.join(words[:split_at])
+    part_b = ' '.join(words[split_at:])
+    return [p for p in (part_a, part_b) if p.strip()]
+
+
+async def _split_and_concat_halves(
+    halves: list[str],
+    output_path: str,
+    job_id: str,
+    loop,
+    executor,
+    generation_kwargs: dict | None,
+    reference_f0: float | None,
+) -> str | None:
+    """Synthesize each half with best-of-N, concat into output_path.
+
+    Each half uses _SPLIT_BEST_OF_N variants — smaller than the top-level
+    sweep because halves are already below the AR drift horizon. Returns
+    None when any half fails to synthesize at all.
+    """
+    import tempfile
+    from pydub import AudioSegment as _AS
+
+    from app.core.exceptions import SynthesisError
+    from app.domains.synthesis.service import synthesize_best_of_n
+
+    with tempfile.TemporaryDirectory() as td:
+        sub_paths: list[str] = []
+        for si, half_text in enumerate(halves):
+            sp = f'{td}/half_{si}.wav'
+            try:
+                await loop.run_in_executor(
+                    executor,
+                    synthesize_best_of_n,
+                    half_text,
+                    sp,
+                    _SPLIT_BEST_OF_N,
+                    reference_f0,
+                    job_id,
+                    generation_kwargs,
+                    None,
+                )
+            except SynthesisError as exc:
+                logger.warning('[%s] Split half %d synthesis failed: %s', job_id, si, exc)
+                return None
+            sub_paths.append(sp)
+        if not sub_paths:
+            return None
+        combined = _AS.from_wav(sub_paths[0])
+        for sp in sub_paths[1:]:
+            combined = combined + _AS.from_wav(sp)
+        combined.export(output_path, format='wav')
+        return output_path
+
+
+async def _segment_response_ladder(
     chunk_idx: int,
     wav_path: str,
     chunk_texts: list[str],
@@ -731,154 +825,141 @@ async def _resynthesize_with_strategies(
     generation_kwargs: dict | None = None,
     reference_f0: float | None = None,
 ) -> str:
-    """Re-synthesize with up to 4 increasingly conservative strategies.
+    """Graduated response when a segment fails the acoustic gate.
 
-    Strategy 0: raise repetition_penalty to 1.2 (targets repetition-loop hallucinations)
-    Strategy 1: split at nearest any-punctuation boundary around midpoint (both directions)
-    Strategy 2: quarter the text (halve again), same bidirectional split
-    Strategy 3: aggressive text sanitization (strip parentheticals/digits/ALL-CAPS), then retry
+    Steps, applied in order, stop at the first one whose output passes the gate:
+        1. heal — crossfade out 1-3 detected drops in place (cheap, cosmetic).
+        2. seed-sweep — synthesize best-of-N with fresh seeds; AR variance often
+                        resolves to a clean sample.
+        3. split — halve the text at punctuation, synthesize each half with
+                   best-of-N, concat; shorter contexts stay further below the
+                   AR drift horizon.
+        4. flag — log a warning and return the lowest-scoring variant seen so
+                  far. Keeping a flagged-but-playable variant is strictly
+                  better than aborting the whole job; a downstream review
+                  process can surface the flag.
 
-    Raises ChunkExhaustedError if all strategies fail the acoustic gate.
+    Raises ChunkExhaustedError only when every synthesis attempt raised
+    SynthesisError and we have no variant at all.
     """
     from app.core.exceptions import ChunkExhaustedError, SynthesisError
+    from app.domains.synthesis.healing import heal_drops
+    from app.domains.synthesis.scorer import compute_composite_score
+    from app.domains.synthesis.service import synthesize_best_of_n
 
     if chunk_idx >= len(chunk_texts):
         return wav_path
 
     original_text = chunk_texts[chunk_idx]
+    word_count = len(original_text.split())
 
-    def _split_at_punctuation(text: str, target_fraction: float = 0.5) -> list[str]:
-        """Split text near target_fraction, searching outward for any punctuation."""
-        words = text.split()
-        if len(words) <= 5:
-            return [text]
-        pivot = int(len(words) * target_fraction)
-        _ANY_PUNCT_ENDS = ('.', ',', ';', ':', '!', '?', '—', '–')
-        split_at = pivot  # fallback: split at pivot
-        # Search outward from pivot: alternating left/right
-        found = False
-        for offset in range(0, max(pivot, len(words) - pivot) + 1):
-            for candidate in (pivot - offset, pivot + offset):
-                if 0 < candidate < len(words):
-                    if words[candidate - 1].endswith(_ANY_PUNCT_ENDS):
-                        split_at = candidate
-                        found = True
-                        break
-            if found:
-                break
-        part_a = ' '.join(words[:split_at])
-        part_b = ' '.join(words[split_at:])
-        return [p for p in (part_a, part_b) if p.strip()]
-
-    def _sanitize_text(text: str) -> str:
-        """Strip parentheticals, numeric quantities, and ALL-CAPS tokens."""
-        import re as _re
-
-        # Remove content in parentheses
-        text = _re.sub(r'\([^)]{0,200}\)', '', text)
-        # Replace numeric sequences with spoken approximation
-        text = _re.sub(r'\b\d[\d,./]*\b', 'some', text)
-        # Remove ALL-CAPS words (often acronyms/jargon that trip the model)
-        text = _re.sub(r'\b[A-Z]{3,}\b', '', text)
-        # Collapse whitespace
-        text = _re.sub(r'\s+', ' ', text).strip()
-        return text or text  # return empty-safe
-
-    async def _try_halves(halves: list[str], attempt: int, retry_kw: dict) -> str | None:
-        """Synthesize halves, combine, return combined wav_path if gate passes. None otherwise."""
-        import tempfile
-        from pydub import AudioSegment as _AS
-
-        with tempfile.TemporaryDirectory() as td:
-            sub_paths = []
-            all_ok = True
-            for si, half_text in enumerate(halves):
-                sp = f'{td}/half_{si}.wav'
-                synth_fn = _make_synth_fn(engine, retry_kw, job_id)
-                await loop.run_in_executor(executor, synth_fn, half_text, sp)
-                if not _chunk_passes_acoustic_gate(sp, len(half_text.split()), reference_f0)[0]:
-                    all_ok = False
-                    break
-                sub_paths.append(sp)
-            if all_ok and len(sub_paths) >= 1:
-                combined = _AS.from_wav(sub_paths[0])
-                for sp in sub_paths[1:]:
-                    combined = combined + _AS.from_wav(sp)
-                combined.export(wav_path, format='wav')
-                total_wc = sum(len(h.split()) for h in halves)
-                if _chunk_passes_acoustic_gate(wav_path, total_wc, reference_f0)[0]:
-                    logger.info(
-                        '[%s] Chunk %d passed on split strategy %d', job_id, chunk_idx, attempt
-                    )
-                    return wav_path
-        return None
-
-    original_seed = (generation_kwargs or {}).get('seed', 0)
-
-    # Strategy 0: repetition_penalty=1.2 — most conservative change
-    retry_kw0 = dict(generation_kwargs or {})
-    retry_kw0['repetition_penalty'] = 1.2
-    retry_kw0['seed'] = original_seed  # attempt 0: keep seed, only sampling param changes
+    # Best-seen tracking — seeded from the current (failing) variant so we
+    # always have *something* to ship in the flag path.
     try:
-        synth_fn = _make_synth_fn(engine, retry_kw0, job_id)
-        await loop.run_in_executor(executor, synth_fn, original_text, wav_path)
-        if _chunk_passes_acoustic_gate(wav_path, len(original_text.split()), reference_f0)[0]:
-            logger.info(
-                '[%s] Chunk %d passed on strategy 0 (repetition_penalty)', job_id, chunk_idx
-            )
-            return wav_path
-    except (SynthesisError, RuntimeError, OSError) as exc:
-        logger.warning('[%s] Strategy 0 for chunk %d raised: %s', job_id, chunk_idx, exc)
+        current_score = compute_composite_score(wav_path, original_text, reference_f0)
+    except Exception:
+        current_score = {'total': 1.0}
+    best_path = wav_path
+    best_total = current_score.get('total', 1.0)
 
-    # Strategy 1: split at midpoint (any punctuation, bidirectional search)
-    halves = _split_at_punctuation(original_text, target_fraction=0.5)
-    if len(halves) > 1:
-        retry_kw1 = dict(generation_kwargs or {})
-        retry_kw1['seed'] = (original_seed + 7919) % (2**31)
-        try:
-            result = await _try_halves(halves, attempt=1, retry_kw=retry_kw1)
-            if result is not None:
-                return result
-        except (SynthesisError, RuntimeError, OSError) as exc:
-            logger.warning('[%s] Strategy 1 for chunk %d raised: %s', job_id, chunk_idx, exc)
+    def _track_if_better(candidate_path: str, score: dict) -> None:
+        nonlocal best_path, best_total
+        t = score.get('total', 1.0)
+        if t < best_total:
+            best_path = candidate_path
+            best_total = t
 
-    # Strategy 2: quarter split (halve each half)
-    quarter_texts: list[str] = []
-    for half in _split_at_punctuation(original_text, target_fraction=0.5) or [original_text]:
-        quarter_texts.extend(_split_at_punctuation(half, target_fraction=0.5))
-    quarter_texts = [q for q in quarter_texts if q.strip()]
-    if len(quarter_texts) > 1:
-        retry_kw2 = dict(generation_kwargs or {})
-        retry_kw2['seed'] = (original_seed + 15838) % (2**31)
+    # ─── Step 1: heal drops in place ─────────────────────────────────────────
+    drop_regions = _detect_mid_phrase_drops(wav_path)
+    if 1 <= len(drop_regions) <= 3:
         try:
-            result = await _try_halves(quarter_texts, attempt=2, retry_kw=retry_kw2)
-            if result is not None:
-                return result
-        except (SynthesisError, RuntimeError, OSError) as exc:
-            logger.warning('[%s] Strategy 2 for chunk %d raised: %s', job_id, chunk_idx, exc)
-
-    # Strategy 3: aggressive text sanitization
-    sanitized = _sanitize_text(original_text)
-    if sanitized.strip():
-        retry_kw3 = dict(generation_kwargs or {})
-        retry_kw3['seed'] = (original_seed + 23757) % (2**31)
-        try:
-            synth_fn = _make_synth_fn(engine, retry_kw3, job_id)
-            await loop.run_in_executor(executor, synth_fn, sanitized, wav_path)
-            if _chunk_passes_acoustic_gate(wav_path, len(sanitized.split()), reference_f0)[0]:
+            await loop.run_in_executor(executor, heal_drops, wav_path, drop_regions)
+            passed, _reason = _chunk_passes_acoustic_gate(wav_path, word_count, reference_f0)
+            if passed:
                 logger.info(
-                    '[%s] Chunk %d passed on strategy 3 (sanitized text)', job_id, chunk_idx
+                    '[%s] Chunk %d passed after heal (%d drop(s) crossfaded)',
+                    job_id,
+                    chunk_idx,
+                    len(drop_regions),
                 )
                 return wav_path
-        except (SynthesisError, RuntimeError, OSError) as exc:
-            logger.warning('[%s] Strategy 3 for chunk %d raised: %s', job_id, chunk_idx, exc)
+            try:
+                healed_score = compute_composite_score(wav_path, original_text, reference_f0)
+                _track_if_better(wav_path, healed_score)
+            except Exception:
+                pass
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning('[%s] Chunk %d heal failed: %s', job_id, chunk_idx, exc)
 
-    raise ChunkExhaustedError(
-        f'Chunk {chunk_idx} failed all 4 synthesis strategies',
-        chunk_idx=chunk_idx,
+    # ─── Step 2: seed-sweep ──────────────────────────────────────────────────
+    try:
+        candidate_path, score = await loop.run_in_executor(
+            executor,
+            synthesize_best_of_n,
+            original_text,
+            wav_path,
+            _SEED_SWEEP_N,
+            reference_f0,
+            job_id,
+            generation_kwargs,
+            None,
+        )
+        _track_if_better(candidate_path, score)
+        passed, _reason = _chunk_passes_acoustic_gate(candidate_path, word_count, reference_f0)
+        if passed:
+            logger.info(
+                '[%s] Chunk %d passed after seed-sweep (score=%.3f)',
+                job_id,
+                chunk_idx,
+                score.get('total', 1.0),
+            )
+            return candidate_path
+    except SynthesisError as exc:
+        logger.warning('[%s] Chunk %d seed-sweep raised: %s', job_id, chunk_idx, exc)
+
+    # ─── Step 3: split at punctuation, synthesize halves, concat ─────────────
+    halves = _split_at_punctuation(original_text)
+    if len(halves) > 1:
+        try:
+            combined_path = await _split_and_concat_halves(
+                halves, wav_path, job_id, loop, executor, generation_kwargs, reference_f0
+            )
+        except SynthesisError as exc:
+            logger.warning('[%s] Chunk %d split raised: %s', job_id, chunk_idx, exc)
+            combined_path = None
+        if combined_path is not None:
+            try:
+                combined_score = compute_composite_score(combined_path, original_text, reference_f0)
+                _track_if_better(combined_path, combined_score)
+            except Exception:
+                combined_score = {'total': 1.0}
+            passed, _reason = _chunk_passes_acoustic_gate(combined_path, word_count, reference_f0)
+            if passed:
+                logger.info(
+                    '[%s] Chunk %d passed after split (score=%.3f)',
+                    job_id,
+                    chunk_idx,
+                    combined_score.get('total', 1.0),
+                )
+                return combined_path
+
+    # ─── Step 4: flag — log warning, return best-seen variant ────────────────
+    if best_total >= 1.0:
+        # Never found a synthesised variant at all — the gate keeps failing
+        # and every synthesis attempt raised. Abort the job rather than ship.
+        raise ChunkExhaustedError(
+            f'Chunk {chunk_idx} produced no usable variant across heal+sweep+split',
+            chunk_idx=chunk_idx,
+        )
+    import shutil as _shutil
+
+    if best_path != wav_path:
+        _shutil.copy2(best_path, wav_path)
+    logger.warning(
+        '[%s] Chunk %d: gate still failing after heal+sweep+split — '
+        'shipping best variant (score=%.3f), flagged for review',
+        job_id,
+        chunk_idx,
+        best_total,
     )
-
-
-def _make_synth_fn(engine, kwargs: dict, job_id: str = ''):
-    """Return a callable that calls engine.synthesize_to_file with given kwargs."""
-    return functools.partial(engine.synthesize_to_file, job_id=job_id, generation_kwargs=kwargs)
+    return wav_path
