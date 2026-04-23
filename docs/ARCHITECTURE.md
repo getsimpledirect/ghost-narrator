@@ -151,10 +151,10 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Parallel workers, any machine |
 | Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
 | Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | RTX 3080 12GB+ / A10G, pipelined narrate+synthesize, VRAM-probed segments (up to 400 words) |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (fp16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **VRAM-probed segments (up to 400 words), tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **VRAM-probed segments (up to 400 words), tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
 
 **HIGH_VRAM exclusive features:**
-- **fp16 TTS precision** — extra mantissa bits improve pitch stability on Ada Lovelace (sm_89 / L4) compared to bf16
+- **bf16 TTS precision** — fp32-equivalent exponent range avoids logit saturation on long AR decodes that surfaced as mid-phrase amplitude drops under fp16
 - **Tail conditioning** — each segment is conditioned on the last 2.5s of the preceding segment, anchoring voice timbre and speaking rate across synthesis boundaries
 - **WER-based re-synthesis** — each segment is transcribed by Whisper base (CPU) and re-synthesized if word error rate exceeds 10%; catches hallucinated, skipped, and repeated words that silence-ratio checks cannot detect
 - **Loudness consistency check** — after all segments are synthesized, any segment deviating more than ±3 dB from the median dBFS is re-synthesized; prevents volume-level drift between segments
@@ -704,7 +704,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | CPU only | 0 GB | Ollama (CPU) + TTS (CPU) + n8n + Redis | 0 GB | ~4 GB | Any machine with 4+ cores |
 | Low (4–12 GB) | 4–12 GB | Ollama (GPU) + TTS-0.6B fp32 (GPU) + n8n + Redis | ~4–6 GB | ~6 GB | All CUDA GPUs; fp32 avoids fp16 overflow on older hardware |
 | Mid (12–18 GB) | 12–18 GB | vLLM (GPU) + TTS-1.7B fp16 (GPU) + n8n + Redis | ~10–14 GB | ~8 GB | RTX 3080 12GB+ / A10G |
-| High (18+ GB) | 18+ GB | vLLM (GPU) + TTS-1.7B fp16 (GPU) + n8n + Redis | ~15–20 GB | ~10 GB | A100 / RTX 4090 / L4 |
+| High (18+ GB) | 18+ GB | vLLM (GPU) + TTS-1.7B bf16 (GPU) + n8n + Redis | ~15–20 GB | ~10 GB | A100 / RTX 4090 / L4 |
 
 **Component breakdown:**
 
@@ -714,7 +714,7 @@ This is the most critical concern. Here's the breakdown by hardware tier:
 | vLLM (Qwen/Qwen3.5-4B fp8, GPU) | ~4.3 GB | ~2 GB | MID_VRAM LLM — fp8 quant, 8K context window |
 | Ollama (qwen3.5:4b Q4_K_M, GPU) | ~3.4 GB | ~1.5 GB | LOW_VRAM LLM |
 | Ollama (qwen3.5:2b Q4_K_M, CPU) | 0 GB | ~1.7 GB | CPU_ONLY LLM |
-| Qwen3-TTS-1.7B fp16 (GPU) | ~5.1 GB | ~6 GB | HIGH_VRAM — 1.5–2x faster on Tensor Cores, imperceptible quality diff vs fp32 |
+| Qwen3-TTS-1.7B bf16 (GPU) | ~5.1 GB | ~6 GB | HIGH_VRAM — Tensor Core speedup with fp32-equivalent exponent range |
 | Qwen3-TTS-1.7B fp16 (GPU) | ~5.1 GB | ~6 GB | MID_VRAM TTS model |
 | Qwen3-TTS-0.6B fp32 (GPU) | ~1.2 GB | ~3 GB | LOW_VRAM tier — fp32 for stability on all CUDA GPUs |
 | Qwen3-TTS (CPU mode) | 0 GB VRAM | ~1 GB | **Recommended for most setups** |

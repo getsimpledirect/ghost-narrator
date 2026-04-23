@@ -273,7 +273,7 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 | CPU only | None | Qwen3-TTS-12Hz-0.6B-Base | qwen3.5:2b | 192kbps, 48kHz |
 | Low (<12 GB) | <12 GB | Qwen3-TTS-12Hz-0.6B-Base | qwen3.5:4b (Ollama) | 192kbps, 48kHz |
 | Mid (12–18 GB) | 12–18 GB | Qwen3-TTS-12Hz-1.7B-Base | Qwen/Qwen3.5-4B (vLLM fp8) | 256kbps, 48kHz |
-| High (18+ GB) | 18+ GB | Qwen3-TTS-12Hz-1.7B-Base (fp16) | Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx) | 320kbps, 48kHz, −14 LUFS |
+| High (18+ GB) | 18+ GB | Qwen3-TTS-12Hz-1.7B-Base (bf16) | Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx) | 320kbps, 48kHz, −14 LUFS |
 
 ### Performance Tuning
 
@@ -408,7 +408,7 @@ If the service crashes with OOM:
 
 - Ensure reference WAV is high quality (no noise, 22 kHz, 15–30s ideal)
 - Set `VOICE_SAMPLE_REF_TEXT` to the transcription of your reference audio — enables ICL mode (significantly better voice cloning than x-vector-only)
-- Use `HARDWARE_TIER=high_vram` if your GPU supports it — fp16 precision, larger LLM, quality re-synthesis
+- Use `HARDWARE_TIER=high_vram` if your GPU supports it — bf16 precision, larger LLM, quality re-synthesis
 - Ensure language matches reference voice
 - Use `HARDWARE_TIER=mid_vram` or higher — larger TTS model and automatic VRAM-probed segment sizing improve coherence
 
