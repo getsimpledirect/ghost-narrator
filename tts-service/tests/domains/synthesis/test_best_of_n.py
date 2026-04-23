@@ -37,9 +37,13 @@ def _fake_synth(text, output_path, job_id, generation_kwargs, voice_path):
 
 
 def _fake_scorer_factory(scores_by_seed):
-    """Return a compute_composite_score replacement that reads the seed from the file."""
+    """Return a compute_composite_score replacement that reads the seed from the file.
 
-    def _scorer(wav_path, text, reference_f0):
+    Accepts (and ignores) the ``skip_wer`` keyword so it works for both the
+    adaptive per-variant scoring and the winner's final full-WER rescore.
+    """
+
+    def _scorer(wav_path, text, reference_f0, *, skip_wer=False):
         with open(wav_path, 'rb') as f:
             body = f.read().decode()
         seed = int(body.strip().split('-')[-1])
@@ -73,8 +77,122 @@ def test_best_of_1_calls_single_shot_once(tmp_path, monkeypatch):
         job_id='j',
     )
     assert path == out
+    # n_variants=1 path: one synth, one score call. No adaptive loop.
     assert len(calls) == 1
     assert score['total'] == 0.1
+
+
+def test_early_exit_stops_after_variant_0_when_score_is_low(tmp_path, monkeypatch):
+    """With variant 0 scoring below the early-exit threshold, no further synths run."""
+    scores_by_seed = {
+        0: 0.05,  # variant 0 — well below early_exit=0.08
+        7919: 0.5,  # variant 1 — never generated
+        15838: 0.9,  # variant 2 — never generated
+    }
+    call_count = {'n': 0}
+
+    def _counting_synth(text, output_path, job_id, generation_kwargs, voice_path):
+        call_count['n'] += 1
+        return _fake_synth(text, output_path, job_id, generation_kwargs, voice_path)
+
+    monkeypatch.setattr(service, 'synthesize_single_shot', _counting_synth)
+    from app.domains.synthesis import scorer
+
+    monkeypatch.setattr(scorer, 'compute_composite_score', _fake_scorer_factory(scores_by_seed))
+
+    out = str(tmp_path / 'seg.wav')
+    path, score = service.synthesize_best_of_n(
+        text='hi',
+        output_path=out,
+        n_variants=3,
+        reference_f0=None,
+    )
+    assert path == out
+    assert call_count['n'] == 1  # only variant 0 was synthesised
+    assert score['total'] == 0.05
+
+
+def test_good_enough_exit_stops_after_variant_1(tmp_path, monkeypatch):
+    """Variant 0 misses early_exit but variant 1 brings best-so-far below good_enough."""
+    scores_by_seed = {
+        0: 0.30,  # variant 0 — above early_exit and good_enough
+        7919: 0.10,  # variant 1 — below good_enough=0.13 → stop
+        15838: 0.02,  # variant 2 — never generated
+    }
+    call_count = {'n': 0}
+
+    def _counting_synth(text, output_path, job_id, generation_kwargs, voice_path):
+        call_count['n'] += 1
+        return _fake_synth(text, output_path, job_id, generation_kwargs, voice_path)
+
+    monkeypatch.setattr(service, 'synthesize_single_shot', _counting_synth)
+    from app.domains.synthesis import scorer
+
+    monkeypatch.setattr(scorer, 'compute_composite_score', _fake_scorer_factory(scores_by_seed))
+
+    out = str(tmp_path / 'seg.wav')
+    path, score = service.synthesize_best_of_n(
+        text='hi',
+        output_path=out,
+        n_variants=3,
+        reference_f0=None,
+    )
+    assert path == out
+    assert call_count['n'] == 2  # stopped after variant 1
+    assert score['total'] == 0.10
+
+
+def test_full_n_when_all_variants_are_marginal(tmp_path, monkeypatch):
+    """When every variant is above good_enough, all N are generated and the lowest wins."""
+    scores_by_seed = {
+        0: 0.40,
+        7919: 0.25,  # above good_enough=0.13 → continue
+        15838: 0.20,
+    }
+    call_count = {'n': 0}
+
+    def _counting_synth(text, output_path, job_id, generation_kwargs, voice_path):
+        call_count['n'] += 1
+        return _fake_synth(text, output_path, job_id, generation_kwargs, voice_path)
+
+    monkeypatch.setattr(service, 'synthesize_single_shot', _counting_synth)
+    from app.domains.synthesis import scorer
+
+    monkeypatch.setattr(scorer, 'compute_composite_score', _fake_scorer_factory(scores_by_seed))
+
+    out = str(tmp_path / 'seg.wav')
+    path, score = service.synthesize_best_of_n(
+        text='hi',
+        output_path=out,
+        n_variants=3,
+        reference_f0=None,
+    )
+    assert path == out
+    assert call_count['n'] == 3
+    assert score['total'] == 0.20
+
+
+def test_thresholds_respected_via_env(tmp_path, monkeypatch):
+    """BEST_OF_N_EARLY_EXIT env override bumps the exit bar."""
+    monkeypatch.setenv('BEST_OF_N_EARLY_EXIT', '0.25')
+    scores_by_seed = {0: 0.20, 7919: 0.1, 15838: 0.05}
+    call_count = {'n': 0}
+
+    def _counting_synth(text, output_path, job_id, generation_kwargs, voice_path):
+        call_count['n'] += 1
+        return _fake_synth(text, output_path, job_id, generation_kwargs, voice_path)
+
+    monkeypatch.setattr(service, 'synthesize_single_shot', _counting_synth)
+    from app.domains.synthesis import scorer
+
+    monkeypatch.setattr(scorer, 'compute_composite_score', _fake_scorer_factory(scores_by_seed))
+
+    out = str(tmp_path / 'seg.wav')
+    _, score = service.synthesize_best_of_n(
+        text='hi', output_path=out, n_variants=3, reference_f0=None
+    )
+    assert call_count['n'] == 1  # variant 0 at 0.20 is under the elevated 0.25 bar
+    assert score['total'] == 0.20
 
 
 def test_best_of_3_keeps_lowest_score(tmp_path, monkeypatch):

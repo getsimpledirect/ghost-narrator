@@ -261,6 +261,35 @@ def synthesize_single_shot(
     return result
 
 
+# Adaptive best-of-N thresholds (tuned from observed-score distributions where
+# winning composite scores range 0.067–0.181 across 26 segments, median ~0.10).
+# Conservative defaults — bump higher for more speed at modest quality cost.
+# Scores are computed with skip_wer=True, so thresholds live below the full-WER
+# gate bar (which evaluates WER on only the lazy-WER winner).
+_DEFAULT_EARLY_EXIT_SCORE: float = 0.08  # very confident — skip remaining variants
+_DEFAULT_GOOD_ENOUGH_SCORE: float = 0.13  # comfortable — stop after variant 1
+
+
+def _load_adaptive_thresholds() -> tuple[float, float]:
+    """Return (early_exit, good_enough) thresholds from env or defaults."""
+
+    def _read(name: str, default: float) -> float:
+        raw = os.environ.get(name, '').strip()
+        if not raw:
+            return default
+        try:
+            v = float(raw)
+            return max(0.0, min(1.0, v))
+        except ValueError:
+            logger.warning('Invalid %s=%r — using default %.3f', name, raw, default)
+            return default
+
+    return (
+        _read('BEST_OF_N_EARLY_EXIT', _DEFAULT_EARLY_EXIT_SCORE),
+        _read('BEST_OF_N_GOOD_ENOUGH', _DEFAULT_GOOD_ENOUGH_SCORE),
+    )
+
+
 def synthesize_best_of_n(
     text: str,
     output_path: str,
@@ -270,18 +299,23 @@ def synthesize_best_of_n(
     generation_kwargs: Optional[dict] = None,
     voice_path: Optional[str] = None,
 ) -> tuple[str, dict]:
-    """Synthesize N variants, keep the best by composite score.
+    """Adaptive best-of-N with early exit + lazy WER.
+
+    Synthesises variants sequentially with distinct seeds, scoring each without
+    Whisper (lazy WER). When a variant's score is comfortably below the
+    early-exit threshold we ship it immediately without generating the rest;
+    when it's above "good enough" after variant 1 we continue; only marginal
+    cases burn the full N. The winning variant then gets a full-WER rescore so
+    the downstream gate has a correct WER reading for its own pass.
 
     Variant 0 uses the caller's seed (or 0 if unset). Variants 1..N-1 use
-    deterministically derived seeds so the same job_id + chunk_idx always
-    explores the same audio space — retries stay reproducible while still
-    exploring distinct autoregressive decoding paths.
+    deterministically derived seeds (prime-offset arithmetic) so the same
+    job_id + chunk_idx always explores the same audio space.
 
-    When n_variants <= 1 this reduces to a single synthesis plus a score,
-    so callers can always invoke this function without an N-dependent branch.
+    When n_variants <= 1 this reduces to single synthesis + full-WER score.
 
     Returns (kept_path, score_dict). kept_path == output_path on success.
-    Raises SynthesisError if every variant fails to synthesize.
+    Raises SynthesisError if every attempted variant fails to synthesize.
     """
     from app.domains.synthesis.scorer import compute_composite_score
 
@@ -290,6 +324,7 @@ def synthesize_best_of_n(
         score = compute_composite_score(output_path, text, reference_f0)
         return output_path, score
 
+    early_exit, good_enough = _load_adaptive_thresholds()
     base_seed = int((generation_kwargs or {}).get('seed') or 0)
     out_path = Path(output_path)
     out_dir = out_path.parent
@@ -297,6 +332,7 @@ def synthesize_best_of_n(
 
     variant_paths: list[str] = []
     variant_scores: list[dict] = []
+    best_idx_far: Optional[int] = None
 
     for n in range(n_variants):
         variant_path = str(out_dir / f'{stem}_v{n}.wav')
@@ -311,12 +347,31 @@ def synthesize_best_of_n(
             logger.warning('[%s] Best-of-N variant %d synthesis failed: %s', job_id, n, exc)
             continue
         try:
-            score = compute_composite_score(variant_path, text, reference_f0)
+            # Lazy WER: skip Whisper during selection — it adds ~5-10 s per call
+            # and rarely flips which variant wins. The winner's full-WER score
+            # is computed once below so the gate has correct WER signal.
+            score = compute_composite_score(variant_path, text, reference_f0, skip_wer=True)
         except Exception as exc:
             logger.warning('[%s] Best-of-N variant %d scoring failed: %s', job_id, n, exc)
             score = {'total': 1.0}
         variant_paths.append(variant_path)
         variant_scores.append(score)
+
+        # Track best-so-far for early-exit decisions.
+        if best_idx_far is None or score['total'] < variant_scores[best_idx_far]['total']:
+            best_idx_far = len(variant_scores) - 1
+        best_far = variant_scores[best_idx_far]['total']
+
+        # Early exit: this variant (or an earlier one) is already comfortably
+        # under the gate — no expected gain from generating more.
+        if best_far <= early_exit:
+            break
+
+        # Good-enough exit after variant 1: spent 2 variants, current best is
+        # acceptable. Variant 2 might marginally improve the score but the
+        # expected gain doesn't justify another ~30 s of synthesis.
+        if n == 1 and best_far <= good_enough:
+            break
 
     if not variant_paths:
         raise SynthesisError(
@@ -326,7 +381,7 @@ def synthesize_best_of_n(
 
     best_idx = min(range(len(variant_paths)), key=lambda i: variant_scores[i]['total'])
     best_path = variant_paths[best_idx]
-    best_score = variant_scores[best_idx]
+    best_score_fast = variant_scores[best_idx]
 
     try:
         if best_path != output_path:
@@ -343,12 +398,22 @@ def synthesize_best_of_n(
             except FileNotFoundError:
                 pass
 
+    # Final full-WER score for the winner — WER signal is needed by the
+    # acoustic gate and the response ladder; computing it here avoids a
+    # second Whisper call during the gate pass.
+    try:
+        best_score = compute_composite_score(output_path, text, reference_f0, skip_wer=False)
+    except Exception as exc:
+        logger.warning('[%s] Best-of-N final WER rescore failed: %s', job_id, exc)
+        best_score = best_score_fast
+
     logger.info(
-        '[%s] Best-of-%d for %s: variant %d kept (score=%.3f, components=%s)',
+        '[%s] Best-of-%d for %s: variant %d kept after %d synths (score=%.3f, components=%s)',
         job_id,
         n_variants,
         out_path.name,
         best_idx,
+        len(variant_paths),
         best_score.get('total', 1.0),
         {k: round(v, 3) for k, v in best_score.items() if k != 'total'},
     )
