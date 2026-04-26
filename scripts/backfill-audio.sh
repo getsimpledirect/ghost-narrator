@@ -149,6 +149,7 @@ if [ "${1:-}" = "--config" ]; then
     SITE_COUNT="$BACKFILL_SITE_COUNT"
     N8N_WEBHOOK="$BACKFILL_N8N_WEBHOOK"
     TTS_SERVICE_URL="$BACKFILL_TTS_SERVICE_URL"
+    TTS_API_KEY="${BACKFILL_TTS_API_KEY:-}"
     DRY_RUN="$BACKFILL_DRY_RUN"
     echo ""
     echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
@@ -194,6 +195,20 @@ if [ "${1:-}" != "--config" ]; then
     _default_tts="http://localhost:8020"
     read -r -p "TTS service URL [$_default_tts]: " _input
     TTS_SERVICE_URL="${_input:-$_default_tts}"
+
+    # TTS API key — required by the service since the auth refactor.
+    # Honor TTS_API_KEY from the parent env so users can pre-export it once.
+    echo ""
+    if [ -n "${TTS_API_KEY:-}" ]; then
+        info "Using TTS_API_KEY from environment (\$TTS_API_KEY)"
+    else
+        read -r -s -p "TTS API key (Bearer token, will not echo): " TTS_API_KEY
+        echo ""
+    fi
+    if [ -z "${TTS_API_KEY:-}" ]; then
+        err "TTS API key cannot be empty — set TTS_API_KEY in your env or paste it here"
+        exit 1
+    fi
 
     echo ""
     echo -e "${BOLD}── Ghost Sites ─────────────────────────────────────────────${NC}"
@@ -251,6 +266,7 @@ if [ "$BACKGROUND" = true ]; then
     {
         echo "BACKFILL_N8N_WEBHOOK=$(printf '%q' "$N8N_WEBHOOK")"
         echo "BACKFILL_TTS_SERVICE_URL=$(printf '%q' "$TTS_SERVICE_URL")"
+        echo "BACKFILL_TTS_API_KEY=$(printf '%q' "$TTS_API_KEY")"
         echo "BACKFILL_SITE_COUNT=$SITE_COUNT"
         echo "BACKFILL_DRY_RUN=$(printf '%q' "$DRY_RUN")"
         for i in "${!GHOST_URLS[@]}"; do
@@ -346,7 +362,17 @@ poll_tts_job() {
         http_code=$(curl -s -o $POLL_TMP \
             -w "%{http_code}" \
             --max-time 10 \
+            -H "Authorization: Bearer ${TTS_API_KEY}" \
             "${TTS_SERVICE_URL}/tts/status/${job_id}" 2>/dev/null) || http_code="000"
+
+        # Auth failures are operator errors, not transient ones — bail with a
+        # clear message instead of polling 401/403 forever.
+        if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+            echo ""
+            err "TTS service rejected the API key (HTTP ${http_code}). Check TTS_API_KEY matches the running service."
+            rm -f $POLL_TMP
+            return 1
+        fi
 
         if [ "$http_code" = "404" ]; then
             if [ $elapsed -ge $N8N_TIMEOUT ]; then

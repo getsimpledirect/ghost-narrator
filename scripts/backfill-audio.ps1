@@ -142,6 +142,7 @@ if ($Config -ne "") {
     $cfg            = Get-Content $Config -Raw -Encoding UTF8 | ConvertFrom-Json
     $N8N_WEBHOOK    = $cfg.N8N_WEBHOOK
     $TTS_SERVICE_URL = $cfg.TTS_SERVICE_URL
+    $TTS_API_KEY    = $cfg.TTS_API_KEY
     $DRY_RUN        = $cfg.DRY_RUN
     $GhostUrls      = @($cfg.GhostUrls)
     $GhostKeys      = @($cfg.GhostKeys)
@@ -174,6 +175,22 @@ if (-not $skipInteractive) {
     $defaultTts      = "http://localhost:8020"
     $inputTts        = Read-Host "TTS service URL [$defaultTts]"
     $TTS_SERVICE_URL = if ($inputTts) { $inputTts.TrimEnd("/") } else { $defaultTts }
+
+    # TTS API key — required by the service since the auth refactor.
+    # Honor $env:TTS_API_KEY so users can pre-export it once per shell session.
+    if ($env:TTS_API_KEY) {
+        $TTS_API_KEY = $env:TTS_API_KEY
+        Write-Info "Using TTS_API_KEY from environment (`$env:TTS_API_KEY)"
+    } else {
+        $secureKey  = Read-Host "TTS API key (Bearer token, will not echo)" -AsSecureString
+        $bstr       = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
+        $TTS_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) | Out-Null
+    }
+    if (-not $TTS_API_KEY) {
+        Write-Err "TTS API key cannot be empty — set `$env:TTS_API_KEY or paste it here"
+        exit 1
+    }
 
     Write-Host ""
     Write-Host "-- Ghost Sites ----------------------------------------------" -ForegroundColor White
@@ -236,6 +253,7 @@ if ($Background) {
     @{
         N8N_WEBHOOK     = $N8N_WEBHOOK
         TTS_SERVICE_URL = $TTS_SERVICE_URL
+        TTS_API_KEY     = $TTS_API_KEY
         DRY_RUN         = $DRY_RUN
         GhostUrls       = $GhostUrls
         GhostKeys       = $GhostKeys
@@ -320,6 +338,7 @@ function Wait-ForJob {
     param(
         [string]$JobId,
         [string]$TtsUrl,
+        [string]$TtsApiKey,
         [int]$PollInterval,
         [int]$N8nTimeout,
         [int]$MaxWait
@@ -328,6 +347,7 @@ function Wait-ForJob {
     $elapsed        = 0
     $n8nLogged      = $false
     $ttsLogged      = $false
+    $authHeaders    = @{ Authorization = "Bearer $TtsApiKey" }
 
     while ($elapsed -lt $MaxWait) {
         Start-Sleep -Seconds $PollInterval
@@ -338,7 +358,8 @@ function Wait-ForJob {
         $body      = $null
 
         try {
-            $wr   = Invoke-WebRequest -Uri $statusUrl -Method Get -TimeoutSec 10 -UseBasicParsing
+            $wr   = Invoke-WebRequest -Uri $statusUrl -Method Get -TimeoutSec 10 `
+                        -UseBasicParsing -Headers $authHeaders
             $body = $wr.Content | ConvertFrom-Json
             $httpCode = [int]$wr.StatusCode
         } catch {
@@ -348,6 +369,13 @@ function Wait-ForJob {
             } else {
                 $httpCode = 0
             }
+        }
+
+        # 401/403 = bad API key. Bail with a clear message instead of polling forever.
+        if ($httpCode -eq 401 -or $httpCode -eq 403) {
+            Write-Host ""
+            Write-Err "  TTS service rejected the API key (HTTP $httpCode). Check TTS_API_KEY matches the running service."
+            return $false
         }
 
         # 404 = n8n LLM phase (job not yet registered in TTS)
@@ -552,6 +580,7 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
         $ok = Wait-ForJob `
             -JobId       $jobId `
             -TtsUrl      $TTS_SERVICE_URL `
+            -TtsApiKey   $TTS_API_KEY `
             -PollInterval $POLL_INTERVAL `
             -N8nTimeout  $N8N_TIMEOUT `
             -MaxWait     $MAX_WAIT
