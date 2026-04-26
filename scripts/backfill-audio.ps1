@@ -66,6 +66,43 @@ function Write-Warn    { param($msg) Write-Host "! $msg" -ForegroundColor Yellow
 function Write-Err     { param($msg) Write-Host "x $msg" -ForegroundColor Red }
 function Write-Header  { param($msg) Write-Host "`n$msg" -ForegroundColor White }
 
+# ─── .env loader ─────────────────────────────────────────────────────────────
+# Loads KEY=VALUE pairs from a .env file into the process environment, but only
+# when KEY isn't already set — so a value pre-exported by the caller wins.
+# Comments and blank lines are skipped; surrounding quotes are stripped.
+function Load-DotEnv {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    foreach ($line in Get-Content $Path) {
+        if ($line -match '^\s*(#|$)') { continue }
+        $stripped = $line -replace '^\s*export\s+', ''
+        if ($stripped -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            $name  = $matches[1]
+            $value = $matches[2]
+            # Trim surrounding single or double quotes.
+            if ($value -match '^"(.*)"$' -or $value -match "^'(.*)'`$") {
+                $value = $matches[1]
+            }
+            # Defer to existing env values.
+            if (-not [Environment]::GetEnvironmentVariable($name, 'Process')) {
+                [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+            }
+        }
+    }
+}
+
+# Locate .env relative to either the script or the current working directory,
+# whichever exists first. Repo root sits one level above scripts/.
+$DotEnvPath = $null
+$_candidates = @(
+    (Join-Path (Get-Location) '.env'),
+    (Join-Path (Split-Path -Parent (Split-Path -Parent $SCRIPT_PATH)) '.env')
+)
+foreach ($_c in $_candidates) {
+    if (Test-Path $_c) { $DotEnvPath = $_c; break }
+}
+if ($DotEnvPath) { Load-DotEnv $DotEnvPath }
+
 # ─── Subcommand: -Status ──────────────────────────────────────────────────────
 if ($Status) {
     if (-not (Test-Path $PID_FILE)) {
@@ -176,11 +213,16 @@ if (-not $skipInteractive) {
 
     Write-Host "-- Pipeline -------------------------------------------------" -ForegroundColor White
     Write-Host ""
-    $defaultWebhook = "http://localhost:5678/webhook/ghost-published"
+    if ($DotEnvPath) {
+        Write-Info "Loaded defaults from $DotEnvPath"
+        Write-Host ""
+    }
+
+    $defaultWebhook = if ($env:N8N_WEBHOOK_URL) { $env:N8N_WEBHOOK_URL } else { "http://localhost:5678/webhook/ghost-published" }
     $inputWebhook   = Read-Host "n8n webhook URL [$defaultWebhook]"
     $N8N_WEBHOOK    = if ($inputWebhook) { $inputWebhook } else { $defaultWebhook }
 
-    $defaultTts      = "http://localhost:8020"
+    $defaultTts      = if ($env:TTS_SERVICE_URL) { $env:TTS_SERVICE_URL } else { "http://localhost:8020" }
     $inputTts        = Read-Host "TTS service URL [$defaultTts]"
     $TTS_SERVICE_URL = if ($inputTts) { $inputTts.TrimEnd("/") } else { $defaultTts }
 
@@ -204,11 +246,13 @@ if (-not $skipInteractive) {
     Write-Host "-- Ghost Sites ----------------------------------------------" -ForegroundColor White
     Write-Host ""
 
-    $inputCount = Read-Host "Number of Ghost sites to process [1]"
+    # Default count from .env: 2 if SITE2 vars are set, else 1.
+    $defaultCount = if ($env:GHOST_SITE2_URL -or $env:GHOST_KEY_SITE2) { 2 } else { 1 }
+    $inputCount = Read-Host "Number of Ghost sites to process [$defaultCount]"
     $SITE_COUNT = if ($inputCount) {
         try { [int]$inputCount }
         catch { Write-Err "Invalid number: '$inputCount' — must be a whole number"; exit 1 }
-    } else { 1 }
+    } else { $defaultCount }
 
     if ($SITE_COUNT -lt 1) {
         Write-Err "Site count must be at least 1"
@@ -222,16 +266,33 @@ if (-not $skipInteractive) {
     for ($i = 1; $i -le $SITE_COUNT; $i++) {
         Write-Host ""
         Write-Host "  Site $i" -ForegroundColor White
-        $ghostUrl = Read-Host "    Ghost URL (e.g. https://ghost.your-site.com)"
+
+        # Prefill from .env: GHOST_SITE${i}_URL and GHOST_KEY_SITE${i}.
+        $defaultUrl = [Environment]::GetEnvironmentVariable("GHOST_SITE${i}_URL", 'Process')
+        $defaultKey = [Environment]::GetEnvironmentVariable("GHOST_KEY_SITE${i}", 'Process')
+
+        if ($defaultUrl) {
+            $ghostUrl = Read-Host "    Ghost URL [$defaultUrl]"
+            if (-not $ghostUrl) { $ghostUrl = $defaultUrl }
+        } else {
+            $ghostUrl = Read-Host "    Ghost URL (e.g. https://ghost.your-site.com)"
+        }
         if (-not $ghostUrl) {
             Write-Err "Ghost URL cannot be empty"
             exit 1
         }
-        $ghostKey = Read-Host "    Content API key"
+
+        if ($defaultKey) {
+            $ghostKey = Read-Host "    Content API key [from .env]"
+            if (-not $ghostKey) { $ghostKey = $defaultKey }
+        } else {
+            $ghostKey = Read-Host "    Content API key"
+        }
         if (-not $ghostKey) {
             Write-Err "Content API key cannot be empty"
             exit 1
         }
+
         # Callback site identifier — must match GHOST_SITE{N}_ADMIN_API_KEY
         # in n8n env. The callback workflow only knows 'site1' or 'site2';
         # anything else fails the admin-API lookup and the embed step never runs.

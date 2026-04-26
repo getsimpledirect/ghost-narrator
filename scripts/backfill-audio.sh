@@ -67,6 +67,52 @@ success() { echo -e "${GREEN}✓ $*${NC}"; }
 warn()    { echo -e "${YELLOW}⚠ $*${NC}"; }
 err()     { echo -e "${RED}✗ $*${NC}"; }
 
+# ─── .env loader ─────────────────────────────────────────────────────────────
+# Loads KEY=VALUE pairs from a .env file into the current environment, but
+# only when KEY isn't already set — so a value pre-exported by the user
+# (e.g. `TTS_API_KEY=foo bash backfill-audio.sh`) always wins. Comments and
+# blank lines are skipped; surrounding quotes are stripped.
+load_dotenv() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 0
+    local line name value
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip blanks and comments.
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # Tolerate `export KEY=VALUE`.
+        line="${line#export }"
+        # Match KEY=VALUE (KEY must start with letter or underscore).
+        if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            name="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            # Strip surrounding single or double quotes.
+            if [[ "$value" =~ ^\".*\"$ || "$value" =~ ^\'.*\'$ ]]; then
+                value="${value:1:${#value}-2}"
+            fi
+            # Defer to existing env values.
+            if [ -z "${!name:-}" ]; then
+                export "$name=$value"
+            fi
+        fi
+    done < "$env_file"
+}
+
+# Locate .env relative to either the script or the current working directory,
+# whichever exists first. Repo root sits one level above scripts/.
+_DOTENV_PATH=""
+for _candidate in \
+    "$(pwd)/.env" \
+    "$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)/.env"
+do
+    if [ -f "$_candidate" ]; then
+        _DOTENV_PATH="$_candidate"
+        break
+    fi
+done
+if [ -n "$_DOTENV_PATH" ]; then
+    load_dotenv "$_DOTENV_PATH"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SUBCOMMANDS  (--status / --logs / --stop / --config)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -189,13 +235,17 @@ if [ "${1:-}" != "--config" ]; then
 
     echo -e "${BOLD}── Pipeline ────────────────────────────────────────────────${NC}"
     echo ""
+    if [ -n "$_DOTENV_PATH" ]; then
+        info "Loaded defaults from ${_DOTENV_PATH}"
+        echo ""
+    fi
 
-    _default_webhook="http://localhost:5678/webhook/ghost-published"
+    _default_webhook="${N8N_WEBHOOK_URL:-http://localhost:5678/webhook/ghost-published}"
     read -r -p "n8n webhook URL [$_default_webhook]: " _input
     N8N_WEBHOOK="${_input:-$_default_webhook}"
 
     echo ""
-    _default_tts="http://localhost:8020"
+    _default_tts="${TTS_SERVICE_URL:-http://localhost:8020}"
     read -r -p "TTS service URL [$_default_tts]: " _input
     TTS_SERVICE_URL="${_input:-$_default_tts}"
 
@@ -216,8 +266,14 @@ if [ "${1:-}" != "--config" ]; then
     echo ""
     echo -e "${BOLD}── Ghost Sites ─────────────────────────────────────────────${NC}"
     echo ""
-    read -r -p "Number of Ghost sites to process [1]: " _input
-    SITE_COUNT="${_input:-1}"
+    # Default site count from .env: 2 if SITE2 vars are set, else 1.
+    if [ -n "${GHOST_SITE2_URL:-}" ] || [ -n "${GHOST_KEY_SITE2:-}" ]; then
+        _default_count=2
+    else
+        _default_count=1
+    fi
+    read -r -p "Number of Ghost sites to process [$_default_count]: " _input
+    SITE_COUNT="${_input:-$_default_count}"
 
     if ! [[ "$SITE_COUNT" =~ ^[1-9][0-9]*$ ]]; then
         err "Invalid site count: ${SITE_COUNT}"
@@ -228,10 +284,29 @@ if [ "${1:-}" != "--config" ]; then
     for i in $(seq 1 "$SITE_COUNT"); do
         echo ""
         echo -e "${BOLD}  Site ${i}${NC}"
-        read -r -p "    Ghost URL (e.g. https://ghost.your-site.com): " ghost_url
+
+        # Prefill from .env: GHOST_SITE${i}_URL and GHOST_KEY_SITE${i}.
+        url_var="GHOST_SITE${i}_URL"
+        key_var="GHOST_KEY_SITE${i}"
+        _default_url="${!url_var:-}"
+        _default_key="${!key_var:-}"
+
+        if [ -n "$_default_url" ]; then
+            read -r -p "    Ghost URL [$_default_url]: " ghost_url
+            ghost_url="${ghost_url:-$_default_url}"
+        else
+            read -r -p "    Ghost URL (e.g. https://ghost.your-site.com): " ghost_url
+        fi
         if [ -z "$ghost_url" ]; then err "Ghost URL cannot be empty"; exit 1; fi
-        read -r -p "    Content API key: " ghost_key
+
+        if [ -n "$_default_key" ]; then
+            read -r -p "    Content API key [from .env]: " ghost_key
+            ghost_key="${ghost_key:-$_default_key}"
+        else
+            read -r -p "    Content API key: " ghost_key
+        fi
         if [ -z "$ghost_key" ]; then err "Content API key cannot be empty"; exit 1; fi
+
         # Callback site identifier — must match GHOST_SITE{N}_ADMIN_API_KEY in n8n env.
         # The callback workflow only knows 'site1' or 'site2'; anything else fails the
         # admin-API lookup and the audio embed step never runs.
