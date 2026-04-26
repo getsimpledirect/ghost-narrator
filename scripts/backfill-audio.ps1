@@ -146,6 +146,14 @@ if ($Config -ne "") {
     $DRY_RUN        = $cfg.DRY_RUN
     $GhostUrls      = @($cfg.GhostUrls)
     $GhostKeys      = @($cfg.GhostKeys)
+    # SiteCallbackIds carries the n8n-side site identifier (site1 / site2) used
+    # to look up admin API keys in the callback workflow. Older config files
+    # don't have this — fall back to "site{N}" by index.
+    if ($cfg.PSObject.Properties.Name -contains 'SiteCallbackIds') {
+        $SiteCallbackIds = @($cfg.SiteCallbackIds)
+    } else {
+        $SiteCallbackIds = 1..$GhostUrls.Count | ForEach-Object { "site$_" }
+    }
     $skipInteractive = $true
 }
 
@@ -207,8 +215,9 @@ if (-not $skipInteractive) {
         exit 1
     }
 
-    $GhostUrls = @()
-    $GhostKeys = @()
+    $GhostUrls       = @()
+    $GhostKeys       = @()
+    $SiteCallbackIds = @()
 
     for ($i = 1; $i -le $SITE_COUNT; $i++) {
         Write-Host ""
@@ -223,6 +232,12 @@ if (-not $skipInteractive) {
             Write-Err "Content API key cannot be empty"
             exit 1
         }
+        # Callback site identifier — must match GHOST_SITE{N}_ADMIN_API_KEY
+        # in n8n env. The callback workflow only knows 'site1' or 'site2';
+        # anything else fails the admin-API lookup and the embed step never runs.
+        $defaultCb = "site$i"
+        $siteCb    = Read-Host "    Callback site identifier (site1 or site2) [$defaultCb]"
+        $SiteCallbackIds += if ($siteCb) { $siteCb } else { $defaultCb }
         $GhostUrls += $ghostUrl.TrimEnd("/")
         $GhostKeys += $ghostKey
     }
@@ -257,6 +272,7 @@ if ($Background) {
         DRY_RUN         = $DRY_RUN
         GhostUrls       = $GhostUrls
         GhostKeys       = $GhostKeys
+        SiteCallbackIds = $SiteCallbackIds
     } | ConvertTo-Json -Depth 5 | Set-Content $CFG_FILE -Encoding UTF8
 
     # Clear previous logs
@@ -524,9 +540,10 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
         }
     }
 
-    # ── Derive site slug for deterministic job IDs ────────────────────────────
-    $siteHostname = $ghostUrl -replace 'https?://', '' -replace '/.*', ''
-    $siteSlug     = $siteHostname -replace '\.', '-'
+    # ── Resolve the site's callback identifier (site1 / site2) for job_id ────
+    # The n8n callback workflow indexes admin API keys by this slug and rejects
+    # any value other than 'site1' or 'site2'.
+    $siteCallbackId = $SiteCallbackIds[$siteIdx]
 
     # ── Trigger each post ─────────────────────────────────────────────────────
     $siteTriggered = 0
@@ -541,9 +558,13 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
         Write-Host "  ID   : $($post.id)"
         Write-Host "  URL  : $($post.url)"
 
-        # Deterministic job ID — matches the backfill-{siteSlug}-pid-{id}-{slug} scheme
-        # Compatible with n8n callback's -pid- parser
-        $jobId = "backfill-${siteSlug}-pid-$($post.id)-$($post.slug)"
+        # Deterministic job ID — same shape n8n's Extract Post Metadata node
+        # would generate for a real Ghost webhook:
+        #   {site1|site2}-pid-{postId}-{slug}-{epoch_seconds}
+        # n8n honors data.backfill_job_id when present, so we can poll the
+        # exact ID we computed here. Including the epoch keeps re-runs unique.
+        $epoch  = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+        $jobId  = "$siteCallbackId-pid-$($post.id)-$($post.slug)-$epoch"
 
         # Build the webhook payload — same shape Ghost sends, plus backfill_job_id hint
         # so n8n uses our deterministic ID instead of generating a timestamp-based one

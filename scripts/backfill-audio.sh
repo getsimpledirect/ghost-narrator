@@ -139,12 +139,15 @@ if [ "${1:-}" = "--config" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
     # Rebuild arrays from indexed variables
-    GHOST_URLS=(); GHOST_KEYS=()
+    GHOST_URLS=(); GHOST_KEYS=(); SITE_CALLBACK_IDS=()
     for i in $(seq 0 $((BACKFILL_SITE_COUNT - 1))); do
         url_var="BACKFILL_GHOST_URL_${i}"
         key_var="BACKFILL_GHOST_KEY_${i}"
+        cb_var="BACKFILL_SITE_CALLBACK_ID_${i}"
         GHOST_URLS+=("${!url_var}")
         GHOST_KEYS+=("${!key_var}")
+        # Default to site${i+1} if older config files don't carry the field.
+        SITE_CALLBACK_IDS+=("${!cb_var:-site$((i + 1))}")
     done
     SITE_COUNT="$BACKFILL_SITE_COUNT"
     N8N_WEBHOOK="$BACKFILL_N8N_WEBHOOK"
@@ -221,7 +224,7 @@ if [ "${1:-}" != "--config" ]; then
         exit 1
     fi
 
-    GHOST_URLS=(); GHOST_KEYS=()
+    GHOST_URLS=(); GHOST_KEYS=(); SITE_CALLBACK_IDS=()
     for i in $(seq 1 "$SITE_COUNT"); do
         echo ""
         echo -e "${BOLD}  Site ${i}${NC}"
@@ -229,6 +232,12 @@ if [ "${1:-}" != "--config" ]; then
         if [ -z "$ghost_url" ]; then err "Ghost URL cannot be empty"; exit 1; fi
         read -r -p "    Content API key: " ghost_key
         if [ -z "$ghost_key" ]; then err "Content API key cannot be empty"; exit 1; fi
+        # Callback site identifier — must match GHOST_SITE{N}_ADMIN_API_KEY in n8n env.
+        # The callback workflow only knows 'site1' or 'site2'; anything else fails the
+        # admin-API lookup and the audio embed step never runs.
+        _default_cb="site${i}"
+        read -r -p "    Callback site identifier (site1 or site2) [${_default_cb}]: " site_cb
+        SITE_CALLBACK_IDS+=("${site_cb:-$_default_cb}")
         GHOST_URLS+=("${ghost_url%/}")
         GHOST_KEYS+=("$ghost_key")
     done
@@ -272,6 +281,7 @@ if [ "$BACKGROUND" = true ]; then
         for i in "${!GHOST_URLS[@]}"; do
             echo "BACKFILL_GHOST_URL_${i}=$(printf '%q' "${GHOST_URLS[$i]}")"
             echo "BACKFILL_GHOST_KEY_${i}=$(printf '%q' "${GHOST_KEYS[$i]}")"
+            echo "BACKFILL_SITE_CALLBACK_ID_${i}=$(printf '%q' "${SITE_CALLBACK_IDS[$i]}")"
         done
     } > "$CFG_FILE"
 
@@ -448,11 +458,10 @@ GRAND_ERRORS=0
 for site_idx in "${!GHOST_URLS[@]}"; do
     GHOST_URL="${GHOST_URLS[$site_idx]}"
     GHOST_KEY="${GHOST_KEYS[$site_idx]}"
+    # Callback site identifier — used in JOB_ID so the n8n callback workflow can
+    # look up the right Ghost admin API key (which it indexes by 'site1' / 'site2').
+    SITE_CALLBACK_ID="${SITE_CALLBACK_IDS[$site_idx]}"
     SITE_NUM=$((site_idx + 1))
-
-    # Derive site slug from URL hostname (dots → hyphens)
-    SITE_HOSTNAME=$(echo "$GHOST_URL" | sed 's|https\?://||' | sed 's|/.*||')
-    SITE_SLUG=$(echo "$SITE_HOSTNAME" | tr '.' '-')
 
     echo ""
     echo -e "${BOLD}── Site ${SITE_NUM}: ${GHOST_URL} ──${NC}"
@@ -535,10 +544,13 @@ for site_idx in "${!GHOST_URLS[@]}"; do
         SITE_TRIGGERED=$((SITE_TRIGGERED + 1))
         GRAND_TRIGGERED=$((GRAND_TRIGGERED + 1))
 
-        # Construct deterministic job_id using the backfill prefix
-        # Format: backfill-{siteSlug}-pid-{postId}-{slug}
-        # The -pid- separator is required for the n8n callback workflow to extract postId
-        JOB_ID="backfill-${SITE_SLUG}-pid-${POST_ID}-${SLUG}"
+        # Construct deterministic job_id matching the format n8n's Extract Post
+        # Metadata node would generate for a real Ghost webhook:
+        #   {site1|site2}-pid-{postId}-{slug}-{epoch_seconds}
+        # n8n honors data.backfill_job_id when present, so the script can poll the
+        # exact ID it computed here. Including the epoch keeps re-runs unique.
+        TIMESTAMP=$(date +%s)
+        JOB_ID="${SITE_CALLBACK_ID}-pid-${POST_ID}-${SLUG}-${TIMESTAMP}"
 
         echo ""
         echo -e "${BOLD}[${SITE_TRIGGERED}/${NEEDS_COUNT}] ${TITLE}${NC}"
