@@ -113,6 +113,31 @@ if [ -n "$_DOTENV_PATH" ]; then
     load_dotenv "$_DOTENV_PATH"
 fi
 
+# ─── Callback site identifier auto-detection ────────────────────────────────
+# Match a Ghost URL against GHOST_SITE{1,2}_URL from env to determine the
+# canonical callback site identifier ('site1' / 'site2'). Returns empty when
+# neither env URL is set or neither matches. Mirrors the n8n Extract Post
+# Metadata node's `hostname.includes(siteHostname)` semantics so the script
+# and n8n always pick the same answer.
+_detect_callback_site_id() {
+    local url="$1"
+    [ -z "$url" ] && return 0
+    local host_in host_s1 host_s2
+    host_in="${url#http://}"; host_in="${host_in#https://}"
+    host_in="${host_in%%/*}"; host_in="${host_in%%:*}"
+    host_s1="${GHOST_SITE1_URL:-}"
+    host_s1="${host_s1#http://}"; host_s1="${host_s1#https://}"
+    host_s1="${host_s1%%/*}"; host_s1="${host_s1%%:*}"
+    host_s2="${GHOST_SITE2_URL:-}"
+    host_s2="${host_s2#http://}"; host_s2="${host_s2#https://}"
+    host_s2="${host_s2%%/*}"; host_s2="${host_s2%%:*}"
+    if [ -n "$host_s1" ] && [[ "$host_in" == *"$host_s1"* ]]; then
+        echo site1
+    elif [ -n "$host_s2" ] && [[ "$host_in" == *"$host_s2"* ]]; then
+        echo site2
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SUBCOMMANDS  (--status / --logs / --stop / --config)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -309,10 +334,18 @@ if [ "${1:-}" != "--config" ]; then
 
         # Callback site identifier — must match GHOST_SITE{N}_ADMIN_API_KEY in n8n env.
         # The callback workflow only knows 'site1' or 'site2'; anything else fails the
-        # admin-API lookup and the audio embed step never runs.
-        _default_cb="site${i}"
-        read -r -p "    Callback site identifier (site1 or site2) [${_default_cb}]: " site_cb
-        SITE_CALLBACK_IDS+=("${site_cb:-$_default_cb}")
+        # admin-API lookup and the audio embed step never runs. Auto-detect by matching
+        # this Ghost URL against GHOST_SITE{1,2}_URL in .env so the script and n8n
+        # always agree on which site this post belongs to.
+        _detected_cb=$(_detect_callback_site_id "$ghost_url")
+        if [ -n "$_detected_cb" ]; then
+            read -r -p "    Callback site identifier (auto-detected from .env) [${_detected_cb}]: " site_cb
+            SITE_CALLBACK_IDS+=("${site_cb:-$_detected_cb}")
+        else
+            _default_cb="site${i}"
+            read -r -p "    Callback site identifier (site1 or site2) [${_default_cb}]: " site_cb
+            SITE_CALLBACK_IDS+=("${site_cb:-$_default_cb}")
+        fi
         GHOST_URLS+=("${ghost_url%/}")
         GHOST_KEYS+=("$ghost_key")
     done

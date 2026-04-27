@@ -103,6 +103,25 @@ foreach ($_c in $_candidates) {
 }
 if ($DotEnvPath) { Load-DotEnv $DotEnvPath }
 
+# ─── Callback site identifier auto-detection ────────────────────────────────
+# Match a Ghost URL against GHOST_SITE{1,2}_URL from env to determine the
+# canonical callback site identifier ('site1' / 'site2'). Returns empty
+# when neither env URL is set or neither matches. Mirrors the n8n Extract
+# Post Metadata node's hostname.includes() semantics so script and n8n
+# always pick the same answer.
+function Get-CallbackSiteId {
+    param([string]$Url)
+    if (-not $Url) { return '' }
+    $hostIn = $Url -replace '^https?://', '' -replace '/.*$', '' -replace ':\d+$', ''
+    $s1 = [Environment]::GetEnvironmentVariable('GHOST_SITE1_URL', 'Process')
+    $s2 = [Environment]::GetEnvironmentVariable('GHOST_SITE2_URL', 'Process')
+    $s1Host = if ($s1) { $s1 -replace '^https?://', '' -replace '/.*$', '' -replace ':\d+$', '' } else { '' }
+    $s2Host = if ($s2) { $s2 -replace '^https?://', '' -replace '/.*$', '' -replace ':\d+$', '' } else { '' }
+    if ($s1Host -and $hostIn.Contains($s1Host)) { return 'site1' }
+    if ($s2Host -and $hostIn.Contains($s2Host)) { return 'site2' }
+    return ''
+}
+
 # ─── Subcommand: -Status ──────────────────────────────────────────────────────
 if ($Status) {
     if (-not (Test-Path $PID_FILE)) {
@@ -295,10 +314,18 @@ if (-not $skipInteractive) {
 
         # Callback site identifier — must match GHOST_SITE{N}_ADMIN_API_KEY
         # in n8n env. The callback workflow only knows 'site1' or 'site2';
-        # anything else fails the admin-API lookup and the embed step never runs.
-        $defaultCb = "site$i"
-        $siteCb    = Read-Host "    Callback site identifier (site1 or site2) [$defaultCb]"
-        $SiteCallbackIds += if ($siteCb) { $siteCb } else { $defaultCb }
+        # anything else fails the admin-API lookup and the embed step never
+        # runs. Auto-detect by matching this Ghost URL against
+        # GHOST_SITE{1,2}_URL in .env so script and n8n always agree.
+        $detectedCb = Get-CallbackSiteId $ghostUrl
+        if ($detectedCb) {
+            $siteCb = Read-Host "    Callback site identifier (auto-detected from .env) [$detectedCb]"
+            $SiteCallbackIds += if ($siteCb) { $siteCb } else { $detectedCb }
+        } else {
+            $defaultCb = "site$i"
+            $siteCb    = Read-Host "    Callback site identifier (site1 or site2) [$defaultCb]"
+            $SiteCallbackIds += if ($siteCb) { $siteCb } else { $defaultCb }
+        }
         $GhostUrls += $ghostUrl.TrimEnd("/")
         $GhostKeys += $ghostKey
     }
