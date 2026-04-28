@@ -103,23 +103,16 @@ foreach ($_c in $_candidates) {
 }
 if ($DotEnvPath) { Load-DotEnv $DotEnvPath }
 
-# ─── Callback site identifier auto-detection ────────────────────────────────
-# Match a Ghost URL against GHOST_SITE{1,2}_URL from env to determine the
-# canonical callback site identifier ('site1' / 'site2'). Returns empty
-# when neither env URL is set or neither matches. Mirrors the n8n Extract
-# Post Metadata node's hostname.includes() semantics so script and n8n
-# always pick the same answer.
-function Get-CallbackSiteId {
+# ─── URL-to-slug helper ──────────────────────────────────────────────────────
+# Convert a Ghost URL to a hostname-with-dashes slug used in JOB_ID and
+# storage paths. The n8n callback workflow reverse-resolves this back to
+# GHOST_SITE{1,2}_ADMIN_API_KEY by comparing against the dashed hostname of
+# GHOST_SITE{1,2}_URL — so this function and the callback agree by construction.
+function Get-UrlSlug {
     param([string]$Url)
     if (-not $Url) { return '' }
-    $hostIn = $Url -replace '^https?://', '' -replace '/.*$', '' -replace ':\d+$', ''
-    $s1 = [Environment]::GetEnvironmentVariable('GHOST_SITE1_URL', 'Process')
-    $s2 = [Environment]::GetEnvironmentVariable('GHOST_SITE2_URL', 'Process')
-    $s1Host = if ($s1) { $s1 -replace '^https?://', '' -replace '/.*$', '' -replace ':\d+$', '' } else { '' }
-    $s2Host = if ($s2) { $s2 -replace '^https?://', '' -replace '/.*$', '' -replace ':\d+$', '' } else { '' }
-    if ($s1Host -and $hostIn.Contains($s1Host)) { return 'site1' }
-    if ($s2Host -and $hostIn.Contains($s2Host)) { return 'site2' }
-    return ''
+    $h = $Url -replace '^https?://', '' -replace '/.*$', '' -replace ':\d+$', ''
+    return $h.Replace('.', '-')
 }
 
 # ─── Subcommand: -Status ──────────────────────────────────────────────────────
@@ -202,14 +195,6 @@ if ($Config -ne "") {
     $DRY_RUN        = $cfg.DRY_RUN
     $GhostUrls      = @($cfg.GhostUrls)
     $GhostKeys      = @($cfg.GhostKeys)
-    # SiteCallbackIds carries the n8n-side site identifier (site1 / site2) used
-    # to look up admin API keys in the callback workflow. Older config files
-    # don't have this — fall back to "site{N}" by index.
-    if ($cfg.PSObject.Properties.Name -contains 'SiteCallbackIds') {
-        $SiteCallbackIds = @($cfg.SiteCallbackIds)
-    } else {
-        $SiteCallbackIds = 1..$GhostUrls.Count | ForEach-Object { "site$_" }
-    }
     $skipInteractive = $true
 }
 
@@ -278,9 +263,8 @@ if (-not $skipInteractive) {
         exit 1
     }
 
-    $GhostUrls       = @()
-    $GhostKeys       = @()
-    $SiteCallbackIds = @()
+    $GhostUrls = @()
+    $GhostKeys = @()
 
     for ($i = 1; $i -le $SITE_COUNT; $i++) {
         Write-Host ""
@@ -312,20 +296,6 @@ if (-not $skipInteractive) {
             exit 1
         }
 
-        # Callback site identifier — must match GHOST_SITE{N}_ADMIN_API_KEY
-        # in n8n env. The callback workflow only knows 'site1' or 'site2';
-        # anything else fails the admin-API lookup and the embed step never
-        # runs. Auto-detect by matching this Ghost URL against
-        # GHOST_SITE{1,2}_URL in .env so script and n8n always agree.
-        $detectedCb = Get-CallbackSiteId $ghostUrl
-        if ($detectedCb) {
-            $siteCb = Read-Host "    Callback site identifier (auto-detected from .env) [$detectedCb]"
-            $SiteCallbackIds += if ($siteCb) { $siteCb } else { $detectedCb }
-        } else {
-            $defaultCb = "site$i"
-            $siteCb    = Read-Host "    Callback site identifier (site1 or site2) [$defaultCb]"
-            $SiteCallbackIds += if ($siteCb) { $siteCb } else { $defaultCb }
-        }
         $GhostUrls += $ghostUrl.TrimEnd("/")
         $GhostKeys += $ghostKey
     }
@@ -360,7 +330,6 @@ if ($Background) {
         DRY_RUN         = $DRY_RUN
         GhostUrls       = $GhostUrls
         GhostKeys       = $GhostKeys
-        SiteCallbackIds = $SiteCallbackIds
     } | ConvertTo-Json -Depth 5 | Set-Content $CFG_FILE -Encoding UTF8
 
     # Clear previous logs
@@ -580,26 +549,64 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
 
     if ($allPosts.Count -eq 0) { continue }
 
-    # ── Split into has-audio / needs-audio ────────────────────────────────────
-    $needsAudio = @($allPosts | Where-Object {
+    # ── Stage 1: posts with no <audio> tag in HTML at all ─────────────────────
+    $noTag = @($allPosts | Where-Object {
         $_.html -ne $null -and $_.html -notmatch '<audio[^>]*>'
     })
-    $hasAudio = @($allPosts | Where-Object {
+    $withTag = @($allPosts | Where-Object {
         $_.html -ne $null -and $_.html -match '<audio[^>]*>'
     })
 
-    $grandAlreadyDone += $hasAudio.Count
+    # ── Stage 2: posts WITH a tag whose gn-audio-embed source 404s ────────────
+    # The HTML-tag-presence check is structural; this is a liveness check that
+    # catches posts whose embed points at a deleted/missing GCS file. This is
+    # the dominant failure mode for sites that have been backfilled before.
+    $broken = @()
+    if ($withTag.Count -gt 0) {
+        Write-Info "Verifying $($withTag.Count) existing audio embed(s)..."
+        $idx = 0
+        foreach ($post in $withTag) {
+            $idx++
+            Write-Host "`r  Checking embed: $idx / $($withTag.Count)   " -NoNewline
 
-    if ($hasAudio.Count -gt 0) {
-        Write-Success "$($hasAudio.Count) posts already have audio — skipping"
+            # Extract the first <source src="..."> URL from the gn-audio-embed
+            # block. If none, treat as needing narration.
+            $html  = ($post.html -as [string]) -replace "`n", ' '
+            $match = [regex]::Match(
+                $html,
+                'id="gn-audio-embed"[^<]*<[^>]*>\s*<source[^>]*src="([^"]+)"',
+                'IgnoreCase'
+            )
+            $src = if ($match.Success) { $match.Groups[1].Value } else { '' }
+
+            if (-not $src) { $broken += $post; continue }
+
+            try {
+                $r = Invoke-WebRequest -Method Head -Uri $src `
+                                       -TimeoutSec 5 -UseBasicParsing `
+                                       -ErrorAction Stop
+                if ([int]$r.StatusCode -ne 200) { $broken += $post }
+            } catch {
+                $broken += $post
+            }
+        }
+        Write-Host ""
     }
 
+    $needsAudio = @($noTag) + @($broken)
+    $hasWorking = $withTag.Count - $broken.Count
+
+    $grandAlreadyDone += $hasWorking
+
+    if ($hasWorking -gt 0)   { Write-Success "$hasWorking posts already have working audio — skipping" }
+    if ($broken.Count -gt 0) { Write-Warn    "$($broken.Count) posts have broken/missing audio — re-narrating" }
+    if ($noTag.Count -gt 0)  { Write-Warn    "$($noTag.Count) posts have no audio embed — narrating" }
+
     if ($needsAudio.Count -eq 0) {
-        Write-Success "All posts have audio. Nothing to do for this site."
+        Write-Success "All posts have working audio. Nothing to do for this site."
         continue
     }
 
-    Write-Warn "$($needsAudio.Count) posts need audio narration"
     Write-Host ""
 
     # ── List posts to be processed ────────────────────────────────────────────
@@ -628,10 +635,10 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
         }
     }
 
-    # ── Resolve the site's callback identifier (site1 / site2) for job_id ────
-    # The n8n callback workflow indexes admin API keys by this slug and rejects
-    # any value other than 'site1' or 'site2'.
-    $siteCallbackId = $SiteCallbackIds[$siteIdx]
+    # ── Hostname-derived slug used in JOB_ID and (downstream) the GCS path ────
+    # The n8n callback workflow reverse-resolves this to GHOST_SITE{1,2}_*
+    # env vars by matching against parseHostname(GHOST_SITE{1,2}_URL).
+    $siteSlug = Get-UrlSlug $ghostUrl
 
     # ── Trigger each post ─────────────────────────────────────────────────────
     $siteTriggered = 0
@@ -647,12 +654,13 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
         Write-Host "  URL  : $($post.url)"
 
         # Deterministic job ID — same shape n8n's Extract Post Metadata node
-        # would generate for a real Ghost webhook:
-        #   {site1|site2}-pid-{postId}-{slug}-{epoch_seconds}
-        # n8n honors data.backfill_job_id when present, so we can poll the
-        # exact ID we computed here. Including the epoch keeps re-runs unique.
-        $epoch  = [DateTimeOffset]::Now.ToUnixTimeSeconds()
-        $jobId  = "$siteCallbackId-pid-$($post.id)-$($post.slug)-$epoch"
+        # would generate for a real Ghost webhook, with a 'backfill-' prefix
+        # so script-driven runs are visually distinct in the storage tree:
+        #   backfill-{hostname-with-dashes}-pid-{postId}-{slug}-{epoch_ms}
+        # n8n honours data.backfill_job_id when present and the callback
+        # strips the 'backfill-' marker before resolving the admin key.
+        $epochMs = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+        $jobId   = "backfill-$siteSlug-pid-$($post.id)-$($post.slug)-$epochMs"
 
         # Build the webhook payload — same shape Ghost sends, plus backfill_job_id hint
         # so n8n uses our deterministic ID instead of generating a timestamp-based one

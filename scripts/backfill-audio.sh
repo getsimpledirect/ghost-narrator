@@ -113,29 +113,16 @@ if [ -n "$_DOTENV_PATH" ]; then
     load_dotenv "$_DOTENV_PATH"
 fi
 
-# ─── Callback site identifier auto-detection ────────────────────────────────
-# Match a Ghost URL against GHOST_SITE{1,2}_URL from env to determine the
-# canonical callback site identifier ('site1' / 'site2'). Returns empty when
-# neither env URL is set or neither matches. Mirrors the n8n Extract Post
-# Metadata node's `hostname.includes(siteHostname)` semantics so the script
-# and n8n always pick the same answer.
-_detect_callback_site_id() {
+# ─── URL-to-slug helper ──────────────────────────────────────────────────────
+# Convert a Ghost URL to a hostname-with-dashes slug used in JOB_ID and storage
+# paths. The n8n callback workflow reverse-resolves this back to the matching
+# GHOST_SITE{1,2}_ADMIN_API_KEY by comparing against parseHostname applied to
+# GHOST_SITE{1,2}_URL — so this function and the callback agree by construction.
+url_to_slug() {
     local url="$1"
-    [ -z "$url" ] && return 0
-    local host_in host_s1 host_s2
-    host_in="${url#http://}"; host_in="${host_in#https://}"
-    host_in="${host_in%%/*}"; host_in="${host_in%%:*}"
-    host_s1="${GHOST_SITE1_URL:-}"
-    host_s1="${host_s1#http://}"; host_s1="${host_s1#https://}"
-    host_s1="${host_s1%%/*}"; host_s1="${host_s1%%:*}"
-    host_s2="${GHOST_SITE2_URL:-}"
-    host_s2="${host_s2#http://}"; host_s2="${host_s2#https://}"
-    host_s2="${host_s2%%/*}"; host_s2="${host_s2%%:*}"
-    if [ -n "$host_s1" ] && [[ "$host_in" == *"$host_s1"* ]]; then
-        echo site1
-    elif [ -n "$host_s2" ] && [[ "$host_in" == *"$host_s2"* ]]; then
-        echo site2
-    fi
+    local host="${url#http://}"; host="${host#https://}"
+    host="${host%%/*}"; host="${host%%:*}"
+    echo "${host//./-}"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -210,15 +197,12 @@ if [ "${1:-}" = "--config" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
     # Rebuild arrays from indexed variables
-    GHOST_URLS=(); GHOST_KEYS=(); SITE_CALLBACK_IDS=()
+    GHOST_URLS=(); GHOST_KEYS=()
     for i in $(seq 0 $((BACKFILL_SITE_COUNT - 1))); do
         url_var="BACKFILL_GHOST_URL_${i}"
         key_var="BACKFILL_GHOST_KEY_${i}"
-        cb_var="BACKFILL_SITE_CALLBACK_ID_${i}"
         GHOST_URLS+=("${!url_var}")
         GHOST_KEYS+=("${!key_var}")
-        # Default to site${i+1} if older config files don't carry the field.
-        SITE_CALLBACK_IDS+=("${!cb_var:-site$((i + 1))}")
     done
     SITE_COUNT="$BACKFILL_SITE_COUNT"
     N8N_WEBHOOK="$BACKFILL_N8N_WEBHOOK"
@@ -305,7 +289,7 @@ if [ "${1:-}" != "--config" ]; then
         exit 1
     fi
 
-    GHOST_URLS=(); GHOST_KEYS=(); SITE_CALLBACK_IDS=()
+    GHOST_URLS=(); GHOST_KEYS=()
     for i in $(seq 1 "$SITE_COUNT"); do
         echo ""
         echo -e "${BOLD}  Site ${i}${NC}"
@@ -332,20 +316,6 @@ if [ "${1:-}" != "--config" ]; then
         fi
         if [ -z "$ghost_key" ]; then err "Content API key cannot be empty"; exit 1; fi
 
-        # Callback site identifier — must match GHOST_SITE{N}_ADMIN_API_KEY in n8n env.
-        # The callback workflow only knows 'site1' or 'site2'; anything else fails the
-        # admin-API lookup and the audio embed step never runs. Auto-detect by matching
-        # this Ghost URL against GHOST_SITE{1,2}_URL in .env so the script and n8n
-        # always agree on which site this post belongs to.
-        _detected_cb=$(_detect_callback_site_id "$ghost_url")
-        if [ -n "$_detected_cb" ]; then
-            read -r -p "    Callback site identifier (auto-detected from .env) [${_detected_cb}]: " site_cb
-            SITE_CALLBACK_IDS+=("${site_cb:-$_detected_cb}")
-        else
-            _default_cb="site${i}"
-            read -r -p "    Callback site identifier (site1 or site2) [${_default_cb}]: " site_cb
-            SITE_CALLBACK_IDS+=("${site_cb:-$_default_cb}")
-        fi
         GHOST_URLS+=("${ghost_url%/}")
         GHOST_KEYS+=("$ghost_key")
     done
@@ -389,7 +359,6 @@ if [ "$BACKGROUND" = true ]; then
         for i in "${!GHOST_URLS[@]}"; do
             echo "BACKFILL_GHOST_URL_${i}=$(printf '%q' "${GHOST_URLS[$i]}")"
             echo "BACKFILL_GHOST_KEY_${i}=$(printf '%q' "${GHOST_KEYS[$i]}")"
-            echo "BACKFILL_SITE_CALLBACK_ID_${i}=$(printf '%q' "${SITE_CALLBACK_IDS[$i]}")"
         done
     } > "$CFG_FILE"
 
@@ -566,9 +535,10 @@ GRAND_ERRORS=0
 for site_idx in "${!GHOST_URLS[@]}"; do
     GHOST_URL="${GHOST_URLS[$site_idx]}"
     GHOST_KEY="${GHOST_KEYS[$site_idx]}"
-    # Callback site identifier — used in JOB_ID so the n8n callback workflow can
-    # look up the right Ghost admin API key (which it indexes by 'site1' / 'site2').
-    SITE_CALLBACK_ID="${SITE_CALLBACK_IDS[$site_idx]}"
+    # Hostname-with-dashes slug used in JOB_ID and (downstream) the GCS upload
+    # path. The n8n callback workflow reverse-resolves this to GHOST_SITE{1,2}_*
+    # env vars by matching against parseHostname(GHOST_SITE{1,2}_URL).
+    SITE_SLUG=$(url_to_slug "$GHOST_URL")
     SITE_NUM=$((site_idx + 1))
 
     echo ""
@@ -589,30 +559,84 @@ for site_idx in "${!GHOST_URLS[@]}"; do
     success "Found ${TOTAL} published posts"
     [ "$TOTAL" -eq 0 ] && continue
 
-    # ── Split into has-audio / needs-audio ────────────────────────────────────
+    # ── Stage 1: posts with no <audio> tag in HTML at all ─────────────────────
     NEEDS_FILE=$(mktemp)
     _CLEANUP_FILES+=("$NEEDS_FILE")
     jq '[.[] | select(
         .html != null and
         (.html | test("<audio[^>]*>"; "i") | not)
     )]' "$ALL_POSTS_FILE" > "$NEEDS_FILE"
+    NO_TAG_COUNT=$(jq 'length' "$NEEDS_FILE")
 
-    HAS_COUNT=$(jq '[.[] | select(
+    # ── Stage 2: posts WITH an <audio> tag whose gn-audio-embed source 404s ───
+    # The HTML-tag-presence check above is structural; this is a liveness check
+    # that catches posts whose embed points at a deleted/missing GCS file. This
+    # is the dominant failure mode for sites that have been backfilled before.
+    WITH_TAG_FILE=$(mktemp); _CLEANUP_FILES+=("$WITH_TAG_FILE")
+    jq '[.[] | select(
         .html != null and
         (.html | test("<audio[^>]*>"; "i"))
-    )] | length' "$ALL_POSTS_FILE")
+    )]' "$ALL_POSTS_FILE" > "$WITH_TAG_FILE"
+
+    BROKEN_FILE=$(mktemp); _CLEANUP_FILES+=("$BROKEN_FILE")
+    echo "[]" > "$BROKEN_FILE"
+
+    WITH_TAG_TOTAL=$(jq 'length' "$WITH_TAG_FILE")
+    if [ "$WITH_TAG_TOTAL" -gt 0 ]; then
+        info "Verifying ${WITH_TAG_TOTAL} existing audio embed(s)..."
+        idx=0
+        while IFS= read -r post; do
+            idx=$((idx + 1))
+            printf "\r  Checking embed: %d / %d   " "$idx" "$WITH_TAG_TOTAL"
+
+            # Extract the first <source src="..."> URL from the gn-audio-embed
+            # block. If no GN-tagged embed, the post has only foreign audio
+            # (podcast iframe, etc.) — treat as "needs narration".
+            html=$(echo "$post" | jq -r '.html')
+            src=$(echo "$html" \
+                | tr -d '\n' \
+                | grep -oE 'id="gn-audio-embed"[^<]*<[^>]*>[[:space:]]*<source[^>]*src="[^"]+"' \
+                | grep -oE 'src="[^"]+"' \
+                | head -1 \
+                | sed -E 's/^src="(.*)"$/\1/')
+
+            if [ -z "$src" ]; then
+                jq --argjson p "$post" '. + [$p]' "$BROKEN_FILE" > "${BROKEN_FILE}.t" \
+                    && mv "${BROKEN_FILE}.t" "$BROKEN_FILE"
+                continue
+            fi
+
+            code=$(curl -s -o /dev/null -w "%{http_code}" \
+                --max-time 5 -I "$src" 2>/dev/null) || code="000"
+            if [ "$code" != "200" ]; then
+                jq --argjson p "$post" '. + [$p]' "$BROKEN_FILE" > "${BROKEN_FILE}.t" \
+                    && mv "${BROKEN_FILE}.t" "$BROKEN_FILE"
+            fi
+        done < <(jq -c '.[]' "$WITH_TAG_FILE")
+        echo ""
+    fi
+
+    # Merge no-tag + broken-embed posts into NEEDS_FILE.
+    BROKEN_COUNT=$(jq 'length' "$BROKEN_FILE")
+    if [ "$BROKEN_COUNT" -gt 0 ]; then
+        jq -s '.[0] + .[1]' "$NEEDS_FILE" "$BROKEN_FILE" > "${NEEDS_FILE}.t" \
+            && mv "${NEEDS_FILE}.t" "$NEEDS_FILE"
+    fi
+
+    HAS_COUNT=$((WITH_TAG_TOTAL - BROKEN_COUNT))
     NEEDS_COUNT=$(jq 'length' "$NEEDS_FILE")
 
     GRAND_ALREADY_DONE=$((GRAND_ALREADY_DONE + HAS_COUNT))
-    [ "$HAS_COUNT" -gt 0 ] && success "${HAS_COUNT} posts already have audio — skipping"
+    [ "$HAS_COUNT" -gt 0 ] && success "${HAS_COUNT} posts already have working audio — skipping"
+    [ "$BROKEN_COUNT" -gt 0 ] && warn "${BROKEN_COUNT} posts have broken/missing audio — re-narrating"
+    [ "$NO_TAG_COUNT" -gt 0 ] && warn "${NO_TAG_COUNT} posts have no audio embed — narrating"
 
     if [ "$NEEDS_COUNT" -eq 0 ]; then
-        success "All posts have audio. Nothing to do for this site."
-        rm -f "$ALL_POSTS_FILE" "$NEEDS_FILE"
+        success "All posts have working audio. Nothing to do for this site."
+        rm -f "$ALL_POSTS_FILE" "$NEEDS_FILE" "$WITH_TAG_FILE" "$BROKEN_FILE"
         continue
     fi
 
-    warn "${NEEDS_COUNT} posts need audio narration"
     echo ""
 
     # ── List posts to be processed ────────────────────────────────────────────
@@ -652,13 +676,16 @@ for site_idx in "${!GHOST_URLS[@]}"; do
         SITE_TRIGGERED=$((SITE_TRIGGERED + 1))
         GRAND_TRIGGERED=$((GRAND_TRIGGERED + 1))
 
-        # Construct deterministic job_id matching the format n8n's Extract Post
-        # Metadata node would generate for a real Ghost webhook:
-        #   {site1|site2}-pid-{postId}-{slug}-{epoch_seconds}
-        # n8n honors data.backfill_job_id when present, so the script can poll the
-        # exact ID it computed here. Including the epoch keeps re-runs unique.
-        TIMESTAMP=$(date +%s)
-        JOB_ID="${SITE_CALLBACK_ID}-pid-${POST_ID}-${SLUG}-${TIMESTAMP}"
+        # Deterministic job_id matching the format n8n's Extract Post Metadata
+        # node would generate for a real Ghost webhook, but with a 'backfill-'
+        # prefix so script-driven runs are visually distinct in the storage tree:
+        #   backfill-{hostname-with-dashes}-pid-{postId}-{slug}-{epoch_ms}
+        # n8n's metadata node honours data.backfill_job_id when present and the
+        # callback strips the 'backfill-' marker before resolving the admin key.
+        TIMESTAMP_MS=$(date +%s%3N)
+        # Some BSD-date variants don't support %3N — fall back to seconds * 1000.
+        [[ "$TIMESTAMP_MS" =~ ^[0-9]{13}$ ]] || TIMESTAMP_MS="$(($(date +%s) * 1000))"
+        JOB_ID="backfill-${SITE_SLUG}-pid-${POST_ID}-${SLUG}-${TIMESTAMP_MS}"
 
         echo ""
         echo -e "${BOLD}[${SITE_TRIGGERED}/${NEEDS_COUNT}] ${TITLE}${NC}"
