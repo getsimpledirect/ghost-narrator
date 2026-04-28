@@ -8,21 +8,21 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Build Tools (Pinned for legacy pkg_resources support) ─────────────
-setuptools==68.2.2
-wheel==0.46.3
-pip>=24.0
+setuptools==82.0.1
+wheel==0.47.0
+pip>=26.1
 
 # ── PyTorch Stack ─────────────────────────────────────────────────────────────
 # torch, torchaudio, torchvision, and triton are pre-installed in the Docker base
 # image (pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime). Do NOT pin them here —
 # re-installing would overwrite the CUDA-matched versions from the base image and
 # break flash-attn ABI compatibility.
-numpy==1.26.4
+numpy==2.4.4
 
 # ── Transformers ──────────────────────────────────────────────────────────────
 transformers==4.57.3
-tokenizers>=0.20.0,<0.23
-safetensors>=0.4.1
+tokenizers>=0.23.1,<0.24
+safetensors>=0.7.0
 
 # ── Lightning Stack (Pinned for stability) ────────────────────────────────────
 lightning==2.6.1
@@ -31,42 +31,42 @@ lightning-utilities==0.15.3
 torchmetrics==1.9.0
 
 # ── Gradio (Pinned to avoid resolution conflicts) ─────────────────────────────
-gradio==5.1.0
-gradio-client==1.4.0
+gradio==6.13.0
+gradio-client==2.5.0
 
 # ── Core TTS Engine ───────────────────────────────────────────────────────────
 qwen-tts==0.1.1
 
 # ── API Framework ──────────────────────────────────────────────────────────────
-fastapi==0.135.3
-uvicorn[standard]==0.42.0
-pydantic==2.12.5
-pydantic-core==2.41.5
-pydantic-settings>=2.5.0
-starlette>=0.46.0  # Let pip resolve exact version (fastapi dependency)
-httptools>=0.5.0
-uvloop>=0.14.0
-watchfiles>=0.13
-websockets>=10.4
-python-dotenv>=0.13
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+pydantic==2.13.3
+pydantic-core==2.46.3
+pydantic-settings>=2.14.0
+starlette>=1.0.0  # Let pip resolve exact version (fastapi dependency)
+httptools>=0.7.1
+uvloop>=0.22.1
+watchfiles>=1.1.1
+websockets>=16.0
+python-dotenv>=1.2.2
 
 # ── Audio Processing ───────────────────────────────────────────────────────────
 pydub==0.25.1
 soundfile==0.13.1
 librosa==0.11.0
 resampy>=0.4.3
-audioread>=2.1.9
-numba==0.65.0  # Pin for librosa compatibility
+audioread>=3.1.0
+numba==0.65.1  # Pin for librosa compatibility
 llvmlite==0.47.0  # Pin for numba compatibility
 
 # ── Google Cloud Storage ───────────────────────────────────────────────────────
-google-cloud-storage==2.16.0
-google-auth==2.49.1
+google-cloud-storage==3.10.1
+google-auth==2.49.2
 google-crc32c==1.8.0
-google-api-core>=2.15.0
-google-cloud-core>=2.3.0
-googleapis-common-protos>=1.56.3
-protobuf>=4.25.8,<8.0
+google-api-core>=2.30.3
+google-cloud-core>=2.5.1
+googleapis-common-protos>=1.74.0
+protobuf>=7.34.1,<8.0
 
 # ── AWS S3 Storage ────────────────────────────────────────────────────────────
 boto3>=1.34.0
@@ -74,66 +74,66 @@ boto3>=1.34.0
 # ── HTTP Client ────────────────────────────────────────────────────────────────
 httpx==0.28.1
 httpcore==1.0.9
-h11>=0.8
-anyio>=3.0.0
-sniffio>=1.0.0
+h11>=0.16.0
+anyio>=4.13.0
+sniffio>=1.3.1
 
 # ── OpenAI Client (for Ollama-compatible narration LLM) ────────────────────────
-openai>=1.0.0
+openai>=2.32.0
 
 # ── Redis (Job State Persistence) ──────────────────────────────────────────────
-redis==5.0.1
+redis==7.4.0
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 num2words>=0.5.14
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
-python-multipart==0.0.22
+python-multipart==0.0.27
 typing-extensions==4.15.0
-rich>=13.5.3
-loguru>=0.6.0
-einops>=0.7.0
+rich>=15.0.0
+loguru>=0.7.3
+einops>=0.8.2
 einx[torch]==0.4.3
 prometheus-client>=0.19.0
 
 # ── Data Processing ────────────────────────────────────────────────────────────
-datasets==2.18.0
-pandas>=2.0.0
-pyarrow>=12.0.0
-fsspec[http]>=2023.1.0,<=2024.2.0
-dill>=0.3.0,<0.3.9
-xxhash>=3.0.0
-multiprocess>=0.70.0
+datasets==4.8.5
+pandas>=3.0.2
+pyarrow>=24.0.0
+fsspec[http]<=2026.3.0,>=2026.3.0
+dill>=0.4.1,<0.4.2
+xxhash>=3.7.0
+multiprocess>=0.70.19
 
 # ── Hydra Configuration ────────────────────────────────────────────────────────
 hydra-core>=1.3.2
-omegaconf>=2.2,<2.4
-antlr4-python3-runtime==4.9.*
+omegaconf>=2.3.0,<2.4
+antlr4-python3-runtime==4.13.*
 
 # ── Additional TTS Dependencies ───────────────────────────────────────────────
-scipy>=1.11.0
+scipy>=1.17.1
 inflect==7.5.0
-huggingface-hub>=0.36.0
+huggingface-hub>=1.12.0
 anyascii==0.3.3
 gruut[de,es,fr]==2.4.0
 bangla==0.0.5
 bnnumerizer==0.0.2
 bnunicodenormalizer==0.1.7
-tiktoken>=0.8.0
-sentencepiece>=0.2.0
+tiktoken>=0.12.0
+sentencepiece>=0.2.1
 
 # ── Model Utilities ────────────────────────────────────────────────────────────
 natsort>=8.4.0
-wandb>=0.15.11
-tensorboard>=2.14.1
-vector-quantize-pytorch==1.28.1
+wandb>=0.26.1
+tensorboard>=2.20.0
+vector-quantize-pytorch==1.28.2
 loralib>=0.1.2
 pyrootutils>=1.0.4
 
 # ── Speech Processing ──────────────────────────────────────────────────────────
-faster-whisper>=1.0.0
-silero-vad>=5.0
-modelscope==1.35.3
+faster-whisper>=1.2.1
+silero-vad>=6.2.1
+modelscope==1.36.2
 funasr==1.3.1
 opencc-python-reimplemented==0.1.7
 
@@ -144,6 +144,6 @@ opentelemetry-exporter-otlp>=1.22.0
 opentelemetry-instrumentation-fastapi>=0.43b0
 
 # ── System Utilities ───────────────────────────────────────────────────────────
-grpcio>=1.58.0
-cachetools>=5.0.0
-ormsgpack>=1.0.0
+grpcio>=1.80.0
+cachetools>=7.0.6
+ormsgpack>=1.12.2
