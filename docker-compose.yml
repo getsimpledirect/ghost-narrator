@@ -243,6 +243,13 @@ services:
     ports:
       - "8020:8020"
     environment:
+      # PyTorch CUDA allocator: expandable segments instead of fixed pools.
+      # Without this, long jobs (40+ segments) accumulate fragmentation —
+      # 100s of MiB sit "reserved but unallocated" in scattered fragments
+      # while a small allocation can't find a single contiguous slot, even
+      # though aggregate free memory is sufficient. Cost is negligible on
+      # modern PyTorch; harmless on CPU tiers (the var is CUDA-only).
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       # TTS configuration
       - VOICE_SAMPLE_PATH=/app/voices/default/reference.wav
       # Optional: transcription of your reference audio for higher-quality ICL cloning.
