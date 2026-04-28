@@ -591,14 +591,19 @@ for site_idx in "${!GHOST_URLS[@]}"; do
 
             # Extract the first <source src="..."> URL from the gn-audio-embed
             # block. If no GN-tagged embed, the post has only foreign audio
-            # (podcast iframe, etc.) — treat as "needs narration".
+            # (podcast iframe, SoundCloud, etc.) — treat as "needs narration".
+            # `|| true` swallows grep's exit-1 on no-match: under `set -e -o
+            # pipefail` an unmatched grep would otherwise abort the whole script
+            # mid-loop, which is exactly the silent-exit failure mode this
+            # comment is here to prevent recurring.
             html=$(echo "$post" | jq -r '.html')
             src=$(echo "$html" \
                 | tr -d '\n' \
                 | grep -oE 'id="gn-audio-embed"[^<]*<[^>]*>[[:space:]]*<source[^>]*src="[^"]+"' \
                 | grep -oE 'src="[^"]+"' \
                 | head -1 \
-                | sed -E 's/^src="(.*)"$/\1/')
+                | sed -E 's/^src="(.*)"$/\1/' \
+                || true)
 
             if [ -z "$src" ]; then
                 jq --argjson p "$post" '. + [$p]' "$BROKEN_FILE" > "${BROKEN_FILE}.t" \
@@ -698,10 +703,27 @@ for site_idx in "${!GHOST_URLS[@]}"; do
             --arg job_id "$JOB_ID" \
             '{post: {current: .}, backfill_job_id: $job_id}')
 
+        # Sign the payload when N8N_GHOST_WEBHOOK_SECRET is set so backfill
+        # passes the n8n HMAC validator that production webhooks use. Without
+        # this, enabling the secret in .env would silently block backfill at
+        # the HMAC node (it throws on missing X-Ghost-Signature). Falls back
+        # to unsigned when the secret is empty (HMAC node passes through).
+        CURL_HEADERS=(-H "Content-Type: application/json")
+        if [ -n "${N8N_GHOST_WEBHOOK_SECRET:-}" ]; then
+            HMAC_HEX=$(printf '%s' "$PAYLOAD" \
+                | openssl dgst -sha256 -hmac "$N8N_GHOST_WEBHOOK_SECRET" -hex 2>/dev/null \
+                | awk '{print $NF}')
+            if [ -n "$HMAC_HEX" ]; then
+                CURL_HEADERS+=(-H "X-Ghost-Signature: sha256=${HMAC_HEX}")
+            else
+                warn "openssl HMAC failed — sending unsigned (will be rejected if HMAC is enforced)"
+            fi
+        fi
+
         # Trigger n8n webhook
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -X POST "$N8N_WEBHOOK" \
-            -H "Content-Type: application/json" \
+            "${CURL_HEADERS[@]}" \
             --max-time 15 \
             -d "$PAYLOAD" 2>/dev/null) || HTTP_CODE="000"
 

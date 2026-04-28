@@ -671,12 +671,37 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
             backfill_job_id = $jobId
         } | ConvertTo-Json -Depth 10 -Compress
 
+        # Sign the payload when N8N_GHOST_WEBHOOK_SECRET is set so backfill passes
+        # the n8n HMAC validator that production webhooks use. Without this,
+        # enabling the secret in .env would silently block backfill at the HMAC
+        # node (it throws on missing X-Ghost-Signature). Falls back to unsigned
+        # when the secret is empty (HMAC node passes through in dev).
+        $headers = @{}
+        $secret = $env:N8N_GHOST_WEBHOOK_SECRET
+        if ($secret) {
+            $hmac = $null
+            try {
+                $hmac = [System.Security.Cryptography.HMACSHA256]::new()
+                $hmac.Key = [System.Text.Encoding]::UTF8.GetBytes($secret)
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+                $hashBytes = $hmac.ComputeHash($bytes)
+                $hex = -join ($hashBytes | ForEach-Object { '{0:x2}' -f $_ })
+                $headers['X-Ghost-Signature'] = "sha256=$hex"
+            } catch {
+                Write-Warn "HMAC signing failed — sending unsigned (will be rejected if HMAC is enforced)"
+                Write-Host "  $($_.Exception.Message)"
+            } finally {
+                if ($hmac) { $hmac.Dispose() }
+            }
+        }
+
         try {
             $wr = Invoke-WebRequest `
                 -Uri $N8N_WEBHOOK `
                 -Method Post `
                 -ContentType "application/json" `
                 -Body $payload `
+                -Headers $headers `
                 -TimeoutSec 15 `
                 -UseBasicParsing
 
