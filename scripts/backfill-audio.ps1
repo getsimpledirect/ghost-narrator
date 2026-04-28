@@ -570,14 +570,28 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
             Write-Host "`r  Checking embed: $idx / $($withTag.Count)   " -NoNewline
 
             # Extract the first <source src="..."> URL from the gn-audio-embed
-            # block. If none, treat as needing narration.
+            # block. The embed has a nested player UI (button + progress bar +
+            # speed control) BEFORE <audio>/<source>, so we cannot match
+            # `gn-audio-embed` immediately followed by <source>. Two-step:
+            #   1. anchor at `id="gn-audio-embed"` and slice forward 20 KB to
+            #      bound the search window (prevents picking a later embed's
+            #      source URL).
+            #   2. extract the first <source src="..."> within that window.
+            # If the embed marker is absent, treat as needing narration.
             $html  = ($post.html -as [string]) -replace "`n", ' '
-            $match = [regex]::Match(
-                $html,
-                'id="gn-audio-embed"[^<]*<[^>]*>\s*<source[^>]*src="([^"]+)"',
-                'IgnoreCase'
-            )
-            $src = if ($match.Success) { $match.Groups[1].Value } else { '' }
+            $anchor = [regex]::Match($html, 'id="gn-audio-embed"', 'IgnoreCase')
+            $src = ''
+            if ($anchor.Success) {
+                $start = $anchor.Index
+                $len   = [Math]::Min(20000, $html.Length - $start)
+                $block = $html.Substring($start, $len)
+                $srcMatch = [regex]::Match(
+                    $block,
+                    '<source[^>]*src="([^"]+)"',
+                    'IgnoreCase'
+                )
+                if ($srcMatch.Success) { $src = $srcMatch.Groups[1].Value }
+            }
 
             if (-not $src) { $broken += $post; continue }
 

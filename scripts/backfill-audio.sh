@@ -580,6 +580,13 @@ for site_idx in "${!GHOST_URLS[@]}"; do
 
     BROKEN_FILE=$(mktemp); _CLEANUP_FILES+=("$BROKEN_FILE")
     echo "[]" > "$BROKEN_FILE"
+    # NDJSON sidecar: one broken post per line. We accumulate here instead of
+    # repeatedly `jq --argjson p "$post"`-ing into a JSON array, because the
+    # full post object can be hundreds of KB for long-form essays and exceeds
+    # ARG_MAX on the command line ("jq: Argument list too long"). Writing each
+    # already-serialized line to disk avoids passing post data via argv at all.
+    BROKEN_LINES=$(mktemp); _CLEANUP_FILES+=("$BROKEN_LINES")
+    : > "$BROKEN_LINES"
 
     WITH_TAG_TOTAL=$(jq 'length' "$WITH_TAG_FILE")
     if [ "$WITH_TAG_TOTAL" -gt 0 ]; then
@@ -590,35 +597,48 @@ for site_idx in "${!GHOST_URLS[@]}"; do
             printf "\r  Checking embed: %d / %d   " "$idx" "$WITH_TAG_TOTAL"
 
             # Extract the first <source src="..."> URL from the gn-audio-embed
-            # block. If no GN-tagged embed, the post has only foreign audio
-            # (podcast iframe, SoundCloud, etc.) — treat as "needs narration".
-            # `|| true` swallows grep's exit-1 on no-match: under `set -e -o
-            # pipefail` an unmatched grep would otherwise abort the whole script
-            # mid-loop, which is exactly the silent-exit failure mode this
-            # comment is here to prevent recurring.
+            # block. The embed has a nested player UI (button + progress bar +
+            # speed control) BEFORE the <audio>/<source>, so we cannot match
+            # `gn-audio-embed` immediately followed by <source>. Instead:
+            #   1. tr collapses the html to a single line.
+            #   2. sed slices from the last `id="gn-audio-embed"` to EOL.
+            #   3. head -c bounds the scan to 20 KB after the anchor so we
+            #      don't reach into unrelated downstream content.
+            #   4. grep extracts the first <source src="..."> in that window.
+            # `|| true` on each pipeline swallows grep's exit-1 on no-match so
+            # `set -e -o pipefail` doesn't abort the whole script mid-loop.
             html=$(echo "$post" | jq -r '.html')
-            src=$(echo "$html" \
+            # Inject n8n always writes double-quoted id="gn-audio-embed"
+            # (see Prepend Audio Player node in ghost-audio-callback.json),
+            # so we don't need to handle single-quoted variants.
+            block=$(echo "$html" \
                 | tr -d '\n' \
-                | grep -oE 'id="gn-audio-embed"[^<]*<[^>]*>[[:space:]]*<source[^>]*src="[^"]+"' \
-                | grep -oE 'src="[^"]+"' \
+                | sed -n 's/.*\(id="gn-audio-embed".*\)/\1/p' \
+                | head -c 20000 \
+                || true)
+            src=$(echo "$block" \
+                | grep -oE '<source[^>]*src="[^"]+"' \
                 | head -1 \
-                | sed -E 's/^src="(.*)"$/\1/' \
+                | sed -E 's/.*src="([^"]+)".*/\1/' \
                 || true)
 
             if [ -z "$src" ]; then
-                jq --argjson p "$post" '. + [$p]' "$BROKEN_FILE" > "${BROKEN_FILE}.t" \
-                    && mv "${BROKEN_FILE}.t" "$BROKEN_FILE"
+                printf '%s\n' "$post" >> "$BROKEN_LINES"
                 continue
             fi
 
             code=$(curl -s -o /dev/null -w "%{http_code}" \
                 --max-time 5 -I "$src" 2>/dev/null) || code="000"
             if [ "$code" != "200" ]; then
-                jq --argjson p "$post" '. + [$p]' "$BROKEN_FILE" > "${BROKEN_FILE}.t" \
-                    && mv "${BROKEN_FILE}.t" "$BROKEN_FILE"
+                printf '%s\n' "$post" >> "$BROKEN_LINES"
             fi
         done < <(jq -c '.[]' "$WITH_TAG_FILE")
         echo ""
+    fi
+
+    # Slurp NDJSON sidecar into the broken-posts array.
+    if [ -s "$BROKEN_LINES" ]; then
+        jq -s '.' "$BROKEN_LINES" > "$BROKEN_FILE"
     fi
 
     # Merge no-tag + broken-embed posts into NEEDS_FILE.
