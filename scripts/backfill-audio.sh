@@ -67,6 +67,64 @@ success() { echo -e "${GREEN}✓ $*${NC}"; }
 warn()    { echo -e "${YELLOW}⚠ $*${NC}"; }
 err()     { echo -e "${RED}✗ $*${NC}"; }
 
+# ─── .env loader ─────────────────────────────────────────────────────────────
+# Loads KEY=VALUE pairs from a .env file into the current environment, but
+# only when KEY isn't already set — so a value pre-exported by the user
+# (e.g. `TTS_API_KEY=foo bash backfill-audio.sh`) always wins. Comments and
+# blank lines are skipped; surrounding quotes are stripped.
+load_dotenv() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 0
+    local line name value
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip blanks and comments.
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # Tolerate `export KEY=VALUE`.
+        line="${line#export }"
+        # Match KEY=VALUE (KEY must start with letter or underscore).
+        if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            name="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            # Strip surrounding single or double quotes.
+            if [[ "$value" =~ ^\".*\"$ || "$value" =~ ^\'.*\'$ ]]; then
+                value="${value:1:${#value}-2}"
+            fi
+            # Defer to existing env values.
+            if [ -z "${!name:-}" ]; then
+                export "$name=$value"
+            fi
+        fi
+    done < "$env_file"
+}
+
+# Locate .env relative to either the script or the current working directory,
+# whichever exists first. Repo root sits one level above scripts/.
+_DOTENV_PATH=""
+for _candidate in \
+    "$(pwd)/.env" \
+    "$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)/.env"
+do
+    if [ -f "$_candidate" ]; then
+        _DOTENV_PATH="$_candidate"
+        break
+    fi
+done
+if [ -n "$_DOTENV_PATH" ]; then
+    load_dotenv "$_DOTENV_PATH"
+fi
+
+# ─── URL-to-slug helper ──────────────────────────────────────────────────────
+# Convert a Ghost URL to a hostname-with-dashes slug used in JOB_ID and storage
+# paths. The n8n callback workflow reverse-resolves this back to the matching
+# GHOST_SITE{1,2}_ADMIN_API_KEY by comparing against parseHostname applied to
+# GHOST_SITE{1,2}_URL — so this function and the callback agree by construction.
+url_to_slug() {
+    local url="$1"
+    local host="${url#http://}"; host="${host#https://}"
+    host="${host%%/*}"; host="${host%%:*}"
+    echo "${host//./-}"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SUBCOMMANDS  (--status / --logs / --stop / --config)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -149,6 +207,7 @@ if [ "${1:-}" = "--config" ]; then
     SITE_COUNT="$BACKFILL_SITE_COUNT"
     N8N_WEBHOOK="$BACKFILL_N8N_WEBHOOK"
     TTS_SERVICE_URL="$BACKFILL_TTS_SERVICE_URL"
+    TTS_API_KEY="${BACKFILL_TTS_API_KEY:-}"
     DRY_RUN="$BACKFILL_DRY_RUN"
     echo ""
     echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
@@ -185,21 +244,45 @@ if [ "${1:-}" != "--config" ]; then
 
     echo -e "${BOLD}── Pipeline ────────────────────────────────────────────────${NC}"
     echo ""
+    if [ -n "$_DOTENV_PATH" ]; then
+        info "Loaded defaults from ${_DOTENV_PATH}"
+        echo ""
+    fi
 
-    _default_webhook="http://localhost:5678/webhook/ghost-published"
+    _default_webhook="${N8N_WEBHOOK_URL:-http://localhost:5678/webhook/ghost-published}"
     read -r -p "n8n webhook URL [$_default_webhook]: " _input
     N8N_WEBHOOK="${_input:-$_default_webhook}"
 
     echo ""
-    _default_tts="http://localhost:8020"
+    _default_tts="${TTS_SERVICE_URL:-http://localhost:8020}"
     read -r -p "TTS service URL [$_default_tts]: " _input
     TTS_SERVICE_URL="${_input:-$_default_tts}"
+
+    # TTS API key — required by the service since the auth refactor.
+    # Honor TTS_API_KEY from the parent env so users can pre-export it once.
+    echo ""
+    if [ -n "${TTS_API_KEY:-}" ]; then
+        info "Using TTS_API_KEY from environment (\$TTS_API_KEY)"
+    else
+        read -r -s -p "TTS API key (Bearer token, will not echo): " TTS_API_KEY
+        echo ""
+    fi
+    if [ -z "${TTS_API_KEY:-}" ]; then
+        err "TTS API key cannot be empty — set TTS_API_KEY in your env or paste it here"
+        exit 1
+    fi
 
     echo ""
     echo -e "${BOLD}── Ghost Sites ─────────────────────────────────────────────${NC}"
     echo ""
-    read -r -p "Number of Ghost sites to process [1]: " _input
-    SITE_COUNT="${_input:-1}"
+    # Default site count from .env: 2 if SITE2 vars are set, else 1.
+    if [ -n "${GHOST_SITE2_URL:-}" ] || [ -n "${GHOST_KEY_SITE2:-}" ]; then
+        _default_count=2
+    else
+        _default_count=1
+    fi
+    read -r -p "Number of Ghost sites to process [$_default_count]: " _input
+    SITE_COUNT="${_input:-$_default_count}"
 
     if ! [[ "$SITE_COUNT" =~ ^[1-9][0-9]*$ ]]; then
         err "Invalid site count: ${SITE_COUNT}"
@@ -210,10 +293,29 @@ if [ "${1:-}" != "--config" ]; then
     for i in $(seq 1 "$SITE_COUNT"); do
         echo ""
         echo -e "${BOLD}  Site ${i}${NC}"
-        read -r -p "    Ghost URL (e.g. https://ghost.your-site.com): " ghost_url
+
+        # Prefill from .env: GHOST_SITE${i}_URL and GHOST_KEY_SITE${i}.
+        url_var="GHOST_SITE${i}_URL"
+        key_var="GHOST_KEY_SITE${i}"
+        _default_url="${!url_var:-}"
+        _default_key="${!key_var:-}"
+
+        if [ -n "$_default_url" ]; then
+            read -r -p "    Ghost URL [$_default_url]: " ghost_url
+            ghost_url="${ghost_url:-$_default_url}"
+        else
+            read -r -p "    Ghost URL (e.g. https://ghost.your-site.com): " ghost_url
+        fi
         if [ -z "$ghost_url" ]; then err "Ghost URL cannot be empty"; exit 1; fi
-        read -r -p "    Content API key: " ghost_key
+
+        if [ -n "$_default_key" ]; then
+            read -r -p "    Content API key [from .env]: " ghost_key
+            ghost_key="${ghost_key:-$_default_key}"
+        else
+            read -r -p "    Content API key: " ghost_key
+        fi
         if [ -z "$ghost_key" ]; then err "Content API key cannot be empty"; exit 1; fi
+
         GHOST_URLS+=("${ghost_url%/}")
         GHOST_KEYS+=("$ghost_key")
     done
@@ -251,6 +353,7 @@ if [ "$BACKGROUND" = true ]; then
     {
         echo "BACKFILL_N8N_WEBHOOK=$(printf '%q' "$N8N_WEBHOOK")"
         echo "BACKFILL_TTS_SERVICE_URL=$(printf '%q' "$TTS_SERVICE_URL")"
+        echo "BACKFILL_TTS_API_KEY=$(printf '%q' "$TTS_API_KEY")"
         echo "BACKFILL_SITE_COUNT=$SITE_COUNT"
         echo "BACKFILL_DRY_RUN=$(printf '%q' "$DRY_RUN")"
         for i in "${!GHOST_URLS[@]}"; do
@@ -346,7 +449,17 @@ poll_tts_job() {
         http_code=$(curl -s -o $POLL_TMP \
             -w "%{http_code}" \
             --max-time 10 \
+            -H "Authorization: Bearer ${TTS_API_KEY}" \
             "${TTS_SERVICE_URL}/tts/status/${job_id}" 2>/dev/null) || http_code="000"
+
+        # Auth failures are operator errors, not transient ones — bail with a
+        # clear message instead of polling 401/403 forever.
+        if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+            echo ""
+            err "TTS service rejected the API key (HTTP ${http_code}). Check TTS_API_KEY matches the running service."
+            rm -f $POLL_TMP
+            return 1
+        fi
 
         if [ "$http_code" = "404" ]; then
             if [ $elapsed -ge $N8N_TIMEOUT ]; then
@@ -422,11 +535,11 @@ GRAND_ERRORS=0
 for site_idx in "${!GHOST_URLS[@]}"; do
     GHOST_URL="${GHOST_URLS[$site_idx]}"
     GHOST_KEY="${GHOST_KEYS[$site_idx]}"
+    # Hostname-with-dashes slug used in JOB_ID and (downstream) the GCS upload
+    # path. The n8n callback workflow reverse-resolves this to GHOST_SITE{1,2}_*
+    # env vars by matching against parseHostname(GHOST_SITE{1,2}_URL).
+    SITE_SLUG=$(url_to_slug "$GHOST_URL")
     SITE_NUM=$((site_idx + 1))
-
-    # Derive site slug from URL hostname (dots → hyphens)
-    SITE_HOSTNAME=$(echo "$GHOST_URL" | sed 's|https\?://||' | sed 's|/.*||')
-    SITE_SLUG=$(echo "$SITE_HOSTNAME" | tr '.' '-')
 
     echo ""
     echo -e "${BOLD}── Site ${SITE_NUM}: ${GHOST_URL} ──${NC}"
@@ -446,30 +559,109 @@ for site_idx in "${!GHOST_URLS[@]}"; do
     success "Found ${TOTAL} published posts"
     [ "$TOTAL" -eq 0 ] && continue
 
-    # ── Split into has-audio / needs-audio ────────────────────────────────────
+    # ── Stage 1: posts with no <audio> tag in HTML at all ─────────────────────
     NEEDS_FILE=$(mktemp)
     _CLEANUP_FILES+=("$NEEDS_FILE")
     jq '[.[] | select(
         .html != null and
         (.html | test("<audio[^>]*>"; "i") | not)
     )]' "$ALL_POSTS_FILE" > "$NEEDS_FILE"
+    NO_TAG_COUNT=$(jq 'length' "$NEEDS_FILE")
 
-    HAS_COUNT=$(jq '[.[] | select(
+    # ── Stage 2: posts WITH an <audio> tag whose gn-audio-embed source 404s ───
+    # The HTML-tag-presence check above is structural; this is a liveness check
+    # that catches posts whose embed points at a deleted/missing GCS file. This
+    # is the dominant failure mode for sites that have been backfilled before.
+    WITH_TAG_FILE=$(mktemp); _CLEANUP_FILES+=("$WITH_TAG_FILE")
+    jq '[.[] | select(
         .html != null and
         (.html | test("<audio[^>]*>"; "i"))
-    )] | length' "$ALL_POSTS_FILE")
+    )]' "$ALL_POSTS_FILE" > "$WITH_TAG_FILE"
+
+    BROKEN_FILE=$(mktemp); _CLEANUP_FILES+=("$BROKEN_FILE")
+    echo "[]" > "$BROKEN_FILE"
+    # NDJSON sidecar: one broken post per line. We accumulate here instead of
+    # repeatedly `jq --argjson p "$post"`-ing into a JSON array, because the
+    # full post object can be hundreds of KB for long-form essays and exceeds
+    # ARG_MAX on the command line ("jq: Argument list too long"). Writing each
+    # already-serialized line to disk avoids passing post data via argv at all.
+    BROKEN_LINES=$(mktemp); _CLEANUP_FILES+=("$BROKEN_LINES")
+    : > "$BROKEN_LINES"
+
+    WITH_TAG_TOTAL=$(jq 'length' "$WITH_TAG_FILE")
+    if [ "$WITH_TAG_TOTAL" -gt 0 ]; then
+        info "Verifying ${WITH_TAG_TOTAL} existing audio embed(s)..."
+        idx=0
+        while IFS= read -r post; do
+            idx=$((idx + 1))
+            printf "\r  Checking embed: %d / %d   " "$idx" "$WITH_TAG_TOTAL"
+
+            # Extract the first <source src="..."> URL from the gn-audio-embed
+            # block. The embed has a nested player UI (button + progress bar +
+            # speed control) BEFORE the <audio>/<source>, so we cannot match
+            # `gn-audio-embed` immediately followed by <source>. Instead:
+            #   1. tr collapses the html to a single line.
+            #   2. sed slices from the last `id="gn-audio-embed"` to EOL.
+            #   3. head -c bounds the scan to 20 KB after the anchor so we
+            #      don't reach into unrelated downstream content.
+            #   4. grep extracts the first <source src="..."> in that window.
+            # `|| true` on each pipeline swallows grep's exit-1 on no-match so
+            # `set -e -o pipefail` doesn't abort the whole script mid-loop.
+            html=$(echo "$post" | jq -r '.html')
+            # Inject n8n always writes double-quoted id="gn-audio-embed"
+            # (see Prepend Audio Player node in ghost-audio-callback.json),
+            # so we don't need to handle single-quoted variants.
+            block=$(echo "$html" \
+                | tr -d '\n' \
+                | sed -n 's/.*\(id="gn-audio-embed".*\)/\1/p' \
+                | head -c 20000 \
+                || true)
+            src=$(echo "$block" \
+                | grep -oE '<source[^>]*src="[^"]+"' \
+                | head -1 \
+                | sed -E 's/.*src="([^"]+)".*/\1/' \
+                || true)
+
+            if [ -z "$src" ]; then
+                printf '%s\n' "$post" >> "$BROKEN_LINES"
+                continue
+            fi
+
+            code=$(curl -s -o /dev/null -w "%{http_code}" \
+                --max-time 5 -I "$src" 2>/dev/null) || code="000"
+            if [ "$code" != "200" ]; then
+                printf '%s\n' "$post" >> "$BROKEN_LINES"
+            fi
+        done < <(jq -c '.[]' "$WITH_TAG_FILE")
+        echo ""
+    fi
+
+    # Slurp NDJSON sidecar into the broken-posts array.
+    if [ -s "$BROKEN_LINES" ]; then
+        jq -s '.' "$BROKEN_LINES" > "$BROKEN_FILE"
+    fi
+
+    # Merge no-tag + broken-embed posts into NEEDS_FILE.
+    BROKEN_COUNT=$(jq 'length' "$BROKEN_FILE")
+    if [ "$BROKEN_COUNT" -gt 0 ]; then
+        jq -s '.[0] + .[1]' "$NEEDS_FILE" "$BROKEN_FILE" > "${NEEDS_FILE}.t" \
+            && mv "${NEEDS_FILE}.t" "$NEEDS_FILE"
+    fi
+
+    HAS_COUNT=$((WITH_TAG_TOTAL - BROKEN_COUNT))
     NEEDS_COUNT=$(jq 'length' "$NEEDS_FILE")
 
     GRAND_ALREADY_DONE=$((GRAND_ALREADY_DONE + HAS_COUNT))
-    [ "$HAS_COUNT" -gt 0 ] && success "${HAS_COUNT} posts already have audio — skipping"
+    [ "$HAS_COUNT" -gt 0 ] && success "${HAS_COUNT} posts already have working audio — skipping"
+    [ "$BROKEN_COUNT" -gt 0 ] && warn "${BROKEN_COUNT} posts have broken/missing audio — re-narrating"
+    [ "$NO_TAG_COUNT" -gt 0 ] && warn "${NO_TAG_COUNT} posts have no audio embed — narrating"
 
     if [ "$NEEDS_COUNT" -eq 0 ]; then
-        success "All posts have audio. Nothing to do for this site."
-        rm -f "$ALL_POSTS_FILE" "$NEEDS_FILE"
+        success "All posts have working audio. Nothing to do for this site."
+        rm -f "$ALL_POSTS_FILE" "$NEEDS_FILE" "$WITH_TAG_FILE" "$BROKEN_FILE"
         continue
     fi
 
-    warn "${NEEDS_COUNT} posts need audio narration"
     echo ""
 
     # ── List posts to be processed ────────────────────────────────────────────
@@ -509,10 +701,16 @@ for site_idx in "${!GHOST_URLS[@]}"; do
         SITE_TRIGGERED=$((SITE_TRIGGERED + 1))
         GRAND_TRIGGERED=$((GRAND_TRIGGERED + 1))
 
-        # Construct deterministic job_id using the backfill prefix
-        # Format: backfill-{siteSlug}-pid-{postId}-{slug}
-        # The -pid- separator is required for the n8n callback workflow to extract postId
-        JOB_ID="backfill-${SITE_SLUG}-pid-${POST_ID}-${SLUG}"
+        # Deterministic job_id matching the format n8n's Extract Post Metadata
+        # node would generate for a real Ghost webhook, but with a 'backfill-'
+        # prefix so script-driven runs are visually distinct in the storage tree:
+        #   backfill-{hostname-with-dashes}-pid-{postId}-{slug}-{epoch_ms}
+        # n8n's metadata node honours data.backfill_job_id when present and the
+        # callback strips the 'backfill-' marker before resolving the admin key.
+        TIMESTAMP_MS=$(date +%s%3N)
+        # Some BSD-date variants don't support %3N — fall back to seconds * 1000.
+        [[ "$TIMESTAMP_MS" =~ ^[0-9]{13}$ ]] || TIMESTAMP_MS="$(($(date +%s) * 1000))"
+        JOB_ID="backfill-${SITE_SLUG}-pid-${POST_ID}-${SLUG}-${TIMESTAMP_MS}"
 
         echo ""
         echo -e "${BOLD}[${SITE_TRIGGERED}/${NEEDS_COUNT}] ${TITLE}${NC}"
@@ -525,10 +723,27 @@ for site_idx in "${!GHOST_URLS[@]}"; do
             --arg job_id "$JOB_ID" \
             '{post: {current: .}, backfill_job_id: $job_id}')
 
+        # Sign the payload when N8N_GHOST_WEBHOOK_SECRET is set so backfill
+        # passes the n8n HMAC validator that production webhooks use. Without
+        # this, enabling the secret in .env would silently block backfill at
+        # the HMAC node (it throws on missing X-Ghost-Signature). Falls back
+        # to unsigned when the secret is empty (HMAC node passes through).
+        CURL_HEADERS=(-H "Content-Type: application/json")
+        if [ -n "${N8N_GHOST_WEBHOOK_SECRET:-}" ]; then
+            HMAC_HEX=$(printf '%s' "$PAYLOAD" \
+                | openssl dgst -sha256 -hmac "$N8N_GHOST_WEBHOOK_SECRET" -hex 2>/dev/null \
+                | awk '{print $NF}')
+            if [ -n "$HMAC_HEX" ]; then
+                CURL_HEADERS+=(-H "X-Ghost-Signature: sha256=${HMAC_HEX}")
+            else
+                warn "openssl HMAC failed — sending unsigned (will be rejected if HMAC is enforced)"
+            fi
+        fi
+
         # Trigger n8n webhook
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -X POST "$N8N_WEBHOOK" \
-            -H "Content-Type: application/json" \
+            "${CURL_HEADERS[@]}" \
             --max-time 15 \
             -d "$PAYLOAD" 2>/dev/null) || HTTP_CODE="000"
 

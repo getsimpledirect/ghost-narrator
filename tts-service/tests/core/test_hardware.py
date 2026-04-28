@@ -257,145 +257,42 @@ def test_low_vram_tts_max_new_tokens_is_4500():
     assert cfg.tts_max_new_tokens == 4500, f'Expected 4500, got {cfg.tts_max_new_tokens}'
 
 
-# ── probe_optimal_segment_words / get_optimal_segment_words tests ──────────────
+# ── get_studio_segment_words tests ─────────────────────────────────────────────
 
 
-def test_get_noise_ceiling_1_7b():
-    from app.core.hardware import _get_noise_ceiling
-
-    assert _get_noise_ceiling('Qwen/Qwen3-TTS-12Hz-1.7B-Base') == 400
-
-
-def test_get_noise_ceiling_0_6b():
-    from app.core.hardware import _get_noise_ceiling
-
-    assert _get_noise_ceiling('Qwen/Qwen3-TTS-12Hz-0.6B-Base') == 300
-
-
-def test_get_noise_ceiling_unknown_model():
-    from app.core.hardware import _get_noise_ceiling
-
-    assert _get_noise_ceiling('some-unknown-tts-model') == 400
-
-
-def test_probe_returns_noise_ceiling_when_no_cuda():
-    """Without CUDA, probe returns the model's noise ceiling (not VRAM-derived)."""
-    import app.core.hardware as _hw
-    from unittest.mock import patch
-
-    original = _hw._optimal_segment_words
-    try:
-        _hw._optimal_segment_words = None
-        with patch('app.core.hardware.torch') as mock_torch:
-            mock_torch.cuda.is_available.return_value = False
-            result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-1.7B-Base')
-        assert result == 400
-        assert _hw._optimal_segment_words == 400
-    finally:
-        _hw._optimal_segment_words = original
-
-
-def test_probe_is_vram_limited_on_tight_gpu():
-    """When free VRAM < headroom + any synthesis budget, result clamps to floor (200)."""
-    import app.core.hardware as _hw
-    from unittest.mock import patch
-
-    original = _hw._optimal_segment_words
-    try:
-        _hw._optimal_segment_words = None
-        with patch('app.core.hardware.torch') as mock_torch:
-            mock_torch.cuda.is_available.return_value = True
-            # 300 MB free — below the 512 MB safety headroom → available=0 → floor
-            mock_torch.cuda.mem_get_info.return_value = (300 * 1024 * 1024, 8 * 1024**3)
-            result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-1.7B-Base')
-        assert result == 200
-    finally:
-        _hw._optimal_segment_words = original
-
-
-def test_probe_is_noise_limited_on_large_gpu():
-    """On a large GPU with ample VRAM, the noise ceiling dominates."""
-    import app.core.hardware as _hw
-    from unittest.mock import patch
-
-    original = _hw._optimal_segment_words
-    try:
-        _hw._optimal_segment_words = None
-        with patch('app.core.hardware.torch') as mock_torch:
-            mock_torch.cuda.is_available.return_value = True
-            # 6 GB free — far exceeds any reasonable codec token budget for 400 words
-            mock_torch.cuda.mem_get_info.return_value = (6 * 1024**3, 24 * 1024**3)
-            result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-1.7B-Base')
-        assert result == 400  # noise ceiling for 1.7B
-    finally:
-        _hw._optimal_segment_words = original
-
-
-def test_probe_falls_back_to_noise_ceiling_on_exception():
-    """Exceptions during the probe are swallowed — noise ceiling used as fallback."""
-    import app.core.hardware as _hw
-    from unittest.mock import patch
-
-    original = _hw._optimal_segment_words
-    try:
-        _hw._optimal_segment_words = None
-        with patch('app.core.hardware.torch') as mock_torch:
-            mock_torch.cuda.is_available.side_effect = RuntimeError('driver error')
-            result = _hw.probe_optimal_segment_words('Qwen/Qwen3-TTS-12Hz-0.6B-Base')
-        assert result == 300  # 0.6B noise ceiling
-    finally:
-        _hw._optimal_segment_words = original
-
-
-def test_get_optimal_segment_words_returns_probed_value():
+def test_get_studio_segment_words_returns_tier_default():
+    """Without an env override, returns the active tier's studio_segment_words."""
     import app.core.hardware as _hw
 
-    original = _hw._optimal_segment_words
-    try:
-        _hw._optimal_segment_words = 580
-        with patch.dict(os.environ, {}, clear=False):
-            env = {k: v for k, v in os.environ.items() if k != 'SINGLE_SHOT_SEGMENT_WORDS'}
-            with patch.dict(os.environ, env, clear=True):
-                assert _hw.get_optimal_segment_words() == 580
-    finally:
-        _hw._optimal_segment_words = original
+    env = {k: v for k, v in os.environ.items() if k != 'SINGLE_SHOT_SEGMENT_WORDS'}
+    with patch.dict(os.environ, env, clear=True):
+        assert _hw.get_studio_segment_words() == _hw.ENGINE_CONFIG.studio_segment_words
 
 
-def test_get_optimal_segment_words_env_overrides_probe():
-    """SINGLE_SHOT_SEGMENT_WORDS env var wins over the probed value."""
+def test_get_studio_segment_words_env_override():
+    """SINGLE_SHOT_SEGMENT_WORDS env var wins over the tier default."""
     import app.core.hardware as _hw
 
-    original = _hw._optimal_segment_words
-    try:
-        _hw._optimal_segment_words = 580
-        with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '300'}):
-            assert _hw.get_optimal_segment_words() == 300
-    finally:
-        _hw._optimal_segment_words = original
+    with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '75'}):
+        assert _hw.get_studio_segment_words() == 75
 
 
-def test_get_optimal_segment_words_env_clamped_to_safe_range():
-    """Env var values outside [100, 700] are clamped."""
+def test_get_studio_segment_words_env_clamped():
+    """Env values outside [30, 300] are clamped — short destroys prosody, long defeats design."""
     import app.core.hardware as _hw
 
-    with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '999'}):
-        assert _hw.get_optimal_segment_words() == 700
-    with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '50'}):
-        assert _hw.get_optimal_segment_words() == 100
+    with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '500'}):
+        assert _hw.get_studio_segment_words() == 300
+    with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': '10'}):
+        assert _hw.get_studio_segment_words() == 30
 
 
-def test_get_optimal_segment_words_fallback_before_probe():
-    """Before the probe runs and without an env var, falls back to 400."""
+def test_get_studio_segment_words_ignores_non_digit_env():
+    """Non-digit env values fall back to the tier default rather than raising."""
     import app.core.hardware as _hw
 
-    original = _hw._optimal_segment_words
-    try:
-        _hw._optimal_segment_words = None
-        env = {k: v for k, v in os.environ.items() if k != 'SINGLE_SHOT_SEGMENT_WORDS'}
-        with patch.dict(os.environ, env, clear=True):
-            assert _hw.get_optimal_segment_words() == 400
-    finally:
-        _hw._optimal_segment_words = original
+    with patch.dict(os.environ, {'SINGLE_SHOT_SEGMENT_WORDS': 'auto'}):
+        assert _hw.get_studio_segment_words() == _hw.ENGINE_CONFIG.studio_segment_words
 
 
 def test_all_tiers_use_temperature_03():

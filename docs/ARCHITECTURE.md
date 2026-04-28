@@ -66,7 +66,7 @@ Or POST to `http://YOUR_IP:5678/webhook/static-content-audio` with `plain_text`,
 - Zero-shot voice cloning from a short reference audio sample
 - Qwen3.5 LLM narration rewriting — better factual preservation and instruction-following than Qwen3
 - Professional audio mastering (EBU R128 two-pass loudnorm, −16 LUFS target, speech compressor, true-peak limiter)
-- VRAM-probed segment sizing — optimal words-per-segment auto-calculated from free VRAM at startup
+- Short studio segments (60-100 words per tier) + best-of-N per segment + neural enhancement — a per-tier quality pipeline that keeps every synthesis call inside the model's competent AR horizon
 - torch.compile() acceleration on GPU — first-call JIT penalty (~30-60s), then 2-4× faster synthesis
 - Streaming concatenation for memory-efficient processing of long articles (5000+ words)
 - Redis-backed job persistence with automatic fallback to in-memory storage
@@ -150,15 +150,19 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 |---|---|---|---|---|---|
 | CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Parallel workers, any machine |
 | Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
-| Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | RTX 3080 12GB+ / A10G, pipelined narrate+synthesize, VRAM-probed segments (up to 400 words) |
-| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **VRAM-probed segments (up to 400 words), tail conditioning, per-segment WER re-synthesis, loudness consistency check, LLM completeness check, voice pre-caching** |
+| Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | RTX 3080 12GB+ / A10G, 70-word studio segments, best-of-3 per segment, response ladder, DeepFilterNet enhancement |
+| **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **60-word studio segments, best-of-3 per segment, response ladder, DeepFilterNet enhancement, loudness consistency, LLM completeness, voice pre-caching** |
 
-**HIGH_VRAM exclusive features:**
-- **bf16 TTS precision** — fp32-equivalent exponent range avoids logit saturation on long AR decodes that surfaced as mid-phrase amplitude drops under fp16
-- **Tail conditioning** — each segment is conditioned on the last 2.5s of the preceding segment, anchoring voice timbre and speaking rate across synthesis boundaries
-- **WER-based re-synthesis** — each segment is transcribed by Whisper base (CPU) and re-synthesized if word error rate exceeds 10%; catches hallucinated, skipped, and repeated words that silence-ratio checks cannot detect
-- **Loudness consistency check** — after all segments are synthesized, any segment deviating more than ±3 dB from the median dBFS is re-synthesized; prevents volume-level drift between segments
-- **Seed variation across retries** — a SHA-256-derived seed is set per job for the initial synthesis pass (torch + numpy + random); each of the 4 retry strategies uses a different seed (`original_seed + attempt × 7919 mod 2³¹`) to explore distinct autoregressive decoding paths rather than replaying the same failing sample
+**Studio-quality pipeline (all tiers, tuned per-tier):**
+- **Short studio segments** — every segment stays inside the model's competent AR horizon (CPU 100w, LOW 80w, MID 70w, HIGH 60w). Long-form narration is synthesized as many short calls rather than a few long ones; per-segment AR drift is bounded and cannot propagate.
+- **Consistent reference conditioning** — every segment conditions on the same clean voice reference (`VOICE_SAMPLE_PATH`), not the tail of the previous segment. Voice identity anchors globally; the tiny prosodic reset at segment joins is masked by a crossfade.
+- **Best-of-N per segment** — each segment is synthesized N times with distinct seeds (CPU 1, LOW 2, MID 3, HIGH 3) and scored on a composite of F0 drift, WER, mid-phrase drop density, and spectral flatness. The lowest-scoring variant is kept; oversampling converts per-sample variance into a statistically-bounded quality floor.
+- **Composite scoring** — weights default to F0 0.40, WER 0.30, drops 0.20, flatness 0.10. Tunable via `COMPOSITE_SCORE_W_F0` / `_WER` / `_DROPS` / `_FLATNESS` env vars for calibration runs.
+- **Graduated response ladder** — when a segment fails the acoustic gate after best-of-N, escalation is proportional: heal 1–3 drops in place (cosmetic) → seed-sweep of 5 variants (stochastic) → split at punctuation and synthesize halves with best-of-3 (structural) → flag and ship lowest-scoring variant. Only failures where no variant synthesizes at all abort the job.
+- **DeepFilterNet enhancement** — post-concatenation neural restoration (MIT, real-time on CPU, CUDA-accelerated). Removes the vocoded texture and noise fingerprint characteristic of TTS output, pulling the waveform toward a natural-recording prior. Runs before mastering so the LUFS limiter acts on the enhanced signal.
+- **Precision tier**: bf16 on HIGH_VRAM — fp32-equivalent exponent range avoids logit saturation on long AR decodes that surfaced as amplitude drops under fp16. fp16 retained on MID_VRAM and fp32 on LOW/CPU.
+
+**HIGH_VRAM additional features:**
 - **Pre-computed voice reference** — voice embedding cached at startup, saves 2-5s per job
 - **LLM completeness check** — second LLM call verifies no facts were dropped during narration (short articles only, combined ≤ 4000 words)
 
@@ -184,7 +188,7 @@ flowchart TD
 1. **Webhook Receive** — n8n catches the Ghost `post.published` event
 2. **Fetch Article** — Ghost Content API returns full plaintext
 3. **Submit to TTS** — n8n sends raw article text to the TTS service
-4. **Narrate + Synthesize** — TTS service internally: (a) deterministic preprocessing strips URLs/markdown, (b) Qwen3.5 LLM (Ollama on cpu/low VRAM, vLLM on mid/high VRAM) rewrites to spoken prose preserving all facts, (c) Qwen3-TTS synthesizes audio with VRAM-probed segment sizing, (d) mastering and concatenation
+4. **Narrate + Synthesize** — TTS service internally: (a) deterministic preprocessing strips URLs/markdown, (b) Qwen3.5 LLM (Ollama on cpu/low VRAM, vLLM on mid/high VRAM) rewrites to spoken prose preserving all facts, (c) Qwen3-TTS synthesizes short studio segments with best-of-N selection, (d) DeepFilterNet enhancement + mastering + concatenation
 5. **Upload to Storage** — MP3 uploaded to configured backend (local/GCS/S3)
 6. **Callback to n8n** — TTS service notifies n8n that audio is ready
 7. **Embed in Ghost** — n8n patches the Ghost post with an `<audio>` player
@@ -374,8 +378,10 @@ Expected response:
 - Zero-shot voice cloning from a single reference audio file
 - Async background job processing with Redis-backed status tracking
 - Automatic fallback to in-memory storage if Redis is unavailable
-- VRAM-probed segment sizing — optimal segment word count auto-calculated from free VRAM after model load; eliminates boundary artifacts within each segment (up to 400 words for 1.7B, 300 for 0.6B)
-- Segment mode with tail conditioning for articles exceeding the probed segment size (voice timbre anchored across segment boundaries)
+- Short studio segments (60-100 words per tier) with consistent clean-reference conditioning — keeps every synthesis call inside Qwen3-TTS's competent AR horizon, so pitch, pacing, and timbre stay stable across long narration
+- Best-of-N per segment with composite quality scoring (F0 drift, WER, drop density, spectral flatness) — oversampling converts per-sample variance into a statistically-bounded quality floor
+- Graduated response ladder when a segment fails the gate: heal → seed-sweep → split → flag (ship best-scoring variant rather than abort the job)
+- Neural speech enhancement (DeepFilterNet 2) between concat and mastering — removes the vocoded texture characteristic of TTS output
 - Professional audio mastering (two-pass EBU R128 loudnorm, speech compressor, true-peak limiter)
 - Exponential-backoff retry on storage uploads and n8n callbacks
 
@@ -561,16 +567,15 @@ The TTS service implements a multi-stage pipeline with hardware-adaptive quality
 - **HIGH_VRAM only**: second LLM completeness check verifies no facts were dropped (single-shot articles ≤ 8000 words)
 
 **Stage 2: Text Preparation**
-- Determines synthesis strategy based on narrated word count vs `seg_words` (VRAM-probed optimal segment size, computed at startup):
-  - **≤ seg_words**: Single-shot synthesis — entire text in one TTS call (zero boundary artifacts)
-  - **> seg_words**: Segment mode — splits at sentence boundaries into segments of ≤ `seg_words` each
-- `seg_words` is computed from free VRAM after model + torch.compile() load: `(free_vram − 512 MiB) / 150 KB_per_token / 5.54 tok_per_word`, clamped to 200–noise_ceiling (400 words for 1.7B, 300 for 0.6B). Override with `SINGLE_SHOT_SEGMENT_WORDS=N` in `.env`.
+- Determines synthesis strategy based on narrated word count vs `seg_words` (tier `studio_segment_words`, typically 60–100):
+  - **≤ seg_words**: Single-shot synthesis — very short content (≤ tier's `studio_segment_words`) in one TTS call
+  - **> seg_words**: Multi-segment studio synthesis — splits at sentence boundaries into 60-100 word segments, each synthesized with best-of-N, scored, and kept the lowest-scoring variant
+- `seg_words` is the tier's `studio_segment_words` (CPU 100 / LOW 80 / MID 70 / HIGH 60). Values are chosen so every call stays well inside the model's competent AR horizon; larger CPU value amortises per-segment overhead. Override with `SINGLE_SHOT_SEGMENT_WORDS=N` in `.env`.
 - Applies final normalization for TTS: expands numbers/dates/symbols to spoken form; strips any residual [PAUSE] markers after gap insertion
 
 **Stage 3: Synthesis**
-- **Single-shot mode** (≤ seg_words): Entire narration synthesized in one pass — consistent voice, no segment boundaries
-- **Segment mode** (> seg_words): Each segment synthesized in single-shot mode, concatenated with equal-power crossfade (500 ms overlap)
-  - **HIGH_VRAM only — tail conditioning**: last 2.5 s of segment N passed as `voice_override` to anchor timbre and speaking rate for segment N+1
+- **Single-shot mode** (≤ seg_words): Entire narration synthesized in one pass — used only for very short content
+- **Studio segment mode** (> seg_words): Each segment goes through best-of-N (N per tier) with distinct seeds; the composite scorer (F0 drift + WER + drops + flatness) picks the best variant per segment. All segments condition on the same clean voice reference — per-segment AR drift stays bounded and does not propagate across boundaries. Segments are concatenated with equal-power crossfade (500 ms overlap).
 - **CPU mode**: Parallel synthesis via ThreadPoolExecutor (`MAX_WORKERS`, default 4)
 - **GPU mode**: Sequential synthesis (optimal for CUDA memory management)
 
@@ -587,13 +592,18 @@ Acoustic gate soft checks (both must trip simultaneously to reject):
 
 Regional checks (run after soft checks; only reached by chunks that passed all above):
 - **Windowed F0 gate**: 3 s sliding windows (50% overlap) reject the chunk if > 5% show > 6 semitones of F0 drift from reference — catches a garbled region inside a long chunk that whole-chunk median smoothing misses (e.g. 20 s garble inside 180 s shifts the median ~11%, under the 2.5 st hard threshold, but produces > 11% bad windows)
-- **Mid-phrase drop detection**: rejects if > 3 drops of 0.3–1.5 s where RMS falls below 10% of the rolling 2 s local median — catches mid-sentence amplitude collapses from Qwen3-TTS coherence loss
+- **Mid-phrase drop detection**: rejects if the number of 0.6–2.0 s drops (RMS < 10% of the rolling 2 s local median) exceeds `max(3, duration_s / 20)` — scales with chunk length so natural sentence-boundary pauses in long narration don't accumulate into a false positive
 
 Optional checks (skip if unavailable):
-- **WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, re-synthesize (catches hallucinated/skipped/repeated words that acoustic checks cannot detect)
-- **HIGH_VRAM only — loudness consistency**: after all segments pass quality checks, any segment deviating > ±3 dB from the median dBFS is re-synthesized; prevents volume drift between segments
+- **WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, the response ladder runs (catches hallucinated/skipped/repeated words that acoustic checks cannot detect)
+- **Loudness consistency (all tiers)**: any segment deviating > ±3 dB from the median dBFS across all segments triggers the response ladder; prevents volume drift between segments
 
-Re-synthesis retries up to 4 strategies: `repetition_penalty=1.2` → midpoint split → quarter split → aggressive text sanitization. Each strategy uses a different seed (`original_seed + attempt × 7919 mod 2³¹`) to explore distinct autoregressive decoding paths rather than repeating the same failing sample.
+**Response ladder** — when a segment fails any gate above, escalation is graduated:
+
+1. **Heal** — if 1–3 drops are detected, crossfade each out in place (40 ms ramp on each side of the drop). The listener hears a brief breath-like pause instead of a vocoded dropout. No regeneration cost.
+2. **Seed-sweep** — synthesize 5 fresh variants with distinct seeds (`base_seed + n × 7919 mod 2³¹`), score each with the composite scorer, keep the best. Often resolves stochastic AR failures that aren't reproducible at a different seed.
+3. **Split** — halve the segment at the nearest punctuation, synthesize each half with best-of-3, concatenate. Shorter contexts sit further below the drift horizon.
+4. **Flag** — if all above still fail the gate, ship the lowest-scoring variant seen across the ladder with a warning in the logs. Only when every synthesis attempt raises (no variant produced at all) does the job abort with `ChunkExhaustedError`.
 
 **Stage 5: Dynamic Gap Insertion + Crossfade**
 - Analyzes segment endings to determine appropriate pause duration
@@ -605,6 +615,10 @@ Re-synthesis retries up to 4 strategies: `repetition_penalty=1.2` → midpoint s
 - For large files (> 10 segments): streaming concatenation reduces peak memory usage by ~80%
 - Progressive MP3 encoding prevents OOM on 5000+ word articles
 - Standard in-memory concatenation for smaller files (faster)
+
+**Stage 6.5: Neural speech enhancement**
+- DeepFilterNet 2 pass on the concatenated raw WAV (MIT-licensed, real-time on CPU, CUDA-accelerated on GPU). Removes the faint vocoded texture and noise fingerprint that Qwen3-TTS output carries, pulling the waveform toward a clean-speech prior. Falls back silently to the unenhanced WAV if the package or model is unavailable — enhancement is a quality pass, not a correctness prerequisite.
+- Runs before mastering so the true-peak limiter acts on the enhanced signal.
 
 **Stage 7: Final Mastering**
 - Processing chain: silence trim → speech compressor → two-pass EBU R128 loudnorm → true-peak limiter
@@ -1317,7 +1331,7 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 - To use a different endpoint: set `LLM_BASE_URL` in `.env`
 
 **Audio quality is poor (pitch/jumps/volume changes):**
-- Segment size is VRAM-probed at startup — up to 400 words (1.7B model) or 300 words (0.6B). If you hear inconsistency at boundaries, reduce the segment size: set `SINGLE_SHOT_SEGMENT_WORDS=200` in `.env`.
+- Segment size defaults to the tier's `studio_segment_words` (CPU 100 / LOW 80 / MID 70 / HIGH 60). Smaller is better for studio quality at the cost of throughput. If you hear inconsistency at boundaries, reduce further: set `SINGLE_SHOT_SEGMENT_WORDS=50` in `.env`.
 - Check reference WAV format: `ffprobe tts-service/voices/default/reference.wav`
 - Expected: Audio: pcm_s16le, 22050 Hz, mono, s16, 352 kb/s
 - Ensure 45+ seconds of clear speech with no background noise
@@ -1347,7 +1361,7 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 - Check `REDIS_URL` environment variable
 
 **Out of memory errors:**
-- Reduce `MAX_CHUNK_WORDS` from 200 to 150 (if not using single-shot mode)
+- Set `SINGLE_SHOT_SEGMENT_WORDS=40` to force shorter studio segments
 - Reduce `MAX_WORKERS` if using many parallel workers
 - Streaming concatenation automatically activates for large files (>10 chunks)
 - Monitor memory usage: `docker stats tts-service`
