@@ -740,12 +740,17 @@ for site_idx in "${!GHOST_URLS[@]}"; do
             fi
         fi
 
-        # Trigger n8n webhook
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        # Trigger n8n webhook. Pipe payload via stdin (--data-binary @-)
+        # rather than -d "$PAYLOAD": long-form posts produce JSON bodies of
+        # 100+ KB which overflow ARG_MAX when passed as a curl argument,
+        # making curl exit non-zero with no HTTP exchange — surfaces as
+        # HTTP 000. Same failure class as the jq --argjson overflow that
+        # was previously fixed in the verification step.
+        HTTP_CODE=$(printf '%s' "$PAYLOAD" | curl -s -o /dev/null -w "%{http_code}" \
             -X POST "$N8N_WEBHOOK" \
             "${CURL_HEADERS[@]}" \
             --max-time 15 \
-            -d "$PAYLOAD" 2>/dev/null) || HTTP_CODE="000"
+            --data-binary @- 2>/dev/null) || HTTP_CODE="000"
 
         if [[ "$HTTP_CODE" =~ ^2 ]]; then
             success "Pipeline triggered (HTTP ${HTTP_CODE})"
