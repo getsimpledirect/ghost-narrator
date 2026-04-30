@@ -49,16 +49,18 @@ STREAMING_THRESHOLD: Final[int] = STREAMING_THRESHOLD_MS
 CROSSFADE_MS: Final[int] = 300  # Increased for smoother transitions (studio quality)
 SILENCE_THRESHOLD_DB: Final[int] = -50  # was -35; more aggressive trailing trim
 MIN_SILENCE_MS: Final[int] = 100
-TRAILING_SOFT_CAP_MS: Final[int] = 200  # Soft cap for natural ending
 
 
 def _trim_silence(segment: AudioSegment) -> AudioSegment:
-    """Trim leading and trailing silence, capping trailing at 60ms.
+    """Trim leading and trailing silence at -50 dBFS.
 
-    Uses -50dBFS threshold (was -35) for more aggressive silence detection.
-    After trimming to the last speech sample, appends exactly 60ms of silence
-    so [PAUSE]/[LONG_PAUSE] markers can add semantic gaps without fighting
-    leftover TTS padding.
+    Non-destructive: only silence below SILENCE_THRESHOLD_DB is removed,
+    and only when more than MIN_SILENCE_MS of it is present at an edge.
+    Speech audio is never replaced or cut. The previous "soft-cap"
+    branch destructively replaced the last 200 ms of every segment with
+    hard silence regardless of content; for the last segment of a
+    concatenated file, mastering's silenceremove then stripped that
+    hard silence, ending the audio mid-decay with no fade.
     """
     leading = 0
     chunk_size = 10
@@ -85,13 +87,6 @@ def _trim_silence(segment: AudioSegment) -> AudioSegment:
         segment = segment[leading:]
     if len(segment) - trailing > MIN_SILENCE_MS:
         segment = segment[:trailing]
-
-    # Soft cap: end with TRAILING_SOFT_CAP_MS of silence max.
-    # The crossfade handles smooth transitions, so we don't need exact trailing silence.
-    if len(segment) > TRAILING_SOFT_CAP_MS:
-        segment = segment[:-TRAILING_SOFT_CAP_MS] + AudioSegment.silent(
-            duration=TRAILING_SOFT_CAP_MS
-        )
     return segment
 
 

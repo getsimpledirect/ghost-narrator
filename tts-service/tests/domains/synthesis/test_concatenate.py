@@ -37,19 +37,44 @@ def _make_sine_wav(duration_ms: int = 1000, sample_rate: int = 24000) -> AudioSe
     return AudioSegment(wave.tobytes(), frame_rate=sample_rate, sample_width=2, channels=1)
 
 
-def test_trim_silence_caps_trailing_at_60ms():
-    """_trim_silence must leave at most 60ms of trailing silence."""
+def test_trim_silence_removes_trailing_silence_block():
+    """_trim_silence must trim trailing silence beyond MIN_SILENCE_MS."""
     from app.domains.synthesis.concatenate import _trim_silence
 
-    # 1s sine + 500ms silence
+    # 1s sine + 500ms silence — trailing silence is 500ms, well above
+    # MIN_SILENCE_MS (100ms), so it should be trimmed to ~the speech end.
     sine = _make_sine_wav(1000)
     silence = AudioSegment.silent(duration=500)
     segment = sine + silence
 
     trimmed = _trim_silence(segment)
-    # Total should be ~1060ms (1000ms speech + 60ms cap)
-    assert len(trimmed) <= 1100  # generous bound for 60ms cap
-    assert len(trimmed) >= 900  # speech not clipped
+    # Trailing silence stripped to within one chunk-size (10ms) of the
+    # last speech sample. Allow a small tolerance for the chunk granularity.
+    assert 990 <= len(trimmed) <= 1100, f'Expected ~1000ms, got {len(trimmed)}'
+
+
+def test_trim_silence_preserves_speech_with_no_trailing_silence():
+    """Regression: _trim_silence must not destroy speech when there is
+    no trailing silence to trim. The previous soft-cap branch replaced
+    the last 200ms of every segment with hard silence regardless of
+    content, cutting actual speech audio. For the last segment of the
+    concatenated file, mastering's silenceremove then stripped that
+    silence, producing an abrupt mid-decay end.
+    """
+    from app.domains.synthesis.concatenate import _trim_silence
+
+    # Pure 1s sine, no silence anywhere.
+    sine = _make_sine_wav(1000)
+
+    trimmed = _trim_silence(sine)
+
+    # Length must be unchanged — no silence to trim, nothing to cut.
+    assert len(trimmed) == 1000, f'Expected 1000ms preserved, got {len(trimmed)}'
+    # Last 200ms must still be speech, not silence (the bug).
+    last_200ms = trimmed[-200:]
+    assert last_200ms.dBFS > -40, (
+        f'Last 200ms should still contain speech, got dBFS={last_200ms.dBFS} (silence ≈ -inf)'
+    )
 
 
 def test_equal_power_crossfade_no_volume_dip():
