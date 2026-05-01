@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.routes.tts import _filter_sort_paginate_jobs
+from app.api.routes.tts import _DEFAULT_LIST_LIMIT, _filter_sort_paginate_jobs
 
 
 def _job(**overrides):
@@ -441,6 +441,35 @@ class TestPagination:
         result, total = _filter_sort_paginate_jobs(store, prefix='backfill-', limit=2)
         assert total == 5
         assert len(result) == 2
+
+
+class TestDefaultLimit:
+    """The route applies `limit=_DEFAULT_LIST_LIMIT` when the caller
+    doesn't pass `?limit=`. Helper itself defaults to None (unlimited)
+    so direct callers in tests can opt into either behavior."""
+
+    def test_default_limit_constant_is_100(self):
+        # Pins the API's deployment-default page size. Changing this is
+        # a behavior change for unauthenticated clients of /tts/jobs and
+        # should be done deliberately, not by accidental edit.
+        assert _DEFAULT_LIST_LIMIT == 100
+
+    def test_helper_with_default_limit_caps_at_100(self):
+        # Mimic the route's default: build 150 jobs, call helper with
+        # the API's default limit, verify the response is capped.
+        store = {f'job-{i:03d}': _job(created_at=float(i)) for i in range(150)}
+        result, total = _filter_sort_paginate_jobs(store, limit=_DEFAULT_LIST_LIMIT)
+        assert total == 150
+        assert len(result) == 100
+
+    def test_helper_explicit_unlimited_returns_all(self):
+        # Script escape hatch: passing limit=10000 (or omitting limit
+        # entirely in direct calls) returns the full filtered set.
+        store = {f'job-{i:03d}': _job(created_at=float(i)) for i in range(150)}
+        result_explicit, _ = _filter_sort_paginate_jobs(store, limit=10000)
+        result_omitted, _ = _filter_sort_paginate_jobs(store)  # helper default = None
+        assert len(result_explicit) == 150
+        assert len(result_omitted) == 150
 
 
 class TestStripDurableFields:

@@ -489,6 +489,14 @@ async def delete_job(
     return {'message': f"Job '{job_id}' and associated resources deleted"}
 
 
+# Default page size for /tts/jobs when the caller doesn't pass `?limit=`.
+# Sized so a typical 25-post backfill batch (plus a handful of incidental
+# Ghost-published jobs) fits in one response without pagination, but a
+# pathological store of thousands doesn't blow the wire by accident.
+# Clients that genuinely want everything pass `?limit=10000` explicitly,
+# which is the upper bound enforced by the Query() validator.
+_DEFAULT_LIST_LIMIT: int = 100
+
 # Fields a client is allowed to sort by. Matches Redis-stored job fields with
 # meaningful ordering. `id` is the dict key, not a stored field, so it's
 # handled specially in the sort key function below.
@@ -696,10 +704,16 @@ async def list_jobs(
         ),
     ),
     limit: Optional[int] = Query(
-        None,
+        _DEFAULT_LIST_LIMIT,
         ge=1,
         le=10000,
-        description='Maximum jobs to return. Omit for no limit.',
+        description=(
+            f'Maximum jobs to return (default: {_DEFAULT_LIST_LIMIT}). '
+            'The full filtered set may exceed this — check `total` in the '
+            'response and iterate using `offset` if needed. Pass an explicit '
+            '`limit=10000` for the previous unlimited-like behavior on stores '
+            'up to ~10k jobs; that is the hard ceiling.'
+        ),
     ),
     offset: int = Query(
         0,

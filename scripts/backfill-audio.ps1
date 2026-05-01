@@ -313,7 +313,12 @@ function Get-BackfillJobCount {
 
 # ─── Subcommand: -Queue ──────────────────────────────────────────────────────
 if ($Queue) {
-    $query = if ($All) { '' } else { 'prefix=backfill-' }
+    # `limit=10000` overrides the API's default page size (100) so the
+    # script gets the full backfill batch in one fetch — at our deployment
+    # scale (Redis TTL of 24h, tens-to-hundreds of jobs typical) this
+    # never approaches the cap. Larger deployments would need a paginated
+    # render loop.
+    $query = if ($All) { 'limit=10000' } else { 'prefix=backfill-&limit=10000' }
     $resp = Get-TtsJobs -Query $query
     if ($null -eq $resp) {
         $url = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
@@ -330,7 +335,8 @@ if ($Watch) {
     $failStreak = 0
     $firstIter  = $true
     while ($true) {
-        $resp = Get-TtsJobs -Query 'prefix=backfill-'
+        # See -Queue note above re: limit=10000.
+        $resp = Get-TtsJobs -Query 'prefix=backfill-&limit=10000'
         if ($null -eq $resp) {
             $failStreak++
             if ($failStreak -ge 3) {

@@ -309,11 +309,16 @@ _count_backfill_jobs() {
 }
 
 if [ "${1:-}" = "--queue" ]; then
+    # `limit=10000` overrides the API's default page size (100) so the
+    # script gets the full backfill batch in one fetch — at our deployment
+    # scale (Redis TTL of 24h, tens-to-hundreds of jobs typical) this
+    # never approaches the cap. Larger deployments would need a paginated
+    # render loop.
     mode="backfill"
-    query="prefix=backfill-"
+    query="prefix=backfill-&limit=10000"
     if [ "${2:-}" = "--all" ]; then
         mode="all"
-        query=""
+        query="limit=10000"
     fi
     response=$(_fetch_tts_jobs "$query")
     if [ -z "$response" ]; then
@@ -328,7 +333,8 @@ if [ "${1:-}" = "--watch" ]; then
     fail_streak=0
     first_iter=1
     while true; do
-        response=$(_fetch_tts_jobs "prefix=backfill-")
+        # See --queue note above re: `limit=10000`.
+        response=$(_fetch_tts_jobs "prefix=backfill-&limit=10000")
         if [ -z "$response" ]; then
             fail_streak=$((fail_streak + 1))
             if [ "$fail_streak" -ge 3 ]; then
