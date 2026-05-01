@@ -194,9 +194,12 @@ fi
 
 # ─── Queue snapshot helpers (shared by --queue and --watch) ──────────────────
 # Fetch /tts/jobs as JSON. Echoes the JSON body on success; empty on error.
+# $1 (optional) is appended as a query string (e.g. "prefix=backfill-").
 # Caller decides what to do with empty (transient retry vs. bail).
 _fetch_tts_jobs() {
-    local url="${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs"
+    local query="${1:-}"
+    local base="${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs"
+    local url="$base${query:+?$query}"
     local key="${TTS_API_KEY:-}"
     if [ -z "$key" ]; then
         err "TTS_API_KEY is empty; set it in .env or export it before running"
@@ -307,8 +310,12 @@ _count_backfill_jobs() {
 
 if [ "${1:-}" = "--queue" ]; then
     mode="backfill"
-    [ "${2:-}" = "--all" ] && mode="all"
-    response=$(_fetch_tts_jobs)
+    query="prefix=backfill-"
+    if [ "${2:-}" = "--all" ]; then
+        mode="all"
+        query=""
+    fi
+    response=$(_fetch_tts_jobs "$query")
     if [ -z "$response" ]; then
         err "Couldn't reach ${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs"
         exit 1
@@ -321,7 +328,7 @@ if [ "${1:-}" = "--watch" ]; then
     fail_streak=0
     first_iter=1
     while true; do
-        response=$(_fetch_tts_jobs)
+        response=$(_fetch_tts_jobs "prefix=backfill-")
         if [ -z "$response" ]; then
             fail_streak=$((fail_streak + 1))
             if [ "$fail_streak" -ge 3 ]; then

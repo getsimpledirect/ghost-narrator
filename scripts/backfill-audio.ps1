@@ -189,8 +189,11 @@ if ($Stop) {
 # ─── Queue snapshot helpers (shared by -Queue and -Watch) ────────────────────
 # Fetch /tts/jobs as parsed object. Returns $null on transient error so
 # the caller can decide between bailing and retrying.
+# $Query (optional) is appended as a query string (e.g. "prefix=backfill-").
 function Get-TtsJobs {
-    $url = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
+    param([string]$Query = "")
+    $base = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
+    $url  = if ($Query) { "$base`?$Query" } else { $base }
     $key = $env:TTS_API_KEY
     if (-not $key) {
         Write-Err "TTS_API_KEY is empty; set it in .env or `$env:TTS_API_KEY before running"
@@ -310,7 +313,8 @@ function Get-BackfillJobCount {
 
 # ─── Subcommand: -Queue ──────────────────────────────────────────────────────
 if ($Queue) {
-    $resp = Get-TtsJobs
+    $query = if ($All) { '' } else { 'prefix=backfill-' }
+    $resp = Get-TtsJobs -Query $query
     if ($null -eq $resp) {
         $url = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
         Write-Err "Couldn't reach $url"
@@ -326,7 +330,7 @@ if ($Watch) {
     $failStreak = 0
     $firstIter  = $true
     while ($true) {
-        $resp = Get-TtsJobs
+        $resp = Get-TtsJobs -Query 'prefix=backfill-'
         if ($null -eq $resp) {
             $failStreak++
             if ($failStreak -ge 3) {
