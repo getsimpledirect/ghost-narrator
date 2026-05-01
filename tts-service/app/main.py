@@ -178,6 +178,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error(f'Failed to initialize job store: {exc}')
         raise
 
+    # Reap orphaned jobs from the previous process. Runs before request
+    # handlers register, so no race with new submissions. Wrapped in
+    # try/except: a reaper failure must not block startup — the system
+    # worked before this hook existed and can survive its absence.
+    try:
+        from app.domains.job.store import reap_orphaned_jobs
+
+        counts = await reap_orphaned_jobs(get_job_store())
+        if counts:
+            details = ', '.join(f'{k}={v}' for k, v in sorted(counts.items()))
+            logger.info('Reaped %d orphan(s): %s', sum(counts.values()), details)
+        else:
+            logger.info('Reaped 0 orphans on startup')
+    except Exception as exc:
+        logger.warning('Orphan reaper failed (continuing startup): %s', exc)
+
     try:
         from app.domains.tts_config.store import initialize as initialize_tts_config_store
 

@@ -33,11 +33,13 @@ import asyncio
 import json
 import logging
 import time
+from collections import defaultdict
 from typing import Any, Optional
 
 import redis.asyncio as redis
 
 from app.config import REDIS_JOB_TTL, REDIS_URL
+from app.domains.job.state import MAX_RESUME_ATTEMPTS, TERMINAL_STATES
 
 logger = logging.getLogger(__name__)
 
@@ -493,3 +495,156 @@ async def initialize_job_store(redis_url: Optional[str] = None) -> JobStore:
     store = get_job_store()
     await store.initialize(redis_url)
     return store
+
+
+async def _mark_orphaned(
+    job_store: JobStore,
+    job_id: str,
+    original_status: str,
+    reason: str,
+) -> None:
+    """Mark a single orphan as failed with diagnostic context.
+
+    Per-record errors are caught and logged so one bad record doesn't
+    block the rest of the reaper from running.
+    """
+    try:
+        existing = await job_store.get(job_id) or {}
+        started_at = existing.get('started_at') or existing.get('created_at') or time.time()
+        await job_store.update(
+            job_id,
+            {
+                'status': 'failed',
+                'error': reason,
+                'completed_at': time.time(),
+                'duration_seconds': time.time() - started_at,
+            },
+        )
+    except Exception as exc:
+        logger.warning('Failed to mark orphan %s (was %s): %s', job_id, original_status, exc)
+
+
+async def _scheduled_resume(
+    job_id: str,
+    text: str,
+    gcs_object_path: str,
+    site_slug: str,
+    ready_event: asyncio.Event,
+) -> None:
+    """Wait for the TTS engine to be ready, then run the resumed job.
+
+    run_tts_job() has its own engine-ready wait with a 60 s timeout. On a
+    cold start where the model load takes ~60-65 s, mass-resuming N jobs
+    would have all N independently hitting the timeout simultaneously.
+    Awaiting ready_event here lets all resumed jobs proceed past the
+    internal wait immediately once the engine signals ready.
+    """
+    # Local import to avoid circular: store -> tts_job -> ... -> store.
+    from app.domains.job.runner import run_tts_job
+
+    await ready_event.wait()
+    await run_tts_job(job_id, text, gcs_object_path, site_slug)
+
+
+async def reap_orphaned_jobs(job_store: JobStore) -> dict[str, int]:
+    """At startup, resume queued jobs and fail mid-pipeline orphans.
+
+    Single-container deployment assumption: this process is the sole worker.
+    Any non-terminal job at startup is an orphan from a previous process
+    that died before the job reached a terminal state. The work-in-progress
+    state of a `processing` or `paused` job (segment WAVs, decoded audio
+    buffers, in-memory async tasks) lived only in the previous process's
+    memory and cannot be resumed; those must be marked failed. A `queued`
+    job still has its inputs durable in Redis (after the schema change in
+    /tts/generate) so it can be re-scheduled cleanly.
+
+    Safe by construction: this runs inside FastAPI's lifespan startup,
+    which completes before any request handler is registered — no new
+    jobs can be created during reaper execution.
+
+    Returns: counts by action, e.g.
+        {"resumed": 2, "failed_processing": 1, "failed_paused": 0,
+         "failed_legacy_queued": 0, "failed_resume_budget_exceeded": 0}
+    """
+    counts: defaultdict[str, int] = defaultdict(int)
+
+    try:
+        jobs = await job_store.list_all()
+    except Exception as exc:
+        logger.warning('Reaper could not list jobs (continuing startup): %s', exc)
+        return {}
+
+    if not jobs:
+        return {}
+
+    # Defer engine-ready event lookup until we know we have at least one
+    # queued job to resume. Avoids touching the engine module unless needed.
+    ready_event: Optional[asyncio.Event] = None
+
+    for job_id, job_data in jobs.items():
+        status = job_data.get('status')
+        if not status or status in TERMINAL_STATES:
+            continue
+
+        if status == 'queued':
+            text = job_data.get('text')
+            gcs_path = job_data.get('gcs_object_path')
+            site_slug = job_data.get('site_slug', 'site')
+            resume_count = int(job_data.get('resume_count', 0) or 0)
+
+            if not text or not gcs_path:
+                # Pre-durable-queue record (created before this commit) has
+                # no recoverable inputs in Redis. Mark failed so the
+                # backfill discovery step re-triggers it.
+                await _mark_orphaned(
+                    job_store,
+                    job_id,
+                    status,
+                    reason='legacy queued: no durable inputs in Redis',
+                )
+                counts['failed_legacy_queued'] += 1
+                continue
+
+            if resume_count >= MAX_RESUME_ATTEMPTS:
+                await _mark_orphaned(
+                    job_store,
+                    job_id,
+                    status,
+                    reason=f'exceeded resume budget ({MAX_RESUME_ATTEMPTS} attempts)',
+                )
+                counts['failed_resume_budget_exceeded'] += 1
+                continue
+
+            try:
+                await job_store.update(job_id, {'resume_count': resume_count + 1})
+            except Exception as exc:
+                logger.warning(
+                    'Failed to bump resume_count for %s; skipping resume: %s',
+                    job_id,
+                    exc,
+                )
+                counts['failed_resume_count_update'] += 1
+                continue
+
+            if ready_event is None:
+                # Local import to avoid circular dependency at module load.
+                from app.core.tts_engine import get_engine_ready_event
+
+                ready_event = get_engine_ready_event()
+
+            asyncio.create_task(
+                _scheduled_resume(job_id, text, gcs_path, site_slug, ready_event),
+                name=f'resume-{job_id}',
+            )
+            counts['resumed'] += 1
+        else:
+            # processing, paused, or any other non-terminal transient state
+            await _mark_orphaned(
+                job_store,
+                job_id,
+                status,
+                reason=f'TTS service restarted while job was {status}',
+            )
+            counts[f'failed_{status}'] += 1
+
+    return dict(counts)

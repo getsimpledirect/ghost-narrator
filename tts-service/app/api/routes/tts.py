@@ -174,13 +174,26 @@ async def generate(
     # Sanitize and validate job ID
     job_id = _sanitize_job_id(request.job_id)
 
-    # Atomically check for existing job and create initial record
+    # Atomically check for existing job and create initial record.
+    # `text`, `gcs_object_path`, and `site_slug` are persisted so the orphan
+    # reaper can resume queued jobs after a service restart. These fields
+    # are stripped from the /tts/jobs list response (see list_jobs) and
+    # ignored by StatusResponse (extra='ignore'), so they never reach
+    # API consumers.
     job_store = get_job_store()
+    gcs_object_path = request.storage_path or (
+        f'{GCS_AUDIO_PREFIX}/{request.site_slug}/{job_id}.mp3'
+    )
     initial_data = {
         'status': 'queued',
         'gcs_uri': None,
         'local_path': None,
         'created_at': time.time(),
+        # Durable inputs for the orphan reaper (resume after restart).
+        'text': request.text,
+        'gcs_object_path': gcs_object_path,
+        'site_slug': request.site_slug or 'site',
+        'resume_count': 0,
     }
 
     created = await job_store.create_if_not_exists(job_id, initial_data)
@@ -196,10 +209,8 @@ async def generate(
 
     record_job_created()
 
-    # Build GCS object path
-    gcs_object_path = request.storage_path or (
-        f'{GCS_AUDIO_PREFIX}/{request.site_slug}/{job_id}.mp3'
-    )
+    # gcs_object_path was computed above and persisted into initial_data so the
+    # orphan reaper can resume the job after a restart with the same path.
 
     # Add job to background tasks
     background_tasks.add_task(
@@ -478,6 +489,15 @@ async def list_jobs() -> JobListResponse:
     """List all TTS jobs."""
     job_store = get_job_store()
     jobs = await job_store.list_all()
+
+    # Strip the durable-input fields from the list view. These are persisted
+    # so the orphan reaper can resume queued jobs after a restart, but they
+    # are large (full article text per job) and never needed by API consumers.
+    # StatusResponse already drops them via extra='ignore'; JobListResponse's
+    # `jobs: dict[str, dict[str, Any]]` doesn't filter, so we strip here.
+    for job_data in jobs.values():
+        for field in ('text', 'gcs_object_path', 'site_slug'):
+            job_data.pop(field, None)
 
     return JobListResponse(
         total=len(jobs),
