@@ -586,16 +586,25 @@ def _filter_sort_paginate_jobs(
                 continue
         items.append((job_id, job_data))
 
-    # Sort. None values sort low (False < True for the (None, value) tuple),
-    # so missing-field jobs cluster at the start of asc order / end of desc.
-    def sort_key(item: tuple[str, dict[str, Any]]) -> tuple[bool, Any]:
-        job_id, job_data = item
-        if sort_field == 'id':
-            return (False, job_id)
-        v = job_data.get(sort_field)
-        return (v is None, v if v is not None else '')
-
-    items.sort(key=sort_key, reverse=sort_desc)
+    # Sort. None-valued items are bucketed out and appended at the end so
+    # they sort last regardless of direction (asc OR desc) — putting them
+    # in a single sort key would have them flip ends with `reverse=True`,
+    # so a malformed record missing `created_at` would dominate the top
+    # of the default `-created_at` view. Bucketing keeps the user-visible
+    # ordering of well-formed records stable.
+    if sort_field == 'id':
+        # job_id is the dict key — never None; no bucketing needed.
+        items.sort(key=lambda item: item[0], reverse=sort_desc)
+    else:
+        non_none_items: list[tuple[str, dict[str, Any]]] = []
+        none_items: list[tuple[str, dict[str, Any]]] = []
+        for item in items:
+            if item[1].get(sort_field) is None:
+                none_items.append(item)
+            else:
+                non_none_items.append(item)
+        non_none_items.sort(key=lambda item: item[1].get(sort_field), reverse=sort_desc)
+        items = non_none_items + none_items
 
     total = len(items)
 

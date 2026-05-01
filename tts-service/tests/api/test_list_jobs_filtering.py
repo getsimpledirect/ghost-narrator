@@ -338,8 +338,8 @@ class TestSorting:
         result, _ = _filter_sort_paginate_jobs(store, sort='-id')
         assert list(result.keys()) == ['zeta', 'mike', 'alpha']
 
-    def test_sort_with_none_values(self):
-        # Jobs missing the sort field cluster at one end; never raise.
+    def test_sort_with_none_values_asc_puts_none_last(self):
+        # Regression: None-valued jobs must appear at the END in ASC order.
         store = _store(
             ('a', {'completed_at': 100.0}),
             ('b', {'completed_at': None}),
@@ -347,7 +347,34 @@ class TestSorting:
         )
         result, total = _filter_sort_paginate_jobs(store, sort='completed_at')
         assert total == 3
-        assert set(result.keys()) == {'a', 'b', 'c'}
+        # Non-None values sorted asc, then None at the end.
+        assert list(result.keys()) == ['a', 'c', 'b']
+
+    def test_sort_with_none_values_desc_puts_none_last(self):
+        # Regression: a previous (False, v) / (True, '') sort key produced
+        # None-first in DESC, which displaced legitimate newest-first jobs
+        # for the default ?sort=-created_at view. Bucketed sort fixes it
+        # so None values sit at the end regardless of direction.
+        store = _store(
+            ('a', {'completed_at': 100.0}),
+            ('b', {'completed_at': None}),
+            ('c', {'completed_at': 200.0}),
+        )
+        result, total = _filter_sort_paginate_jobs(store, sort='-completed_at')
+        assert total == 3
+        # Non-None values sorted desc, then None at the end.
+        assert list(result.keys()) == ['c', 'a', 'b']
+
+    def test_sort_only_none_values(self):
+        # Pathological case: every job missing the sort field. Should be
+        # stable and not raise.
+        store = _store(
+            ('a', {'completed_at': None}),
+            ('b', {'completed_at': None}),
+        )
+        result, total = _filter_sort_paginate_jobs(store, sort='completed_at')
+        assert total == 2
+        assert set(result.keys()) == {'a', 'b'}
 
     def test_unknown_sort_field_raises_value_error(self):
         store = _store(('a', {}))
