@@ -182,6 +182,13 @@ services:
       # Database
       - DB_TYPE=sqlite
       - DB_SQLITE_VACUUM_ON_STARTUP=true
+      # SQLite read-connection pool. Without this, n8n's
+      # LegacySqliteExecutionRecoveryService races startup migrations
+      # under contention, the DB connection times out, and the cleanup
+      # assertion fires ("must be connected and migrated"), crash-looping
+      # the container. Setting a pool size >= 1 serialises reads behind
+      # the migration lock and resolves the race.
+      - DB_SQLITE_POOL_SIZE=4
       # Execution history pruning — prevents SQLite from growing unbounded
       - EXECUTIONS_DATA_PRUNE=true
       - EXECUTIONS_DATA_MAX_AGE=168
