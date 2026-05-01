@@ -105,7 +105,11 @@ def _sanitize_job_id(job_id: str | None) -> str:
         'then retrieve the audio URL from the `gcs_uri` field or download via '
         '`GET /tts/download/{job_id}` (local storage only).\n\n'
         'If you submit a request with a `job_id` that already exists, the existing '
-        "job's current status is returned — no duplicate synthesis is triggered."
+        "job's current status is returned — no duplicate synthesis is triggered.\n\n"
+        'Queued state is durable across service restarts: the request payload '
+        'is persisted to Redis at queue time, so a process crash leaves the job '
+        'recoverable. On startup, an orphan reaper resumes queued jobs and marks '
+        'mid-pipeline (processing/paused) jobs as failed.'
     ),
     responses={
         202: {'description': 'Job accepted and queued for synthesis'},

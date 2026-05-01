@@ -25,16 +25,24 @@
 # Ghost Narrator — Audio Backfill Script
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# Finds all published Ghost posts that do not yet have an <audio> player
-# embedded and triggers the Ghost Narrator n8n pipeline for each one,
-# polling the TTS service for job completion before moving to the next article.
+# Finds all published Ghost posts that do not yet have a working <audio>
+# player embedded and triggers the Ghost Narrator n8n pipeline for each
+# one. Default mode triggers all jobs, then exits — TTS-side processing
+# continues in the background, and you monitor it with --queue or
+# --watch (or check the Ghost site once jobs complete).
 #
 # Usage:
-#   bash scripts/backfill-audio.sh              # interactive foreground run
-#   bash scripts/backfill-audio.sh --background # collect inputs, then run in background
-#   bash scripts/backfill-audio.sh --status     # show background run status + log tail
+#   bash scripts/backfill-audio.sh              # discover + trigger all jobs, exit
+#   bash scripts/backfill-audio.sh --queue      # job-level status snapshot
+#   bash scripts/backfill-audio.sh --queue --all  # include non-backfill jobs
+#   bash scripts/backfill-audio.sh --watch      # loop --queue until terminal
+#   bash scripts/backfill-audio.sh --status     # log-level tail + background PID
 #   bash scripts/backfill-audio.sh --logs       # live-tail the background log
-#   bash scripts/backfill-audio.sh --stop       # stop a running background job
+#   bash scripts/backfill-audio.sh --stop       # stop a backgrounded run
+#
+# Background mode is still available via the interactive "Run in background?"
+# prompt, but with the trigger phase taking <10s for typical batches it's
+# rarely needed; --queue / --watch are the right tools for monitoring.
 #
 # Requirements:
 #   curl, jq  →  sudo apt install curl jq  (or: brew install curl jq)
@@ -182,6 +190,162 @@ if [ "${1:-}" = "--stop" ]; then
         rm -f "$PID_FILE"
     fi
     exit 0
+fi
+
+# ─── Queue snapshot helpers (shared by --queue and --watch) ──────────────────
+# Fetch /tts/jobs as JSON. Echoes the JSON body on success; empty on error.
+# Caller decides what to do with empty (transient retry vs. bail).
+_fetch_tts_jobs() {
+    local url="${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs"
+    local key="${TTS_API_KEY:-}"
+    if [ -z "$key" ]; then
+        err "TTS_API_KEY is empty; set it in .env or export it before running"
+        return 1
+    fi
+    curl -sS --max-time 10 \
+        -H "Authorization: Bearer ${key}" \
+        "$url" 2>/dev/null
+}
+
+# Render a status table from /tts/jobs JSON. Reads JSON on stdin.
+# $1 = "backfill" (filter to backfill-* IDs) or "all" (no filter).
+_render_queue_table() {
+    local mode="${1:-backfill}"
+    local now
+    now=$(date +%s)
+    # Build an array of job rows: [id, status, age_seconds_or_empty, error]
+    # Sort: failed first (most important), active, queued, completed/cancelled/deleted last.
+    local filter='.jobs | to_entries | map({
+        id: .key,
+        status: (.value.status // "unknown"),
+        created_at: (.value.created_at // 0),
+        started_at: (.value.started_at // null),
+        completed_at: (.value.completed_at // null),
+        error: (.value.error // "")
+    })'
+    if [ "$mode" = "backfill" ]; then
+        filter+=' | map(select(.id | startswith("backfill-")))'
+    fi
+    filter+=' | sort_by(
+        if .status == "failed" then 0
+        elif .status == "processing" or .status == "paused" then 1
+        elif .status == "queued" then 2
+        else 3 end
+    )'
+
+    local rows_tsv
+    rows_tsv=$(jq -r --argjson now "$now" "$filter"' | .[] |
+        [
+            .id,
+            .status,
+            (if .status == "queued" then "—"
+             elif .completed_at != null and .started_at != null then ((.completed_at - .started_at) | floor | tostring + "s")
+             elif .started_at != null then (($now - .started_at) | floor | tostring + "s")
+             elif .created_at != null then (($now - .created_at) | floor | tostring + "s")
+             else "—" end),
+            (.error // "" | .[0:60])
+        ] | @tsv')
+
+    local total queued processing paused completed failed cancelled
+    total=$(echo "$rows_tsv"   | grep -c . || true)
+    queued=$(echo "$rows_tsv"  | awk -F'\t' '$2=="queued"     {n++} END{print n+0}')
+    processing=$(echo "$rows_tsv" | awk -F'\t' '$2=="processing" {n++} END{print n+0}')
+    paused=$(echo "$rows_tsv"  | awk -F'\t' '$2=="paused"     {n++} END{print n+0}')
+    completed=$(echo "$rows_tsv" | awk -F'\t' '$2=="completed" {n++} END{print n+0}')
+    failed=$(echo "$rows_tsv"  | awk -F'\t' '$2=="failed"     {n++} END{print n+0}')
+    cancelled=$(echo "$rows_tsv" | awk -F'\t' '$2=="cancelled" || $2=="deleted" {n++} END{print n+0}')
+    local active=$((processing + paused))
+
+    local label="Backfill Queue"
+    [ "$mode" = "all" ] && label="All TTS Jobs"
+    echo ""
+    echo -e "${BOLD}─── ${label} (snapshot at $(date +%H:%M:%S)) ─────────────────────${NC}"
+    if [ "$total" -eq 0 ]; then
+        echo "(no jobs)"
+        echo ""
+        return 0
+    fi
+    # Format: ID truncated to 60 chars, STATUS 11 chars, AGE 8 chars, ERROR
+    printf "%-60s  %-11s  %-8s  %s\n" "ID (slug part)" "STATUS" "AGE" "ERROR"
+    while IFS=$'\t' read -r id status age error; do
+        [ -z "$id" ] && continue
+        # Strip the leading 'backfill-{site_slug}-pid-{post_id}-' so the
+        # human-readable slug shows in the column. Falls back to truncated ID.
+        local display_id
+        display_id=$(echo "$id" | sed -E 's/^backfill-[a-z0-9-]+-pid-[a-f0-9]{24}-//; s/-[0-9]{13}$//')
+        # Truncate to 60 chars max, ellipsis if cut.
+        if [ "${#display_id}" -gt 60 ]; then
+            display_id="${display_id:0:57}..."
+        fi
+        local err_str=""
+        [ -n "$error" ] && err_str="(${error})"
+        printf "%-60s  %-11s  %-8s  %s\n" "$display_id" "$status" "$age" "$err_str"
+    done <<< "$rows_tsv"
+    echo -e "${BOLD}──────────────────────────────────────────────────────────────${NC}"
+    printf "Totals:  %d done · %d active · %d queued · %d failed · %d cancelled (%d total)\n" \
+        "$completed" "$active" "$queued" "$failed" "$cancelled" "$total"
+    echo ""
+    return 0
+}
+
+# Return 0 (true) if all backfill-* jobs in the JSON on stdin are terminal.
+# Terminal = completed | failed | cancelled | deleted.
+_all_terminal() {
+    local response="$1"
+    local non_terminal_count
+    non_terminal_count=$(echo "$response" | jq '[.jobs | to_entries[]
+        | select(.key | startswith("backfill-"))
+        | select((.value.status // "") | IN("completed","failed","cancelled","deleted") | not)
+    ] | length')
+    [ "$non_terminal_count" = "0" ]
+}
+
+_count_backfill_jobs() {
+    local response="$1"
+    echo "$response" | jq '[.jobs | to_entries[] | select(.key | startswith("backfill-"))] | length'
+}
+
+if [ "${1:-}" = "--queue" ]; then
+    mode="backfill"
+    [ "${2:-}" = "--all" ] && mode="all"
+    response=$(_fetch_tts_jobs)
+    if [ -z "$response" ]; then
+        err "Couldn't reach ${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs"
+        exit 1
+    fi
+    _render_queue_table "$mode" <<< "$response"
+    exit 0
+fi
+
+if [ "${1:-}" = "--watch" ]; then
+    fail_streak=0
+    first_iter=1
+    while true; do
+        response=$(_fetch_tts_jobs)
+        if [ -z "$response" ]; then
+            fail_streak=$((fail_streak + 1))
+            if [ "$fail_streak" -ge 3 ]; then
+                err "Couldn't reach ${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs after 3 attempts"
+                exit 1
+            fi
+            warn "Transient fetch failure (attempt ${fail_streak}/3); retrying in 15s"
+            sleep 15
+            continue
+        fi
+        fail_streak=0
+        clear
+        _render_queue_table "backfill" <<< "$response"
+        if [ "$first_iter" = 1 ] && [ "$(_count_backfill_jobs "$response")" = "0" ]; then
+            warn "No backfill-* jobs found in queue. Did the trigger phase run?"
+            exit 0
+        fi
+        first_iter=0
+        if _all_terminal "$response"; then
+            success "All backfill jobs are in a terminal state."
+            exit 0
+        fi
+        sleep 15
+    done
 fi
 
 # ─── Config-file mode (used internally by background re-invocation) ──────────
@@ -755,17 +919,16 @@ for site_idx in "${!GHOST_URLS[@]}"; do
         if [[ "$HTTP_CODE" =~ ^2 ]]; then
             success "Pipeline triggered (HTTP ${HTTP_CODE})"
         else
-            err "Webhook returned HTTP ${HTTP_CODE} — skipping poll for this post"
+            err "Webhook returned HTTP ${HTTP_CODE} — job not queued"
             GRAND_ERRORS=$((GRAND_ERRORS + 1))
             continue
         fi
 
-        # Poll TTS service until complete
-        if poll_tts_job "$JOB_ID"; then
-            : # success already printed
-        else
-            GRAND_ERRORS=$((GRAND_ERRORS + 1))
-        fi
+        # Small spacing between webhook triggers: n8n's default SQLite backend
+        # serializes workflow-execution log writes, so a tight burst of 25+
+        # triggers can push some responses past curl's --max-time. 50 ms is
+        # enough headroom and adds <2s total for typical batch sizes.
+        sleep 0.05
 
     done < <(jq -c '.[]' "$NEEDS_FILE")
 
@@ -785,11 +948,14 @@ success "Jobs triggered     : ${GRAND_TRIGGERED}"
 echo ""
 
 if [ "$GRAND_TRIGGERED" -gt 0 ]; then
+    echo "Jobs are now queued in the TTS service. They will process one at a"
+    echo "time on the GPU and complete in the background."
+    echo ""
     echo "Monitor:"
-    echo "  n8n executions : ${N8N_WEBHOOK%/webhook/*}"
-    echo "  TTS jobs       : ${TTS_SERVICE_URL}/docs"
+    echo "  Snapshot       : bash $0 --queue"
+    echo "  Live dashboard : bash $0 --watch"
     echo "  TTS logs       : docker logs -f tts-service"
-    echo "  n8n logs       : docker logs -f n8n"
+    echo "  n8n executions : ${N8N_WEBHOOK%/webhook/*}"
     echo ""
     if [ "$GRAND_ERRORS" -gt 0 ]; then
         warn "${GRAND_ERRORS} job(s) failed. Re-run to retry — posts that already have audio are skipped automatically."

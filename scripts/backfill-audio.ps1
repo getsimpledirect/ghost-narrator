@@ -25,17 +25,21 @@
 # Ghost Narrator — Audio Backfill Script (PowerShell)
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# Finds all published Ghost posts that do not yet have an <audio> player
-# embedded and triggers the Ghost Narrator n8n pipeline for each one,
-# polling the TTS service for job completion before proceeding to the next
-# article (no fixed delay).
+# Finds all published Ghost posts that do not yet have a working <audio>
+# player embedded and triggers the Ghost Narrator n8n pipeline for each
+# one. Default mode triggers all jobs, then exits — TTS-side processing
+# continues in the background, and you monitor with -Queue or -Watch
+# (or check the Ghost site once jobs complete).
 #
 # Usage:
-#   .\backfill-audio.ps1                     # Interactive foreground run
-#   .\backfill-audio.ps1 -Background         # Collect config then run in background
-#   .\backfill-audio.ps1 -Status             # Show background run status + last log lines
-#   .\backfill-audio.ps1 -Logs               # Tail background run log (Ctrl+C to stop)
-#   .\backfill-audio.ps1 -Stop               # Stop the background run
+#   .\backfill-audio.ps1                     # discover + trigger all jobs, exit
+#   .\backfill-audio.ps1 -Queue              # job-level status snapshot
+#   .\backfill-audio.ps1 -Queue -All         # include non-backfill jobs
+#   .\backfill-audio.ps1 -Watch              # loop -Queue until terminal
+#   .\backfill-audio.ps1 -Status             # log-level tail + background PID
+#   .\backfill-audio.ps1 -Logs               # tail background run log (Ctrl+C to stop)
+#   .\backfill-audio.ps1 -Stop               # stop a backgrounded run
+#   .\backfill-audio.ps1 -Background         # rarely needed — trigger phase is <10s
 #
 # Requirements:
 #   PowerShell 5.1+ (built into Windows) or PowerShell 7+
@@ -46,6 +50,9 @@ param(
     [switch]$Status,
     [switch]$Logs,
     [switch]$Stop,
+    [switch]$Queue,
+    [switch]$Watch,
+    [switch]$All,
     # Internal: used when re-invoked as a background worker; not user-facing
     [string]$Config = ""
 )
@@ -179,6 +186,176 @@ if ($Stop) {
     exit 0
 }
 
+# ─── Queue snapshot helpers (shared by -Queue and -Watch) ────────────────────
+# Fetch /tts/jobs as parsed object. Returns $null on transient error so
+# the caller can decide between bailing and retrying.
+function Get-TtsJobs {
+    $url = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
+    $key = $env:TTS_API_KEY
+    if (-not $key) {
+        Write-Err "TTS_API_KEY is empty; set it in .env or `$env:TTS_API_KEY before running"
+        return $null
+    }
+    try {
+        return Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 10 -Headers @{ Authorization = "Bearer $key" }
+    } catch {
+        return $null
+    }
+}
+
+# Render a status table from a /tts/jobs response object.
+# $Mode = 'backfill' (filter to backfill-* IDs) or 'all' (no filter).
+function Format-QueueTable {
+    param($Response, [string]$Mode = 'backfill')
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+    if (-not $Response -or -not $Response.jobs) {
+        Write-Host "(no jobs)"
+        return
+    }
+
+    # Convert PSCustomObject "jobs" map (keyed by job_id) into rows
+    $rows = @()
+    foreach ($prop in $Response.jobs.PSObject.Properties) {
+        $id = $prop.Name
+        if ($Mode -eq 'backfill' -and -not $id.StartsWith('backfill-')) { continue }
+        $j = $prop.Value
+        $status = if ($j.status) { [string]$j.status } else { 'unknown' }
+        $startedAt   = if ($j.started_at)   { [double]$j.started_at }   else { $null }
+        $completedAt = if ($j.completed_at) { [double]$j.completed_at } else { $null }
+        $createdAt   = if ($j.created_at)   { [double]$j.created_at }   else { $null }
+        $errorStr    = if ($j.error)        { [string]$j.error }        else { '' }
+
+        # Compute age
+        $age = '-'
+        if ($status -eq 'queued') {
+            $age = '-'
+        } elseif ($completedAt -and $startedAt) {
+            $age = "$([int]($completedAt - $startedAt))s"
+        } elseif ($startedAt) {
+            $age = "$([int]($now - $startedAt))s"
+        } elseif ($createdAt) {
+            $age = "$([int]($now - $createdAt))s"
+        }
+
+        # Display ID: strip 'backfill-{site}-pid-{post_id}-' prefix and '-{timestamp}' suffix
+        $displayId = $id -replace '^backfill-[a-z0-9-]+-pid-[a-f0-9]{24}-', '' -replace '-[0-9]{13}$', ''
+        if ($displayId.Length -gt 60) { $displayId = $displayId.Substring(0, 57) + '...' }
+
+        # Sort priority: failed → active → queued → terminal
+        $sortKey = switch ($status) {
+            'failed'     { 0 }
+            'processing' { 1 }
+            'paused'     { 1 }
+            'queued'     { 2 }
+            default      { 3 }
+        }
+
+        $rows += [PSCustomObject]@{
+            SortKey   = $sortKey
+            DisplayId = $displayId
+            Status    = $status
+            Age       = $age
+            Error     = if ($errorStr) { '(' + ($errorStr.Substring(0, [Math]::Min(60, $errorStr.Length))) + ')' } else { '' }
+        }
+    }
+
+    $label = if ($Mode -eq 'all') { 'All TTS Jobs' } else { 'Backfill Queue' }
+    Write-Host ""
+    Write-Host "─── $label (snapshot at $((Get-Date).ToString('HH:mm:ss'))) ─────────────────────" -ForegroundColor White
+    if ($rows.Count -eq 0) {
+        Write-Host "(no jobs)"
+        Write-Host ""
+        return
+    }
+
+    $sorted = $rows | Sort-Object SortKey, DisplayId
+    "{0,-60}  {1,-11}  {2,-8}  {3}" -f 'ID (slug part)', 'STATUS', 'AGE', 'ERROR'
+    foreach ($r in $sorted) {
+        "{0,-60}  {1,-11}  {2,-8}  {3}" -f $r.DisplayId, $r.Status, $r.Age, $r.Error
+    }
+    Write-Host "──────────────────────────────────────────────────────────────" -ForegroundColor White
+
+    $completed = ($rows | Where-Object { $_.Status -eq 'completed' }).Count
+    $failed    = ($rows | Where-Object { $_.Status -eq 'failed'    }).Count
+    $active    = ($rows | Where-Object { $_.Status -eq 'processing' -or $_.Status -eq 'paused' }).Count
+    $queued    = ($rows | Where-Object { $_.Status -eq 'queued'    }).Count
+    $cancelled = ($rows | Where-Object { $_.Status -eq 'cancelled' -or $_.Status -eq 'deleted' }).Count
+    "Totals:  {0} done · {1} active · {2} queued · {3} failed · {4} cancelled ({5} total)" -f $completed, $active, $queued, $failed, $cancelled, $rows.Count
+    Write-Host ""
+}
+
+# Returns $true if every backfill-* job in the response is in a terminal state.
+function Test-AllTerminal {
+    param($Response)
+    if (-not $Response -or -not $Response.jobs) { return $true }
+    $terminal = @('completed', 'failed', 'cancelled', 'deleted')
+    foreach ($prop in $Response.jobs.PSObject.Properties) {
+        if (-not $prop.Name.StartsWith('backfill-')) { continue }
+        $st = if ($prop.Value.status) { [string]$prop.Value.status } else { '' }
+        if ($terminal -notcontains $st) { return $false }
+    }
+    return $true
+}
+
+function Get-BackfillJobCount {
+    param($Response)
+    if (-not $Response -or -not $Response.jobs) { return 0 }
+    $n = 0
+    foreach ($prop in $Response.jobs.PSObject.Properties) {
+        if ($prop.Name.StartsWith('backfill-')) { $n++ }
+    }
+    return $n
+}
+
+# ─── Subcommand: -Queue ──────────────────────────────────────────────────────
+if ($Queue) {
+    $resp = Get-TtsJobs
+    if ($null -eq $resp) {
+        $url = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
+        Write-Err "Couldn't reach $url"
+        exit 1
+    }
+    $mode = if ($All) { 'all' } else { 'backfill' }
+    Format-QueueTable -Response $resp -Mode $mode
+    exit 0
+}
+
+# ─── Subcommand: -Watch ──────────────────────────────────────────────────────
+if ($Watch) {
+    $failStreak = 0
+    $firstIter  = $true
+    while ($true) {
+        $resp = Get-TtsJobs
+        if ($null -eq $resp) {
+            $failStreak++
+            if ($failStreak -ge 3) {
+                $url = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
+                Write-Err "Couldn't reach $url after 3 attempts"
+                exit 1
+            }
+            Write-Warn "Transient fetch failure (attempt $failStreak/3); retrying in 15s"
+            Start-Sleep -Seconds 15
+            continue
+        }
+        $failStreak = 0
+        Clear-Host
+        Format-QueueTable -Response $resp -Mode 'backfill'
+
+        if ($firstIter -and (Get-BackfillJobCount $resp) -eq 0) {
+            Write-Warn "No backfill-* jobs found in queue. Did the trigger phase run?"
+            exit 0
+        }
+        $firstIter = $false
+
+        if (Test-AllTerminal $resp) {
+            Write-Success "All backfill jobs are in a terminal state."
+            exit 0
+        }
+        Start-Sleep -Seconds 15
+    }
+}
+
 # ─── Subcommand: -Config (background worker mode) ─────────────────────────────
 # This parameter is set internally when the script re-invokes itself via
 # Start-Process. It loads config from a JSON file and skips all prompts.
@@ -198,11 +375,6 @@ if ($Config -ne "") {
     $skipInteractive = $true
 }
 
-# ─── Polling constants ────────────────────────────────────────────────────────
-$POLL_INTERVAL = 15     # seconds between status checks
-$N8N_TIMEOUT   = 600    # seconds before assuming n8n/LLM pipeline stalled
-$MAX_WAIT      = 1800   # absolute maximum wait per job (30 min)
-
 # ─── Banner + interactive prompts ─────────────────────────────────────────────
 if (-not $skipInteractive) {
     Write-Host ""
@@ -211,8 +383,9 @@ if (-not $skipInteractive) {
     Write-Host "=========================================================" -ForegroundColor White
     Write-Host ""
     Write-Host "Scans your Ghost site(s) for published posts that do not yet have"
-    Write-Host "an audio player embedded, then triggers the narration pipeline for"
-    Write-Host "each one, polling until each job completes before starting the next."
+    Write-Host "a working audio player embedded, then triggers the narration pipeline"
+    Write-Host "for each one. Jobs queue in the TTS service and process one at a time"
+    Write-Host "on the GPU. Use -Queue or -Watch to monitor progress."
     Write-Host ""
 
     Write-Host "-- Pipeline -------------------------------------------------" -ForegroundColor White
@@ -397,124 +570,10 @@ function Get-AllPosts {
     return $allPosts
 }
 
-# ─── Helper: poll TTS service until job completes ─────────────────────────────
-# Returns $true on success, $false on failure/timeout.
-#
-# Phase logic:
-#   HTTP 404 → n8n is still running the LLM step; job not yet submitted to TTS
-#   status=queued/processing → TTS synthesis is running
-#   status=completed → success
-#   status=failed    → failure
-#   elapsed > N8N_TIMEOUT while still 404 → n8n pipeline stalled
-#   elapsed > MAX_WAIT → give up
-function Wait-ForJob {
-    param(
-        [string]$JobId,
-        [string]$TtsUrl,
-        [string]$TtsApiKey,
-        [int]$PollInterval,
-        [int]$N8nTimeout,
-        [int]$MaxWait
-    )
-
-    $elapsed        = 0
-    $n8nLogged      = $false
-    $ttsLogged      = $false
-    $authHeaders    = @{ Authorization = "Bearer $TtsApiKey" }
-
-    while ($elapsed -lt $MaxWait) {
-        Start-Sleep -Seconds $PollInterval
-        $elapsed += $PollInterval
-
-        $statusUrl = "$TtsUrl/tts/status/$JobId"
-        $httpCode  = 0
-        $body      = $null
-
-        try {
-            $wr   = Invoke-WebRequest -Uri $statusUrl -Method Get -TimeoutSec 10 `
-                        -UseBasicParsing -Headers $authHeaders
-            $body = $wr.Content | ConvertFrom-Json
-            $httpCode = [int]$wr.StatusCode
-        } catch {
-            # Determine HTTP status code from exception (works on both PS5.1 and PS7)
-            if ($null -ne $_.Exception.Response) {
-                $httpCode = [int]$_.Exception.Response.StatusCode
-            } else {
-                $httpCode = 0
-            }
-        }
-
-        # 401/403 = bad API key. Bail with a clear message instead of polling forever.
-        if ($httpCode -eq 401 -or $httpCode -eq 403) {
-            Write-Host ""
-            Write-Err "  TTS service rejected the API key (HTTP $httpCode). Check TTS_API_KEY matches the running service."
-            return $false
-        }
-
-        # 404 = n8n LLM phase (job not yet registered in TTS)
-        if ($httpCode -eq 404) {
-            if (-not $n8nLogged) {
-                Write-Host ""
-                Write-Info "  n8n pipeline processing (LLM narration phase)..."
-                $n8nLogged = $true
-            }
-            if ($elapsed -ge $N8nTimeout) {
-                Write-Host ""
-                Write-Err "  n8n did not submit TTS job after ${N8nTimeout}s — pipeline may have stalled"
-                Write-Host "  Check n8n execution logs for errors"
-                return $false
-            }
-            Write-Host "`r  LLM phase: ${elapsed}s / ${N8nTimeout}s max  " -NoNewline
-            continue
-        }
-
-        # Non-404 error or connection failure
-        if ($null -eq $body -or $httpCode -eq 0) {
-            Write-Host "`r  TTS poll error (HTTP $httpCode, ${elapsed}s elapsed)  " -NoNewline
-            continue
-        }
-
-        $jobStatus = $body.status
-
-        switch ($jobStatus) {
-            "queued" {
-                if (-not $ttsLogged) {
-                    Write-Host ""
-                    Write-Info "  TTS job queued — waiting for synthesis to start..."
-                    $ttsLogged = $true
-                }
-                Write-Host "`r  Status: queued     — ${elapsed}s elapsed  " -NoNewline
-            }
-            "processing" {
-                Write-Host "`r  Status: processing — ${elapsed}s elapsed  " -NoNewline
-            }
-            "completed" {
-                Write-Host ""
-                Write-Success "  TTS job completed in ${elapsed}s"
-                return $true
-            }
-            "failed" {
-                Write-Host ""
-                $errMsg = if ($null -ne $body.error -and $body.error -ne "") { $body.error } else { "unknown error" }
-                Write-Err "  TTS job failed: $errMsg"
-                return $false
-            }
-            default {
-                Write-Host "`r  Status: $jobStatus — ${elapsed}s elapsed  " -NoNewline
-            }
-        }
-    }
-
-    Write-Host ""
-    Write-Err "  Timed out after ${MaxWait}s waiting for job $JobId"
-    return $false
-}
-
 # ─── Counters ─────────────────────────────────────────────────────────────────
 $grandTriggered   = 0
 $grandAlreadyDone = 0
 $grandSkipped     = 0
-$grandCompleted   = 0
 $grandErrors      = 0
 
 if (-not $skipInteractive) {
@@ -725,28 +784,17 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
             $statusCode = if ($null -ne $_.Exception.Response) {
                 [int]$_.Exception.Response.StatusCode
             } else { 0 }
-            Write-Err "Webhook returned HTTP $statusCode — job may not have been queued"
+            Write-Err "Webhook returned HTTP $statusCode — job not queued"
             Write-Host "  $($_.Exception.Message)"
             $grandErrors++
             continue
         }
 
-        # Poll until this job completes before moving to the next article
-        Write-Info "  Polling TTS service for job completion..."
-        $ok = Wait-ForJob `
-            -JobId       $jobId `
-            -TtsUrl      $TTS_SERVICE_URL `
-            -TtsApiKey   $TTS_API_KEY `
-            -PollInterval $POLL_INTERVAL `
-            -N8nTimeout  $N8N_TIMEOUT `
-            -MaxWait     $MAX_WAIT
-
-        if ($ok) {
-            $grandCompleted++
-        } else {
-            $grandErrors++
-            Write-Warn "  Continuing to next article — check logs for: $jobId"
-        }
+        # Small spacing between webhook triggers: n8n's default SQLite backend
+        # serializes workflow-execution log writes, so a tight burst of 25+
+        # triggers can push some responses past the 15s timeout. 50 ms of
+        # spacing is enough headroom and adds <2s total for typical batches.
+        Start-Sleep -Milliseconds 50
     }
 }
 
@@ -758,19 +806,23 @@ Write-Host "=========================================================" -Foregrou
 Write-Host ""
 Write-Success "Already had audio  : $grandAlreadyDone"
 Write-Success "Jobs triggered     : $grandTriggered"
-Write-Success "Jobs completed     : $grandCompleted"
-if ($grandErrors  -gt 0) { Write-Err  "Errors             : $grandErrors" }
+if ($grandErrors  -gt 0) { Write-Err  "Trigger errors     : $grandErrors" }
 if ($grandSkipped -gt 0) { Write-Warn "Skipped (dry run)  : $grandSkipped" }
 Write-Host ""
 
 if ($grandTriggered -gt 0) {
+    Write-Host "Jobs are now queued in the TTS service. They will process one at a"
+    Write-Host "time on the GPU and complete in the background."
+    Write-Host ""
     $n8nBase = $N8N_WEBHOOK -replace '/webhook.*', ''
-    Write-Host "Monitor progress:" -ForegroundColor White
+    Write-Host "Monitor:" -ForegroundColor White
+    Write-Host "  Snapshot       : .\scripts\backfill-audio.ps1 -Queue"
+    Write-Host "  Live dashboard : .\scripts\backfill-audio.ps1 -Watch"
+    Write-Host "  TTS logs       : docker logs -f tts-service"
     Write-Host "  n8n executions : $n8nBase"
-    Write-Host "  TTS jobs       : $TTS_SERVICE_URL/docs"
     Write-Host ""
     if ($grandErrors -gt 0) {
-        Write-Warn "$grandErrors job(s) encountered errors."
+        Write-Warn "$grandErrors webhook trigger(s) failed."
         Write-Host "  Re-run this script to retry — posts that already have audio are skipped automatically."
         Write-Host ""
     }

@@ -420,8 +420,10 @@ Expected response:
 - **Persistent job state** — All job data (queued, processing, completed, failed) survives restarts
 - **Fast access** — Sub-millisecond lookups for job status
 - **Automatic expiration** — Jobs auto-delete after 24 hours (configurable) to prevent storage bloat
-- **Crash recovery** — Running jobs can be recovered or resubmitted after service crashes
+- **Crash recovery** — Queued jobs are auto-resumed by a startup reaper; mid-pipeline orphans are marked failed (see "Orphan reaper" below)
 - **Graceful fallback** — If Redis is unavailable, service falls back to in-memory storage automatically
+
+**Orphan reaper:** Because `/tts/generate` persists the request payload (`text`, `gcs_object_path`, `site_slug`) to Redis at queue time, a startup hook in `app/main.py` scans for non-terminal jobs from the previous process. Jobs in `queued` are re-scheduled (subject to a 3-attempt budget to prevent poison-pill crash loops); jobs in `processing` / `paused` are marked `failed` since their mid-pipeline state cannot be reconstructed. The hook runs inside FastAPI's lifespan startup, before any request handler is registered — there is no race window with new submissions.
 
 **Configuration:**
 - **AOF persistence** — Append-Only File with `fsync` every second (balance of durability and performance)
@@ -1370,13 +1372,13 @@ In n8n UI, open the workflow → click **"Test Workflow"** → manually trigger 
 
 ## Backfilling Audio for Existing Posts
 
-The Ghost Narrator pipeline processes articles automatically when they are published. For posts that existed before the pipeline was set up, the `scripts/backfill-audio` scripts trigger the same n8n pipeline retroactively — working through your post archive one article at a time at a controlled pace.
+The Ghost Narrator pipeline processes articles automatically when they are published. For posts that existed before the pipeline was set up, the `scripts/backfill-audio` scripts submit the same n8n pipeline retroactively — discovering posts that need narration, triggering all of them, and exiting. The TTS service then processes them serially on the GPU while you monitor or walk away.
 
 ### When to Use This
 
 - You just deployed the pipeline and have a back-catalogue of published articles without audio
 - The pipeline was temporarily down and a batch of posts was published without being narrated
-- You want to regenerate audio for posts after a voice reference update
+- You want to regenerate audio for posts after a voice reference update or a code fix
 
 ### Prerequisites
 
@@ -1400,79 +1402,77 @@ cd ghost-narrator
 .\scripts\backfill-audio.ps1
 ```
 
+### Commands
+
+| Command | Purpose |
+|---|---|
+| `backfill-audio.sh` (no args) | Discover posts needing audio, trigger all of them, print summary, exit |
+| `--queue` | One-shot status table of backfill jobs (filtered to `backfill-*` IDs) |
+| `--queue --all` | Include non-backfill jobs in the status table |
+| `--watch` | Loop `--queue` every 15 s; exit when all backfill jobs reach a terminal state |
+| `--status` | Log-level view: tail the background log + show background-mode PID |
+| `--logs` | Live-tail the background log file |
+| `--stop` | Stop a backgrounded run |
+
 ### Interactive Prompts
 
-The script walks you through configuration step by step:
+The default mode walks you through configuration step by step:
 
 | Prompt | Default | Notes |
 |---|---|---|
-| n8n webhook URL | `http://YOUR_IP:5678/webhook/ghost-published` | Your machine's public IP — change if different |
-| Number of Ghost sites | `1` | Enter `2` to process both sites in one run |
-| Ghost URL | *(required)* | e.g. `https://ghost.your-site.com` |
-| Content API key | *(required)* | From Ghost Admin → Integrations |
-| Delay between jobs (seconds) | `300` | See pacing guide below |
+| n8n webhook URL | `http://localhost:5678/webhook/ghost-published` | Override if running remote |
+| Number of Ghost sites | `1` (or `2` if site2 env vars present) | Enter `2` to process both sites in one run |
+| Ghost URL | *(from `.env` if set)* | e.g. `https://ghost.your-site.com` |
+| Content API key | *(from `.env` if set)* | From Ghost Admin → Integrations |
 | Dry run? | `N` | Enter `y` to preview without triggering |
-
-### Choosing the Right Delay
-
-The delay prevents the TTS service from being overloaded. Tune it based on your typical article length:
-
-| Article length | Recommended delay |
-|---|---|
-| ~1,000 words | 180 s (3 min) |
-| ~2,000 words | 300 s (5 min) — default |
-| ~4,000 words | 600 s (10 min) |
-
-If you exceed the TTS service capacity, jobs will queue in Redis and process in order — but a shorter delay risks the service accumulating a growing backlog. When in doubt, use the default 300 s.
+| Run in background? | `N` | Rarely needed — trigger phase finishes in seconds |
 
 ### What Happens During Execution
 
-1. All published posts are fetched from the Ghost Content API (paginated, all pages)
-2. Posts are split into two groups:
-   - **Already has audio** (`<audio>` tag present in HTML) → skipped automatically
-   - **Needs audio** → queued for narration
-3. The full list of posts to be processed is shown with the estimated total time
-4. After confirmation, each post is submitted to the n8n pipeline as a webhook payload matching the format Ghost itself sends on publish
-5. A live countdown is shown between jobs
-6. A summary of triggered / skipped / errored jobs is printed at the end
+1. **Discovery:** All published posts are fetched from the Ghost Content API (paginated). Each is checked two ways:
+   - Stage 1: HTML contains `<audio>` tag at all
+   - Stage 2: For posts with an audio tag, HEAD-request the embedded source URL — if it 404s, the audio file was deleted and the post is re-queued
+2. **Trigger phase:** Each post that needs audio is submitted as a webhook to n8n in rapid succession (≈150 ms per post + 50 ms spacing to keep n8n's SQLite log writes from contending).
+3. **Summary:** A table of triggered / failed-to-trigger / already-done counts is printed and the script exits.
+4. **Processing (background, in TTS service):** The TTS service processes one job at a time on the GPU semaphore. Each job runs Phase 1 (LLM narration rewrite via vLLM) → Phase 2 (Qwen3-TTS segment synthesis) → mastering → GCS upload → n8n callback (which embeds the player into the Ghost post).
 
 ### Monitoring Progress
 
-While the script runs, monitor the pipeline in parallel:
+The recommended pattern is "trigger + walk away + check back":
 
 ```bash
-# n8n workflow executions
-open http://YOUR_IP:5678
+# Job-level dashboard, refreshes every 15s, exits when done
+bash scripts/backfill-audio.sh --watch
 
-# TTS job status
-curl http://YOUR_IP:8020/health
+# One-shot snapshot
+bash scripts/backfill-audio.sh --queue
 
-# Live TTS logs
+# Live TTS logs (raw)
 docker logs -f tts-service
 
-# Live n8n logs
-docker logs -f n8n
+# n8n executions
+open http://localhost:5678
 ```
+
+`--watch` tolerates up to 3 consecutive `/tts/jobs` HTTP failures before bailing, so transient n8n/TTS hiccups don't kill the dashboard. Ctrl+C exits cleanly without affecting jobs in flight.
 
 ### Resuming After Interruption
 
-The script is safe to re-run at any time. Posts that already have an `<audio>` element embedded are automatically detected and skipped, so you will never double-process an article. If the script was interrupted mid-run, simply execute it again with the same parameters — it will pick up from where it left off.
+The script is safe to re-run at any time. Two layers of resilience cooperate:
+
+- **Discovery layer:** Posts that already have a working `<audio>` embed are detected (Stage 1 + Stage 2 verification) and skipped, so re-running never double-narrates.
+- **Service layer:** If the TTS service crashes or is restarted mid-batch, the orphan reaper (see *§ Redis — Job Persistence Layer*) automatically resumes any `queued` jobs whose inputs are durable in Redis, and marks `processing`/`paused` jobs as `failed`. The next backfill re-discovers and re-triggers any failed posts.
 
 ### Dry Run
 
-Use dry-run mode to audit which posts need audio before committing to a full backfill:
+Use dry-run mode to audit which posts need audio before committing:
 
 ```bash
-# Linux/macOS
 bash scripts/backfill-audio.sh
-# → Answer "y" at the dry run prompt
-
-# PowerShell
-.\scripts\backfill-audio.ps1
 # → Answer "y" at the dry run prompt
 ```
 
-The script will list every post that needs audio along with the estimated processing time, then exit without triggering anything.
+The script will list every post that would be queued, then exit without triggering anything.
 
 ---
 
