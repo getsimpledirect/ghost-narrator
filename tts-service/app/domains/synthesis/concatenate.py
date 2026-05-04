@@ -104,9 +104,15 @@ def _crossfade_append(
     if len(combined) == 0:
         return segment
 
-    combined += AudioSegment.silent(duration=pause_ms)
-
     n = CROSSFADE_MS
+    # Append (pause_ms + n) of silence so the crossfade region (last n of
+    # combined) is pure silence on the A side, fading smoothly into the new
+    # segment's start. With only `pause_ms` appended, when pause_ms < n the
+    # crossfade overlapped real speech from the previous segment with real
+    # speech from the next — audible doubling at every boundary. Net audible
+    # gap between A's last speech sample and B's first is `pause_ms`; the
+    # additional `n` is consumed by the smooth fade-in.
+    combined += AudioSegment.silent(duration=pause_ms + n)
     if len(combined) < n or len(segment) < n:
         combined += segment
         return combined

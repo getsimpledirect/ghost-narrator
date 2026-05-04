@@ -32,7 +32,6 @@ and notifications.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import os
 import shutil
@@ -57,7 +56,6 @@ from app.config import (
     MAX_JOB_DURATION_SECONDS,
     MP3_BITRATE,
     OUTPUT_DIR,
-    SINGLE_SHOT_OVERLAP_MS,
 )
 from app.domains.narration.factory import get_narration_strategy
 from app.core.hardware import ENGINE_CONFIG, get_studio_segment_words
@@ -76,7 +74,7 @@ from app.domains.synthesis.service import (
     synthesize_best_of_n_async,
     synthesize_with_pauses,
 )
-from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
+from app.domains.synthesis.concatenate import concatenate_audio_auto
 
 logger = logging.getLogger(__name__)
 
@@ -504,12 +502,18 @@ async def run_tts_job(
                                 ) from exc
 
                             if len(segment_wavs) > 1:
+                                # Use the pause-based concat (NOT overlap-based).
+                                # Studio-quality segments are independent — each
+                                # synthesised from its own slice of text with no
+                                # shared content at boundaries — so overlap-add
+                                # reconstruction would crossfade unrelated speech
+                                # from one segment with unrelated speech from the
+                                # next, producing audible doubled voice. Pause-
+                                # based concat inserts silence + crossfade-into-
+                                # speech instead, giving natural pacing.
                                 merged_wav = await loop.run_in_executor(
                                     executor,
-                                    functools.partial(
-                                        concatenate_audio_with_overlap,
-                                        overlap_ms=SINGLE_SHOT_OVERLAP_MS,
-                                    ),
+                                    concatenate_audio_auto,
                                     segment_wavs,
                                     str(job_dir / 'merged.wav'),
                                 )

@@ -91,6 +91,43 @@ def test_equal_power_crossfade_no_volume_dip():
     assert crossfade_region.dBFS > -20.0
 
 
+def test_crossfade_inserts_audible_silent_pause_between_segments():
+    """Regression: between A's last loud sample and the crossfade region,
+    there must be `pause_ms` of pure silence — that's the audible inter-
+    segment gap. The previous behaviour appended only `pause_ms` of silence,
+    so when pause_ms < CROSSFADE_MS the crossfade overlapped real speech
+    from A with real speech from B (audible doubled voice). The fix
+    appends `pause_ms + CROSSFADE_MS` so the crossfade region is silence
+    on the A side, fading cleanly into B's start.
+    """
+    from app.domains.synthesis.concatenate import _crossfade_append, CROSSFADE_MS
+
+    a = _make_sine_wav(500)
+    b = _make_sine_wav(500)
+    pause_ms = 200  # deliberately < CROSSFADE_MS to trigger the pre-fix bug
+
+    result = _crossfade_append(AudioSegment.empty(), a, 0)
+    result = _crossfade_append(result, b, pause_ms)
+
+    # Length: a + pause_ms (audible gap) + CROSSFADE_MS (xfade region) + (b - n)
+    expected_len = len(a) + pause_ms + CROSSFADE_MS + (len(b) - CROSSFADE_MS)
+    assert len(result) == expected_len, (
+        f'Expected {expected_len}ms join (a + pause + crossfade + b_post), '
+        f'got {len(result)}ms — fix may have regressed'
+    )
+
+    # Region between A's end and the crossfade start must be pure silence.
+    # That is the user-perceived gap; before the fix, this region was
+    # actually part of A's speech overlapping with B.
+    pause_region = result[len(a) : len(a) + pause_ms]
+    # pydub's AudioSegment for true silence returns dBFS of -inf; the safe
+    # assertion is "well below speech levels" — any speech is > -40 dBFS.
+    assert pause_region.dBFS < -40.0, (
+        f'Region between A and crossfade should be silent (audible gap), '
+        f'got dBFS={pause_region.dBFS} — speech leaking from A or B'
+    )
+
+
 class TestConcatenateImports:
     """Test that concatenate module can be imported."""
 
