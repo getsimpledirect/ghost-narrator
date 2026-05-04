@@ -74,6 +74,12 @@ echo "vLLM: tier=${HARDWARE_TIER} model=${SELECTED_LLM_MODEL} max-model-len=${SE
 #   shared across the Qwen3 family; there is no separate qwen3.5 variant.
 # --default-chat-template-kwargs disables thinking server-wide so <think> tokens
 #   are never generated; per-request extra_body reinforces this.
+# --max-num-seqs 1: the narration pipeline calls vLLM sequentially (rewrite,
+#   then completeness check, one job at a time). Each extra slot reserves
+#   max-model-len worth of KV cache that is never used; a 64K-context HIGH_VRAM
+#   tier loses ~5 GiB to idle slots at the previous default of 4. Concurrent
+#   requests are queued by vLLM, so this only affects throughput under
+#   parallel load — which the pipeline never produces.
 # --quantization is added only when VLLM_QUANTIZATION is set
 #   (fp8 for GPU tiers; empty for CPU/low-VRAM tiers that run Ollama instead).
 set -- \
@@ -82,7 +88,7 @@ set -- \
     --reasoning-parser qwen3 \
     --default-chat-template-kwargs '{"enable_thinking": false}' \
     --gpu-memory-utilization "${GPU_UTIL}" \
-    --max-num-seqs 4 \
+    --max-num-seqs 1 \
     --language-model-only \
     --host 0.0.0.0 \
     --port 8000

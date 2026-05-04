@@ -317,11 +317,32 @@ def split_into_large_segments(text: str, target_words: int) -> list[str]:
             continue
 
         # Accumulate sentences into sub-paragraphs of ~target_words each.
+        # If a single "sentence" still exceeds max_para_words after the
+        # regex split, the boundary regex missed real sentence breaks
+        # (next-sentence starts with digit/lowercase/punctuation, defeating
+        # the [A-Z"“] lookahead). Word-count split that unit so no
+        # sub-paragraph escapes the cap — the previous code only
+        # word-count-fell-back when ZERO boundaries were found, leaving
+        # paragraphs with a few good splits and one giant tail unguarded.
         sub_paras: list[str] = []
         sub: list[str] = []
         sub_wc = 0
         for sent in sentences:
             sw = len(sent.split())
+            if sw > max_para_words:
+                if sub:
+                    sub_paras.append(' '.join(sub))
+                    sub = []
+                    sub_wc = 0
+                words = sent.split()
+                for i in range(0, len(words), target_words):
+                    sub_paras.append(' '.join(words[i : i + target_words]))
+                logger.warning(
+                    'split_into_large_segments: sentence regex missed boundaries '
+                    'in a %d-word unit; fell back to word-count split',
+                    sw,
+                )
+                continue
             if sub_wc + sw > target_words and sub:
                 sub_paras.append(' '.join(sub))
                 sub = [sent]

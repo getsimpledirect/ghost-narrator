@@ -26,12 +26,46 @@ Job state management for TTS job processing.
 
 from enum import Enum
 from dataclasses import dataclass
-from typing import Optional
+from typing import Final, Optional
 from datetime import datetime
 
 
+# Terminal status strings actually written by the codebase. The JobState enum
+# below is unused dead code (the writes use raw strings 'queued', 'processing',
+# 'paused', etc., which don't match the enum's 'pending'/'running'). The
+# orphan reaper and any future state-aware code should reference this set.
+#
+# 'deleted' is transient in normal operation: DELETE /tts/{id} sets the status
+# to 'deleted' as a signal, kills any active synthesis, then calls
+# job_store.delete() to remove the record entirely (tts.py:439 then :471).
+# Included here because there is a small crash window where the record could
+# persist with status='deleted' if the service dies between those two calls;
+# treating it as terminal lets Redis TTL clean it up rather than the reaper
+# fighting the user's deletion intent by marking it 'failed'.
+TERMINAL_STATES: Final[frozenset[str]] = frozenset(
+    {
+        'completed',
+        'failed',
+        'cancelled',
+        'deleted',
+    }
+)
+
+# Maximum times a queued job will be auto-resumed by the orphan reaper before
+# being marked failed. Prevents poison-pill inputs from creating a crash loop
+# where the reaper keeps resuming a job that immediately crashes the worker.
+MAX_RESUME_ATTEMPTS: Final[int] = 3
+
+
 class JobState(str, Enum):
-    """Job state enumeration."""
+    """Job state enumeration.
+
+    NOTE: Currently unused — the codebase writes raw status strings to Redis
+    that don't match these enum values (production uses 'queued', 'processing',
+    'paused' which aren't here). Kept for reference / potential future
+    refactor. Source of truth for terminal-state identification is
+    `TERMINAL_STATES` above.
+    """
 
     PENDING = 'pending'
     RUNNING = 'running'

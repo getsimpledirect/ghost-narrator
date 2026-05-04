@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -223,8 +224,8 @@ def synthesize_single_shot(
         output_path: Path where the WAV file will be saved.
         job_id: Job identifier for process tracking.
         generation_kwargs: Generation parameters forwarded to the TTS engine.
-        voice_path: Optional explicit WAV path for voice conditioning (e.g. tail
-            of the previous segment for inter-segment voice consistency).
+        voice_path: Optional explicit WAV path for voice conditioning. When None,
+            the default reference audio at VOICE_SAMPLE_PATH is used.
 
     Returns:
         The output path of the generated WAV file.
@@ -247,12 +248,9 @@ def synthesize_single_shot(
         voice_override=voice_path,
     )
     # Trim leading and trailing silence from the raw synthesis output.
-    # Leading silence: Qwen3-TTS sometimes emits silence tokens before the first
-    # word, causing >50% silence quality-check failures and wasted re-synthesis.
-    # Trailing silence: ensures the tail-conditioning reference (last 2.5 s of this
-    # segment) ends on speech rather than silence, preventing cascading silence
-    # across segment boundaries when the tail is used as voice_override for the
-    # next segment.
+    # Qwen3-TTS sometimes emits silence tokens before the first word (causing
+    # >50% silence quality-check failures) or trailing dead air. Both are
+    # clipped so the segment contains speech-only content before concat.
     try:
         seg = AudioSegment.from_wav(result)
         trimmed = _trim_silence(seg)
@@ -261,6 +259,194 @@ def synthesize_single_shot(
     except Exception as _trim_exc:
         logger.debug('[%s] Post-synthesis silence trim failed (non-fatal): %s', job_id, _trim_exc)
     return result
+
+
+# Adaptive best-of-N thresholds (tuned from observed-score distributions where
+# winning composite scores range 0.067–0.181 across 26 segments, median ~0.10).
+# Conservative defaults — bump higher for more speed at modest quality cost.
+# Scores are computed with skip_wer=True, so thresholds live below the full-WER
+# gate bar (which evaluates WER on only the lazy-WER winner).
+_DEFAULT_EARLY_EXIT_SCORE: float = 0.08  # very confident — skip remaining variants
+_DEFAULT_GOOD_ENOUGH_SCORE: float = 0.13  # comfortable — stop after variant 1
+
+
+def _load_adaptive_thresholds() -> tuple[float, float]:
+    """Return (early_exit, good_enough) thresholds from env or defaults."""
+
+    def _read(name: str, default: float) -> float:
+        raw = os.environ.get(name, '').strip()
+        if not raw:
+            return default
+        try:
+            v = float(raw)
+            return max(0.0, min(1.0, v))
+        except ValueError:
+            logger.warning('Invalid %s=%r — using default %.3f', name, raw, default)
+            return default
+
+    return (
+        _read('BEST_OF_N_EARLY_EXIT', _DEFAULT_EARLY_EXIT_SCORE),
+        _read('BEST_OF_N_GOOD_ENOUGH', _DEFAULT_GOOD_ENOUGH_SCORE),
+    )
+
+
+def synthesize_best_of_n(
+    text: str,
+    output_path: str,
+    n_variants: int,
+    reference_f0: Optional[float],
+    job_id: str = 'default',
+    generation_kwargs: Optional[dict] = None,
+    voice_path: Optional[str] = None,
+) -> tuple[str, dict]:
+    """Adaptive best-of-N with early exit + lazy WER.
+
+    Synthesises variants sequentially with distinct seeds, scoring each without
+    Whisper (lazy WER). When a variant's score is comfortably below the
+    early-exit threshold we ship it immediately without generating the rest;
+    when it's above "good enough" after variant 1 we continue; only marginal
+    cases burn the full N. The winning variant then gets a full-WER rescore so
+    the downstream gate has a correct WER reading for its own pass.
+
+    Variant 0 uses the caller's seed (or 0 if unset). Variants 1..N-1 use
+    deterministically derived seeds (prime-offset arithmetic) so the same
+    job_id + chunk_idx always explores the same audio space.
+
+    When n_variants <= 1 this reduces to single synthesis + full-WER score.
+
+    Returns (kept_path, score_dict). kept_path == output_path on success.
+    Raises SynthesisError if every attempted variant fails to synthesize.
+    """
+    from app.domains.synthesis.scorer import compute_composite_score
+
+    if n_variants <= 1:
+        synthesize_single_shot(text, output_path, job_id, generation_kwargs, voice_path)
+        score = compute_composite_score(output_path, text, reference_f0)
+        return output_path, score
+
+    early_exit, good_enough = _load_adaptive_thresholds()
+    base_seed = int((generation_kwargs or {}).get('seed') or 0)
+    out_path = Path(output_path)
+    out_dir = out_path.parent
+    stem = out_path.stem
+
+    variant_paths: list[str] = []
+    variant_scores: list[dict] = []
+    best_idx_far: Optional[int] = None
+
+    for n in range(n_variants):
+        variant_path = str(out_dir / f'{stem}_v{n}.wav')
+        variant_kw = dict(generation_kwargs or {})
+        if n > 0:
+            # 7919 is a large prime — successive seeds differ across many low
+            # bits of the RNG state, so each variant explores a distinct AR path.
+            variant_kw['seed'] = (base_seed + n * 7919) % (2**31)
+        try:
+            synthesize_single_shot(text, variant_path, job_id, variant_kw, voice_path)
+        except SynthesisError as exc:
+            logger.warning('[%s] Best-of-N variant %d synthesis failed: %s', job_id, n, exc)
+            continue
+        try:
+            # Lazy WER: skip Whisper during selection — it adds ~5-10 s per call
+            # and rarely flips which variant wins. The winner's full-WER score
+            # is computed once below so the gate has correct WER signal.
+            score = compute_composite_score(variant_path, text, reference_f0, skip_wer=True)
+        except Exception as exc:
+            logger.warning('[%s] Best-of-N variant %d scoring failed: %s', job_id, n, exc)
+            score = {'total': 1.0}
+        variant_paths.append(variant_path)
+        variant_scores.append(score)
+
+        # Track best-so-far for early-exit decisions.
+        if best_idx_far is None or score['total'] < variant_scores[best_idx_far]['total']:
+            best_idx_far = len(variant_scores) - 1
+        best_far = variant_scores[best_idx_far]['total']
+
+        # Early exit: this variant (or an earlier one) is already comfortably
+        # under the gate — no expected gain from generating more.
+        if best_far <= early_exit:
+            break
+
+        # Good-enough exit after variant 1: spent 2 variants, current best is
+        # acceptable. Variant 2 might marginally improve the score but the
+        # expected gain doesn't justify another ~30 s of synthesis.
+        if n == 1 and best_far <= good_enough:
+            break
+
+    if not variant_paths:
+        raise SynthesisError(
+            f'All {n_variants} best-of-N variants failed to synthesize',
+            details=f'text_len={len(text)}',
+        )
+
+    best_idx = min(range(len(variant_paths)), key=lambda i: variant_scores[i]['total'])
+    best_path = variant_paths[best_idx]
+    best_score_fast = variant_scores[best_idx]
+
+    try:
+        if best_path != output_path:
+            shutil.move(best_path, output_path)
+    except OSError as exc:
+        logger.warning('[%s] Best-of-N move failed, falling back to copy: %s', job_id, exc)
+        shutil.copy2(best_path, output_path)
+
+    # Remove the rejected variants (and the best's original location if it was moved).
+    for p in variant_paths:
+        if p != output_path:
+            try:
+                os.unlink(p)
+            except FileNotFoundError:
+                pass
+
+    # Final full-WER score for the winner — WER signal is needed by the
+    # acoustic gate and the response ladder; computing it here avoids a
+    # second Whisper call during the gate pass.
+    try:
+        best_score = compute_composite_score(output_path, text, reference_f0, skip_wer=False)
+    except Exception as exc:
+        logger.warning('[%s] Best-of-N final WER rescore failed: %s', job_id, exc)
+        best_score = best_score_fast
+
+    logger.info(
+        '[%s] Best-of-%d for %s: variant %d kept after %d synths (score=%.3f, components=%s)',
+        job_id,
+        n_variants,
+        out_path.name,
+        best_idx,
+        len(variant_paths),
+        best_score.get('total', 1.0),
+        {k: round(v, 3) for k, v in best_score.items() if k != 'total'},
+    )
+    return output_path, best_score
+
+
+async def synthesize_best_of_n_async(
+    text: str,
+    output_path: str,
+    n_variants: int,
+    reference_f0: Optional[float],
+    job_id: str = 'default',
+    generation_kwargs: Optional[dict] = None,
+    voice_path: Optional[str] = None,
+) -> tuple[str, dict]:
+    """Async wrapper for synthesize_best_of_n. Runs on the thread pool."""
+    if not _executor:
+        raise SynthesisError(
+            'Executor not initialized',
+            details='Call initialize_executor() during startup',
+        )
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor,
+        synthesize_best_of_n,
+        text,
+        output_path,
+        n_variants,
+        reference_f0,
+        job_id,
+        generation_kwargs,
+        voice_path,
+    )
 
 
 async def synthesize_single_shot_async(
@@ -275,7 +461,7 @@ async def synthesize_single_shot_async(
 
     Runs the synchronous single-shot synthesis in a thread pool.
     voice_path, when provided, conditions the TTS model on that WAV's voice
-    characteristics (used for inter-segment tail conditioning).
+    characteristics; when None, the default reference audio is used.
     """
     if not _executor:
         raise SynthesisError(
@@ -293,20 +479,6 @@ async def synthesize_single_shot_async(
         generation_kwargs,
         voice_path,
     )
-
-
-def _extract_tail_wav(wav_path: str, duration_ms: int, output_path: str) -> str:
-    """Extract the last duration_ms of a WAV file as a voice conditioning reference.
-
-    Used for inter-segment tail conditioning: the tail of segment N is passed as
-    the voice reference for segment N+1, anchoring timbre and speaking rate across
-    the segment boundary. pydub clips to available length if the segment is shorter
-    than duration_ms, so short final segments are handled gracefully.
-    """
-    seg = AudioSegment.from_wav(wav_path)
-    tail = seg[-duration_ms:]
-    tail.export(output_path, format='wav')
-    return output_path
 
 
 async def synthesize_chunks_sequential(

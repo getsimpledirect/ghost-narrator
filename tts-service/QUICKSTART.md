@@ -129,8 +129,7 @@ Set these before running if you want to customize:
 
 ```bash
 export TTS_LANGUAGE="en"           # Language code (en, es, fr, de, etc.)
-export MAX_CHUNK_WORDS="200"       # Max words per synthesis chunk
-export SINGLE_SHOT_MAX_WORDS="400"       # Max words for single-pass synthesis (fallback if VRAM probe unavailable)
+export SINGLE_SHOT_SEGMENT_WORDS="60"    # Override tier's studio segment size (clamped to 30-300)
 export SINGLE_SHOT_OVERLAP_MS="500"     # Overlap crossfade between segments
 export HARDWARE_TIER="cpu_only"    # Override auto-detection: cpu_only, low_vram, mid_vram, high_vram
 export MAX_WORKERS="4"             # Thread pool size for parallel synthesis

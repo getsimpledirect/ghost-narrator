@@ -32,9 +32,17 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path as FastApiPath
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Path as FastApiPath,
+    Query,
+)
 from fastapi.responses import FileResponse
 
 from app.api.dependencies import require_api_key
@@ -105,7 +113,11 @@ def _sanitize_job_id(job_id: str | None) -> str:
         'then retrieve the audio URL from the `gcs_uri` field or download via '
         '`GET /tts/download/{job_id}` (local storage only).\n\n'
         'If you submit a request with a `job_id` that already exists, the existing '
-        "job's current status is returned — no duplicate synthesis is triggered."
+        "job's current status is returned — no duplicate synthesis is triggered.\n\n"
+        'Queued state is durable across service restarts: the request payload '
+        'is persisted to Redis at queue time, so a process crash leaves the job '
+        'recoverable. On startup, an orphan reaper resumes queued jobs and marks '
+        'mid-pipeline (processing/paused) jobs as failed.'
     ),
     responses={
         202: {'description': 'Job accepted and queued for synthesis'},
@@ -174,13 +186,26 @@ async def generate(
     # Sanitize and validate job ID
     job_id = _sanitize_job_id(request.job_id)
 
-    # Atomically check for existing job and create initial record
+    # Atomically check for existing job and create initial record.
+    # `text`, `gcs_object_path`, and `site_slug` are persisted so the orphan
+    # reaper can resume queued jobs after a service restart. These fields
+    # are stripped from the /tts/jobs list response (see list_jobs) and
+    # ignored by StatusResponse (extra='ignore'), so they never reach
+    # API consumers.
     job_store = get_job_store()
+    gcs_object_path = request.storage_path or (
+        f'{GCS_AUDIO_PREFIX}/{request.site_slug}/{job_id}.mp3'
+    )
     initial_data = {
         'status': 'queued',
         'gcs_uri': None,
         'local_path': None,
         'created_at': time.time(),
+        # Durable inputs for the orphan reaper (resume after restart).
+        'text': request.text,
+        'gcs_object_path': gcs_object_path,
+        'site_slug': request.site_slug or 'site',
+        'resume_count': 0,
     }
 
     created = await job_store.create_if_not_exists(job_id, initial_data)
@@ -196,10 +221,8 @@ async def generate(
 
     record_job_created()
 
-    # Build GCS object path
-    gcs_object_path = request.storage_path or (
-        f'{GCS_AUDIO_PREFIX}/{request.site_slug}/{job_id}.mp3'
-    )
+    # gcs_object_path was computed above and persisted into initial_data so the
+    # orphan reaper can resume the job after a restart with the same path.
 
     # Add job to background tasks
     background_tasks.add_task(
@@ -222,7 +245,13 @@ async def generate(
     description=(
         'Returns the current status and metadata for a job. '
         'Poll this endpoint after submitting a job. '
-        'Typical lifecycle: `queued` → `processing` → `completed` (or `failed`).'
+        'Typical lifecycle: `queued` → `processing` → `completed` (or `failed`).\n\n'
+        'If the service restarts while the job is in `queued`, the orphan reaper '
+        'resumes it transparently — clients may observe `queued` for slightly '
+        'longer than usual, then `processing` once a worker picks it up. Jobs '
+        'that were already `processing`/`paused` at restart are marked `failed` '
+        'with `error` indicating the orphan recovery (mid-pipeline state cannot '
+        'be reconstructed).'
     ),
     responses={
         200: {'description': 'Job status and metadata'},
@@ -460,26 +489,264 @@ async def delete_job(
     return {'message': f"Job '{job_id}' and associated resources deleted"}
 
 
+# Default page size for /tts/jobs when the caller doesn't pass `?limit=`.
+# Sized so a typical 25-post backfill batch (plus a handful of incidental
+# Ghost-published jobs) fits in one response without pagination, but a
+# pathological store of thousands doesn't blow the wire by accident.
+# Clients that genuinely want everything pass `?limit=10000` explicitly,
+# which is the upper bound enforced by the Query() validator.
+_DEFAULT_LIST_LIMIT: int = 100
+
+# Fields a client is allowed to sort by. Matches Redis-stored job fields with
+# meaningful ordering. `id` is the dict key, not a stored field, so it's
+# handled specially in the sort key function below.
+_ALLOWED_SORT_FIELDS: frozenset[str] = frozenset(
+    {
+        'created_at',
+        'started_at',
+        'completed_at',
+        'duration_seconds',
+        'status',
+        'id',
+    }
+)
+
+# Durable-input fields written by /tts/generate so the orphan reaper can resume
+# queued jobs after a restart. They are large (text can be 100+ KB) and never
+# needed by API consumers, so they are stripped from /tts/jobs responses.
+# StatusResponse already drops them via Pydantic `extra='ignore'`; the list
+# response uses `dict[str, Any]` which doesn't filter, so we strip explicitly.
+_DURABLE_INPUT_FIELDS: tuple[str, ...] = ('text', 'gcs_object_path', 'site_slug')
+
+
+def _filter_sort_paginate_jobs(
+    jobs: dict[str, dict[str, Any]],
+    *,
+    prefix: Optional[str] = None,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    site_slug: Optional[str] = None,
+    created_after: Optional[float] = None,
+    created_before: Optional[float] = None,
+    completed_after: Optional[float] = None,
+    completed_before: Optional[float] = None,
+    has_error: Optional[bool] = None,
+    sort: str = '-created_at',
+    limit: Optional[int] = None,
+    offset: int = 0,
+) -> tuple[dict[str, dict[str, Any]], int]:
+    """Filter, sort, and paginate the job dict in pure-function form.
+
+    Returns ``(result_dict, total_before_pagination)``. Result dict insertion
+    order reflects the requested sort. Each result-job dict is a fresh shallow
+    copy with the durable-input fields removed — the input dict is not mutated.
+
+    Raises:
+        ValueError: if `sort` references an unknown field.
+    """
+    sort_field = sort[1:] if sort.startswith('-') else sort
+    sort_desc = sort.startswith('-')
+    if sort_field not in _ALLOWED_SORT_FIELDS:
+        raise ValueError(
+            f'Unknown sort field: {sort_field!r}. Allowed: {sorted(_ALLOWED_SORT_FIELDS)}'
+        )
+
+    statuses: Optional[set[str]] = (
+        {s.strip() for s in status.split(',') if s.strip()} if status else None
+    )
+    q_lower = q.lower() if q else None
+
+    # Build (job_id, job_data) tuples, applying every filter axis.
+    items: list[tuple[str, dict[str, Any]]] = []
+    for job_id, job_data in jobs.items():
+        if prefix and not job_id.startswith(prefix):
+            continue
+        job_status = job_data.get('status')
+        if statuses is not None and (job_status or '') not in statuses:
+            continue
+        if site_slug is not None and job_data.get('site_slug') != site_slug:
+            continue
+        if has_error is not None:
+            err = job_data.get('error') or ''
+            if has_error and not err:
+                continue
+            if not has_error and err:
+                continue
+        if q_lower is not None:
+            err_lower = (job_data.get('error') or '').lower()
+            if q_lower not in job_id.lower() and q_lower not in err_lower:
+                continue
+        if created_after is not None:
+            ca = job_data.get('created_at')
+            if ca is None or float(ca) < created_after:
+                continue
+        if created_before is not None:
+            ca = job_data.get('created_at')
+            if ca is None or float(ca) > created_before:
+                continue
+        if completed_after is not None:
+            cb = job_data.get('completed_at')
+            if cb is None or float(cb) < completed_after:
+                continue
+        if completed_before is not None:
+            cb = job_data.get('completed_at')
+            if cb is None or float(cb) > completed_before:
+                continue
+        items.append((job_id, job_data))
+
+    # Sort. None-valued items are bucketed out and appended at the end so
+    # they sort last regardless of direction (asc OR desc) — putting them
+    # in a single sort key would have them flip ends with `reverse=True`,
+    # so a malformed record missing `created_at` would dominate the top
+    # of the default `-created_at` view. Bucketing keeps the user-visible
+    # ordering of well-formed records stable.
+    if sort_field == 'id':
+        # job_id is the dict key — never None; no bucketing needed.
+        items.sort(key=lambda item: item[0], reverse=sort_desc)
+    else:
+        non_none_items: list[tuple[str, dict[str, Any]]] = []
+        none_items: list[tuple[str, dict[str, Any]]] = []
+        for item in items:
+            if item[1].get(sort_field) is None:
+                none_items.append(item)
+            else:
+                non_none_items.append(item)
+        non_none_items.sort(key=lambda item: item[1].get(sort_field), reverse=sort_desc)
+        items = non_none_items + none_items
+
+    total = len(items)
+
+    # Paginate.
+    if offset:
+        items = items[offset:]
+    if limit is not None:
+        items = items[:limit]
+
+    # Strip durable-input fields. Build fresh shallow copies so the in-memory
+    # store fallback (which returns dict references rather than deep copies)
+    # is not corrupted across requests.
+    result_jobs: dict[str, dict[str, Any]] = {}
+    for job_id, job_data in items:
+        result_jobs[job_id] = {k: v for k, v in job_data.items() if k not in _DURABLE_INPUT_FIELDS}
+
+    return result_jobs, total
+
+
 @router.get(
     '/jobs',
     response_model=JobListResponse,
-    summary='List all jobs',
+    summary='List, search, filter, sort, and paginate jobs',
     description=(
-        'Returns all jobs currently tracked in Redis, with their status and metadata. '
-        'Jobs expire after the configured TTL (default 24 hours).'
+        'Returns jobs currently tracked in Redis, with their status and metadata. '
+        'Jobs expire after the configured TTL (default 24 hours).\n\n'
+        'All query parameters are optional; with no parameters the endpoint '
+        'returns every job (sorted newest-first by `created_at`).\n\n'
+        'Filters are AND-combined. Pagination is applied after filtering and '
+        'sorting; `total` reflects the count after filtering, before pagination, '
+        'so clients can iterate by varying `offset`.'
     ),
     responses={
-        200: {'description': 'All tracked jobs and their current state'},
+        200: {'description': 'Jobs matching the filter, paginated and sorted'},
         401: {'description': 'Missing Authorization header'},
         403: {'description': 'Invalid API key'},
+        422: {'description': 'Invalid query parameter (e.g. unknown sort field)'},
     },
 )
-async def list_jobs() -> JobListResponse:
-    """List all TTS jobs."""
+async def list_jobs(
+    prefix: Optional[str] = Query(
+        None,
+        description='Filter to job IDs that start with this prefix (e.g. `backfill-`).',
+    ),
+    status: Optional[str] = Query(
+        None,
+        description=(
+            'Filter by status. Comma-separate for multiple values '
+            '(e.g. `queued,processing`). Match is exact and case-sensitive.'
+        ),
+    ),
+    q: Optional[str] = Query(
+        None,
+        description=(
+            'Case-insensitive substring search across the `id` and `error` fields. '
+            'Does not search the underlying article text (excluded for size + privacy).'
+        ),
+    ),
+    site_slug: Optional[str] = Query(
+        None,
+        description='Filter by exact `site_slug` (e.g. `ghost-founderreality-com`).',
+    ),
+    created_after: Optional[float] = Query(
+        None,
+        description='Inclusive lower bound on `created_at` (Unix seconds).',
+    ),
+    created_before: Optional[float] = Query(
+        None,
+        description='Inclusive upper bound on `created_at` (Unix seconds).',
+    ),
+    completed_after: Optional[float] = Query(
+        None,
+        description='Inclusive lower bound on `completed_at` (Unix seconds).',
+    ),
+    completed_before: Optional[float] = Query(
+        None,
+        description='Inclusive upper bound on `completed_at` (Unix seconds).',
+    ),
+    has_error: Optional[bool] = Query(
+        None,
+        description='If true, only jobs with a non-empty `error` field. If false, only jobs without one.',
+    ),
+    sort: str = Query(
+        '-created_at',
+        description=(
+            'Sort field, with optional `-` prefix for descending. '
+            'Allowed: `created_at`, `started_at`, `completed_at`, '
+            '`duration_seconds`, `status`, `id`. Default: `-created_at` (newest first).'
+        ),
+    ),
+    limit: Optional[int] = Query(
+        _DEFAULT_LIST_LIMIT,
+        ge=1,
+        le=10000,
+        description=(
+            f'Maximum jobs to return (default: {_DEFAULT_LIST_LIMIT}). '
+            'The full filtered set may exceed this — check `total` in the '
+            'response and iterate using `offset` if needed. Pass an explicit '
+            '`limit=10000` for the previous unlimited-like behavior on stores '
+            'up to ~10k jobs; that is the hard ceiling.'
+        ),
+    ),
+    offset: int = Query(
+        0,
+        ge=0,
+        description='Number of jobs to skip in the filtered+sorted set.',
+    ),
+) -> JobListResponse:
+    """List TTS jobs with filter, sort, and pagination."""
     job_store = get_job_store()
     jobs = await job_store.list_all()
 
+    try:
+        result_jobs, total = _filter_sort_paginate_jobs(
+            jobs,
+            prefix=prefix,
+            status=status,
+            q=q,
+            site_slug=site_slug,
+            created_after=created_after,
+            created_before=created_before,
+            completed_after=completed_after,
+            completed_before=completed_before,
+            has_error=has_error,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     return JobListResponse(
-        total=len(jobs),
-        jobs=jobs,
+        total=total,
+        limit=limit,
+        offset=offset,
+        jobs=result_jobs,
     )

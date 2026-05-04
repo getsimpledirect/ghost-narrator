@@ -132,7 +132,7 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
             return_value=({}, {}),
         ),
         patch(
-            'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
+            'app.domains.job.tts_job.synthesize_best_of_n_async', new_callable=AsyncMock
         ) as mock_synth,
         patch(
             'app.domains.job.tts_job.synthesize_with_pauses',
@@ -166,7 +166,7 @@ async def test_run_tts_job_success(mock_job_store, mock_tts_engine, mock_storage
 
         mock_stat.return_value.st_size = 1024 * 1024
         mock_shutil.copy2.return_value = None
-        mock_synth.return_value = '/tmp/single_shot.wav'
+        mock_synth.return_value = ('/tmp/single_shot.wav', {'total': 0.0})
 
         await run_tts_job(job_id, text, storage_path)
 
@@ -224,7 +224,7 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
             return_value=({}, {}),
         ),
         patch(
-            'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
+            'app.domains.job.tts_job.synthesize_best_of_n_async', new_callable=AsyncMock
         ) as mock_synth,
         patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
@@ -273,7 +273,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
             return_value=({}, {}),
         ),
         patch(
-            'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
+            'app.domains.job.tts_job.synthesize_best_of_n_async', new_callable=AsyncMock
         ) as mock_synth,
         patch(
             'app.domains.job.tts_job.synthesize_with_pauses',
@@ -304,7 +304,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
 
         mock_stat.return_value.st_size = 1024 * 1024
         mock_shutil.copy2.return_value = None
-        mock_synth.return_value = '/tmp/single_shot.wav'
+        mock_synth.return_value = ('/tmp/single_shot.wav', {'total': 0.0})
 
         await run_tts_job(job_id, text, storage_path)
 
@@ -373,7 +373,7 @@ async def test_run_tts_job_transitions_through_queued_status(
             return_value=({}, {}),
         ),
         patch(
-            'app.domains.job.tts_job.synthesize_single_shot_async', new_callable=AsyncMock
+            'app.domains.job.tts_job.synthesize_best_of_n_async', new_callable=AsyncMock
         ) as mock_synth,
         patch('app.domains.job.tts_job.shutil') as mock_shutil,
         patch('app.domains.job.tts_job.apply_final_mastering', return_value=True),
@@ -393,7 +393,7 @@ async def test_run_tts_job_transitions_through_queued_status(
         mock_audio_segment.from_wav.return_value = MagicMock(duration_seconds=1.0)
         mock_stat.return_value.st_size = 1024 * 1024
         mock_shutil.copy2.return_value = None
-        mock_synth.return_value = '/tmp/single_shot.wav'
+        mock_synth.return_value = ('/tmp/single_shot.wav', {'total': 0.0})
 
         await run_tts_job('test-queued', 'Hello world.', 'audio/test.mp3')
 

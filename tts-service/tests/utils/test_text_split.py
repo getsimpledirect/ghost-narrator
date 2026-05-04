@@ -101,6 +101,44 @@ class TestStage2SentenceSplit:
         assert len(reconstructed.split()) == total
 
 
+class TestStage2RegexMissesBoundaries:
+    """Regression: regex catches some boundaries but misses others.
+
+    The sentence boundary regex requires `[.!?]` + whitespace + `[A-Z"“]`.
+    It misses boundaries when the next sentence starts with a digit, a
+    lowercase letter, or punctuation. Production failure mode: a
+    4770-word LLM-rewritten paragraph where 4 early boundaries matched
+    and the trailing 4631 words contained periods only before
+    digits/lowercase, leaving a single 4631-word "sentence" that blew
+    TTS VRAM. Stage 3's emergency word-count fallback didn't fire
+    because len(sentences) > 1.
+    """
+
+    def test_partial_regex_matches_still_respect_hard_cap(self):
+        # 4 early sentences regex catches (uppercase next-word), then a
+        # long tail of clauses ending in `.` followed by digits or
+        # lowercase — regex sees the entire tail as one "sentence".
+        early = ' '.join('Word ' + _words(39) + '.' for _ in range(4))
+        # 'by 2026.' (digit follows period) and 'and so on.' (lowercase
+        # follows period) — neither matches [A-Z"“] lookahead.
+        tail_clauses = ['by 2026.', 'and so on.', '50 percent gone.'] * 100
+        para = early + ' ' + ' '.join(tail_clauses)
+        segs = split_into_large_segments(para, target_words=60)
+        cap = int(60 * 1.3)
+        for seg in segs:
+            wc = len(seg.split())
+            assert wc <= cap, f'segment with {wc} words exceeds cap {cap}'
+
+    def test_partial_regex_matches_preserve_all_words(self):
+        early = ' '.join('Word ' + _words(39) + '.' for _ in range(4))
+        tail_clauses = ['by 2026.', 'and so on.'] * 50
+        para = early + ' ' + ' '.join(tail_clauses)
+        total = len(para.split())
+        segs = split_into_large_segments(para, target_words=60)
+        reconstructed = sum(len(seg.replace('\n\n', ' ').split()) for seg in segs)
+        assert reconstructed == total
+
+
 class TestStage3EmergencyWordCountSplit:
     """Stage 3: paragraph has no sentence boundaries — word-count emergency split."""
 

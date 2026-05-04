@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import threading
 from pathlib import Path
 from typing import Optional
@@ -104,11 +105,40 @@ class TTSEngine:
                     'bf16': torch.bfloat16,
                 }
                 dtype = _PRECISION_MAP.get(ENGINE_CONFIG.tts_precision, torch.float32)
-                self._model = Qwen3TTSModel.from_pretrained(
-                    SELECTED_TTS_MODEL,
-                    device_map=DEVICE,
-                    dtype=dtype,
-                )
+
+                # Attention implementation selection. qwen_tts's own fallback
+                # when flash-attn is missing is a "manual PyTorch" path slower
+                # than SDPA. Pin SDPA by default (always available on torch 2+,
+                # no extra deps), auto-upgrade to flash_attention_2 when the
+                # flash-attn package is importable, or honour TTS_ATTN_IMPL.
+                _attn_impl = os.environ.get('TTS_ATTN_IMPL', '').strip().lower()
+                if not _attn_impl:
+                    try:
+                        import flash_attn  # type: ignore[import-not-found]  # noqa: F401
+
+                        _attn_impl = 'flash_attention_2'
+                    except ImportError:
+                        _attn_impl = 'sdpa'
+
+                try:
+                    self._model = Qwen3TTSModel.from_pretrained(
+                        SELECTED_TTS_MODEL,
+                        device_map=DEVICE,
+                        dtype=dtype,
+                        attn_implementation=_attn_impl,
+                    )
+                    logger.info('Qwen3-TTS attention: %s', _attn_impl)
+                except (ValueError, ImportError, TypeError) as _attn_exc:
+                    logger.warning(
+                        'attn_implementation=%s rejected (%s) — falling back to model default',
+                        _attn_impl,
+                        _attn_exc,
+                    )
+                    self._model = Qwen3TTSModel.from_pretrained(
+                        SELECTED_TTS_MODEL,
+                        device_map=DEVICE,
+                        dtype=dtype,
+                    )
 
                 # Apply torch.compile() to Qwen3TTSModel's nn.Module sub-components.
                 # Qwen3TTSModel is a Python wrapper class, not an nn.Module itself —
@@ -183,25 +213,27 @@ class TTSEngine:
                         voice_path,
                     )
 
-                # Enable cuDNN deterministic mode for reproducible synthesis.
-                # deterministic=True forces cuDNN to use the same algorithm for
-                # the same input shapes; benchmark=False stops cuDNN from running
-                # a benchmark pass (which selects non-deterministic fast paths).
-                # Both are set once at init and persist for the process lifetime.
+                # cuDNN benchmark mode — searches for the fastest conv algorithm for
+                # each input shape on first call, reuses it thereafter. Seed-driven
+                # variant diversity in best_of_n is unaffected (it lives above the
+                # cuDNN layer), and per-seed reproducibility across runs isn't a
+                # production requirement. Opt out via TTS_CUDNN_BENCHMARK=false.
+                _cudnn_benchmark = os.environ.get('TTS_CUDNN_BENCHMARK', 'true').lower() in (
+                    '1',
+                    'true',
+                    'yes',
+                )
                 try:
                     if torch.cuda.is_available():
-                        torch.backends.cudnn.deterministic = True
-                        torch.backends.cudnn.benchmark = False
-                        logger.info('cuDNN deterministic mode enabled')
+                        torch.backends.cudnn.deterministic = not _cudnn_benchmark
+                        torch.backends.cudnn.benchmark = _cudnn_benchmark
+                        logger.info(
+                            'cuDNN benchmark=%s (deterministic=%s)',
+                            _cudnn_benchmark,
+                            not _cudnn_benchmark,
+                        )
                 except Exception as _cudnn_exc:
-                    logger.warning('cuDNN determinism setup failed (non-fatal): %s', _cudnn_exc)
-
-                # Probe free VRAM now — after model load AND torch.compile() — so
-                # compile scratch buffers are already allocated and the measurement
-                # reflects the true synthesis runtime budget.
-                from app.core.hardware import probe_optimal_segment_words
-
-                probe_optimal_segment_words(SELECTED_TTS_MODEL)
+                    logger.warning('cuDNN setup failed (non-fatal): %s', _cudnn_exc)
 
                 # All prerequisites met — set ready before warmup so the warmup's
                 # synthesize_to_file() call passes the readiness guard.
@@ -212,7 +244,6 @@ class TTSEngine:
                 # real job.  Without this, Chunk 0 of the first article can have
                 # different acoustic characteristics (cold-start artefact) that
                 # trips the acoustic gate's duration or onset checks.
-                import os
                 import tempfile
 
                 try:
@@ -263,9 +294,8 @@ class TTSEngine:
                 (temperature, repetition_penalty, top_k, top_p,
                 temperature_sub_talker, top_k_sub_talker, do_sample_sub_talker,
                 max_new_tokens, seed). Merged on top of tier defaults at call time.
-            voice_override: Explicit WAV path for voice conditioning (e.g. tail of
-                previous segment). Takes priority over voice_path_or_job_id and the
-                VOICE_SAMPLE_PATH default.
+            voice_override: Explicit WAV path for voice conditioning. Takes priority
+                over voice_path_or_job_id and the VOICE_SAMPLE_PATH default.
         """
         if not self._ready or self._model is None:
             raise TTSEngineError('Engine not initialized — call initialize() first')
@@ -273,7 +303,8 @@ class TTSEngine:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Determine voice_path — voice_override (tail conditioning) wins over defaults
+        # Determine voice_path — voice_override wins over voice_path_or_job_id
+        # and the VOICE_SAMPLE_PATH default.
         from app.config import VOICE_SAMPLE_PATH
 
         actual_job_id = job_id
@@ -303,9 +334,10 @@ class TTSEngine:
 
             with self._synthesis_lock:
                 voice_path_str = str(voice_path)
-                # Reuse cached prompt if same voice, otherwise create a new one.
-                # Tail-conditioning passes a fresh WAV each call — cache will miss,
-                # but create_voice_clone_prompt is fast (~0.5s) vs synthesis (~30s).
+                # Reuse cached prompt when the same reference voice is used on
+                # every call (the common case — consistent reference conditioning).
+                # An explicit voice_override forces a fresh prompt build, which
+                # costs ~0.5s vs ~30s synthesis — an acceptable overhead.
                 if (
                     voice_path_str == self._cached_voice_path
                     and self._cached_voice_prompt is not None
@@ -318,7 +350,8 @@ class TTSEngine:
                         ref_text=VOICE_SAMPLE_REF_TEXT,
                         x_vector_only_mode=use_x_vector_only,
                     )
-                    # Only cache default voice — tail WAVs change every segment
+                    # Only cache when no explicit override — overrides are rare
+                    # and caching each one would pollute the cache slot.
                     if not voice_override:
                         self._cached_voice_prompt = prompt
                         self._cached_voice_path = voice_path_str

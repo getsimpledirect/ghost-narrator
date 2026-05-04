@@ -121,10 +121,36 @@ class StatusResponse(BaseModel):
 
 
 class JobListResponse(BaseModel):
-    """List of all jobs."""
+    """Paginated list of jobs matching the request filter."""
 
-    total: int = Field(..., ge=0, description='Total job count.')
-    jobs: dict[str, dict[str, Any]] = Field(..., description='Map of job_id to job data.')
+    total: int = Field(
+        ...,
+        ge=0,
+        description=(
+            'Total jobs matching the request filter, before pagination is applied. '
+            'Use this with `limit`/`offset` to iterate over all results.'
+        ),
+    )
+    limit: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            'Maximum jobs in this page. Echoed back from the request; '
+            '`null` means no limit (the entire filtered set was returned).'
+        ),
+    )
+    offset: int = Field(
+        0,
+        ge=0,
+        description='Offset applied to the filtered set. Echoed back from the request.',
+    )
+    jobs: dict[str, dict[str, Any]] = Field(
+        ...,
+        description=(
+            'Ordered map of job_id to job data, after filtering, sorting, and '
+            'pagination. Insertion order reflects the requested sort.'
+        ),
+    )
 
 
 class HealthResponse(BaseModel):

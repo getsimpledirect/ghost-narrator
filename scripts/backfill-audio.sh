@@ -25,16 +25,24 @@
 # Ghost Narrator — Audio Backfill Script
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# Finds all published Ghost posts that do not yet have an <audio> player
-# embedded and triggers the Ghost Narrator n8n pipeline for each one,
-# polling the TTS service for job completion before moving to the next article.
+# Finds all published Ghost posts that do not yet have a working <audio>
+# player embedded and triggers the Ghost Narrator n8n pipeline for each
+# one. Default mode triggers all jobs, then exits — TTS-side processing
+# continues in the background, and you monitor it with --queue or
+# --watch (or check the Ghost site once jobs complete).
 #
 # Usage:
-#   bash scripts/backfill-audio.sh              # interactive foreground run
-#   bash scripts/backfill-audio.sh --background # collect inputs, then run in background
-#   bash scripts/backfill-audio.sh --status     # show background run status + log tail
+#   bash scripts/backfill-audio.sh              # discover + trigger all jobs, exit
+#   bash scripts/backfill-audio.sh --queue      # job-level status snapshot
+#   bash scripts/backfill-audio.sh --queue --all  # include non-backfill jobs
+#   bash scripts/backfill-audio.sh --watch      # loop --queue until terminal
+#   bash scripts/backfill-audio.sh --status     # log-level tail + background PID
 #   bash scripts/backfill-audio.sh --logs       # live-tail the background log
-#   bash scripts/backfill-audio.sh --stop       # stop a running background job
+#   bash scripts/backfill-audio.sh --stop       # stop a backgrounded run
+#
+# Background mode is still available via the interactive "Run in background?"
+# prompt, but with the trigger phase taking <10s for typical batches it's
+# rarely needed; --queue / --watch are the right tools for monitoring.
 #
 # Requirements:
 #   curl, jq  →  sudo apt install curl jq  (or: brew install curl jq)
@@ -66,6 +74,64 @@ info()    { echo -e "${CYAN}$*${NC}"; }
 success() { echo -e "${GREEN}✓ $*${NC}"; }
 warn()    { echo -e "${YELLOW}⚠ $*${NC}"; }
 err()     { echo -e "${RED}✗ $*${NC}"; }
+
+# ─── .env loader ─────────────────────────────────────────────────────────────
+# Loads KEY=VALUE pairs from a .env file into the current environment, but
+# only when KEY isn't already set — so a value pre-exported by the user
+# (e.g. `TTS_API_KEY=foo bash backfill-audio.sh`) always wins. Comments and
+# blank lines are skipped; surrounding quotes are stripped.
+load_dotenv() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 0
+    local line name value
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip blanks and comments.
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # Tolerate `export KEY=VALUE`.
+        line="${line#export }"
+        # Match KEY=VALUE (KEY must start with letter or underscore).
+        if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            name="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            # Strip surrounding single or double quotes.
+            if [[ "$value" =~ ^\".*\"$ || "$value" =~ ^\'.*\'$ ]]; then
+                value="${value:1:${#value}-2}"
+            fi
+            # Defer to existing env values.
+            if [ -z "${!name:-}" ]; then
+                export "$name=$value"
+            fi
+        fi
+    done < "$env_file"
+}
+
+# Locate .env relative to either the script or the current working directory,
+# whichever exists first. Repo root sits one level above scripts/.
+_DOTENV_PATH=""
+for _candidate in \
+    "$(pwd)/.env" \
+    "$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)/.env"
+do
+    if [ -f "$_candidate" ]; then
+        _DOTENV_PATH="$_candidate"
+        break
+    fi
+done
+if [ -n "$_DOTENV_PATH" ]; then
+    load_dotenv "$_DOTENV_PATH"
+fi
+
+# ─── URL-to-slug helper ──────────────────────────────────────────────────────
+# Convert a Ghost URL to a hostname-with-dashes slug used in JOB_ID and storage
+# paths. The n8n callback workflow reverse-resolves this back to the matching
+# GHOST_SITE{1,2}_ADMIN_API_KEY by comparing against parseHostname applied to
+# GHOST_SITE{1,2}_URL — so this function and the callback agree by construction.
+url_to_slug() {
+    local url="$1"
+    local host="${url#http://}"; host="${host#https://}"
+    host="${host%%/*}"; host="${host%%:*}"
+    echo "${host//./-}"
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SUBCOMMANDS  (--status / --logs / --stop / --config)
@@ -126,6 +192,175 @@ if [ "${1:-}" = "--stop" ]; then
     exit 0
 fi
 
+# ─── Queue snapshot helpers (shared by --queue and --watch) ──────────────────
+# Fetch /tts/jobs as JSON. Echoes the JSON body on success; empty on error.
+# $1 (optional) is appended as a query string (e.g. "prefix=backfill-").
+# Caller decides what to do with empty (transient retry vs. bail).
+_fetch_tts_jobs() {
+    local query="${1:-}"
+    local base="${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs"
+    local url="$base${query:+?$query}"
+    local key="${TTS_API_KEY:-}"
+    if [ -z "$key" ]; then
+        err "TTS_API_KEY is empty; set it in .env or export it before running"
+        return 1
+    fi
+    curl -sS --max-time 10 \
+        -H "Authorization: Bearer ${key}" \
+        "$url" 2>/dev/null
+}
+
+# Render a status table from /tts/jobs JSON. Reads JSON on stdin.
+# $1 = "backfill" (filter to backfill-* IDs) or "all" (no filter).
+_render_queue_table() {
+    local mode="${1:-backfill}"
+    local now
+    now=$(date +%s)
+    # Build an array of job rows: [id, status, age_seconds_or_empty, error]
+    # Sort: failed first (most important), active, queued, completed/cancelled/deleted last.
+    local filter='.jobs | to_entries | map({
+        id: .key,
+        status: (.value.status // "unknown"),
+        created_at: (.value.created_at // 0),
+        started_at: (.value.started_at // null),
+        completed_at: (.value.completed_at // null),
+        error: (.value.error // "")
+    })'
+    if [ "$mode" = "backfill" ]; then
+        filter+=' | map(select(.id | startswith("backfill-")))'
+    fi
+    filter+=' | sort_by(
+        if .status == "failed" then 0
+        elif .status == "processing" or .status == "paused" then 1
+        elif .status == "queued" then 2
+        else 3 end
+    )'
+
+    local rows_tsv
+    rows_tsv=$(jq -r --argjson now "$now" "$filter"' | .[] |
+        [
+            .id,
+            .status,
+            (if .status == "queued" then "—"
+             elif .completed_at != null and .started_at != null then ((.completed_at - .started_at) | floor | tostring + "s")
+             elif .started_at != null then (($now - .started_at) | floor | tostring + "s")
+             elif .created_at != null then (($now - .created_at) | floor | tostring + "s")
+             else "—" end),
+            (.error // "" | .[0:60])
+        ] | @tsv')
+
+    local total queued processing paused completed failed cancelled
+    total=$(echo "$rows_tsv"   | grep -c . || true)
+    queued=$(echo "$rows_tsv"  | awk -F'\t' '$2=="queued"     {n++} END{print n+0}')
+    processing=$(echo "$rows_tsv" | awk -F'\t' '$2=="processing" {n++} END{print n+0}')
+    paused=$(echo "$rows_tsv"  | awk -F'\t' '$2=="paused"     {n++} END{print n+0}')
+    completed=$(echo "$rows_tsv" | awk -F'\t' '$2=="completed" {n++} END{print n+0}')
+    failed=$(echo "$rows_tsv"  | awk -F'\t' '$2=="failed"     {n++} END{print n+0}')
+    cancelled=$(echo "$rows_tsv" | awk -F'\t' '$2=="cancelled" || $2=="deleted" {n++} END{print n+0}')
+    local active=$((processing + paused))
+
+    local label="Backfill Queue"
+    [ "$mode" = "all" ] && label="All TTS Jobs"
+    echo ""
+    echo -e "${BOLD}─── ${label} (snapshot at $(date +%H:%M:%S)) ─────────────────────${NC}"
+    if [ "$total" -eq 0 ]; then
+        echo "(no jobs)"
+        echo ""
+        return 0
+    fi
+    # Format: ID truncated to 60 chars, STATUS 11 chars, AGE 8 chars, ERROR
+    printf "%-60s  %-11s  %-8s  %s\n" "ID (slug part)" "STATUS" "AGE" "ERROR"
+    while IFS=$'\t' read -r id status age error; do
+        [ -z "$id" ] && continue
+        # Strip the leading 'backfill-{site_slug}-pid-{post_id}-' so the
+        # human-readable slug shows in the column. Falls back to truncated ID.
+        local display_id
+        display_id=$(echo "$id" | sed -E 's/^backfill-[a-z0-9-]+-pid-[a-f0-9]{24}-//; s/-[0-9]{13}$//')
+        # Truncate to 60 chars max, ellipsis if cut.
+        if [ "${#display_id}" -gt 60 ]; then
+            display_id="${display_id:0:57}..."
+        fi
+        local err_str=""
+        [ -n "$error" ] && err_str="(${error})"
+        printf "%-60s  %-11s  %-8s  %s\n" "$display_id" "$status" "$age" "$err_str"
+    done <<< "$rows_tsv"
+    echo -e "${BOLD}──────────────────────────────────────────────────────────────${NC}"
+    printf "Totals:  %d done · %d active · %d queued · %d failed · %d cancelled (%d total)\n" \
+        "$completed" "$active" "$queued" "$failed" "$cancelled" "$total"
+    echo ""
+    return 0
+}
+
+# Return 0 (true) if all backfill-* jobs in the JSON on stdin are terminal.
+# Terminal = completed | failed | cancelled | deleted.
+_all_terminal() {
+    local response="$1"
+    local non_terminal_count
+    non_terminal_count=$(echo "$response" | jq '[.jobs | to_entries[]
+        | select(.key | startswith("backfill-"))
+        | select((.value.status // "") | IN("completed","failed","cancelled","deleted") | not)
+    ] | length')
+    [ "$non_terminal_count" = "0" ]
+}
+
+_count_backfill_jobs() {
+    local response="$1"
+    echo "$response" | jq '[.jobs | to_entries[] | select(.key | startswith("backfill-"))] | length'
+}
+
+if [ "${1:-}" = "--queue" ]; then
+    # `limit=10000` overrides the API's default page size (100) so the
+    # script gets the full backfill batch in one fetch — at our deployment
+    # scale (Redis TTL of 24h, tens-to-hundreds of jobs typical) this
+    # never approaches the cap. Larger deployments would need a paginated
+    # render loop.
+    mode="backfill"
+    query="prefix=backfill-&limit=10000"
+    if [ "${2:-}" = "--all" ]; then
+        mode="all"
+        query="limit=10000"
+    fi
+    response=$(_fetch_tts_jobs "$query")
+    if [ -z "$response" ]; then
+        err "Couldn't reach ${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs"
+        exit 1
+    fi
+    _render_queue_table "$mode" <<< "$response"
+    exit 0
+fi
+
+if [ "${1:-}" = "--watch" ]; then
+    fail_streak=0
+    first_iter=1
+    while true; do
+        # See --queue note above re: `limit=10000`.
+        response=$(_fetch_tts_jobs "prefix=backfill-&limit=10000")
+        if [ -z "$response" ]; then
+            fail_streak=$((fail_streak + 1))
+            if [ "$fail_streak" -ge 3 ]; then
+                err "Couldn't reach ${TTS_SERVICE_URL:-http://localhost:8020}/tts/jobs after 3 attempts"
+                exit 1
+            fi
+            warn "Transient fetch failure (attempt ${fail_streak}/3); retrying in 15s"
+            sleep 15
+            continue
+        fi
+        fail_streak=0
+        clear
+        _render_queue_table "backfill" <<< "$response"
+        if [ "$first_iter" = 1 ] && [ "$(_count_backfill_jobs "$response")" = "0" ]; then
+            warn "No backfill-* jobs found in queue. Did the trigger phase run?"
+            exit 0
+        fi
+        first_iter=0
+        if _all_terminal "$response"; then
+            success "All backfill jobs are in a terminal state."
+            exit 0
+        fi
+        sleep 15
+    done
+fi
+
 # ─── Config-file mode (used internally by background re-invocation) ──────────
 BACKGROUND=false
 CONFIG_FILE=""
@@ -149,6 +384,7 @@ if [ "${1:-}" = "--config" ]; then
     SITE_COUNT="$BACKFILL_SITE_COUNT"
     N8N_WEBHOOK="$BACKFILL_N8N_WEBHOOK"
     TTS_SERVICE_URL="$BACKFILL_TTS_SERVICE_URL"
+    TTS_API_KEY="${BACKFILL_TTS_API_KEY:-}"
     DRY_RUN="$BACKFILL_DRY_RUN"
     echo ""
     echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
@@ -185,21 +421,45 @@ if [ "${1:-}" != "--config" ]; then
 
     echo -e "${BOLD}── Pipeline ────────────────────────────────────────────────${NC}"
     echo ""
+    if [ -n "$_DOTENV_PATH" ]; then
+        info "Loaded defaults from ${_DOTENV_PATH}"
+        echo ""
+    fi
 
-    _default_webhook="http://localhost:5678/webhook/ghost-published"
+    _default_webhook="${N8N_WEBHOOK_URL:-http://localhost:5678/webhook/ghost-published}"
     read -r -p "n8n webhook URL [$_default_webhook]: " _input
     N8N_WEBHOOK="${_input:-$_default_webhook}"
 
     echo ""
-    _default_tts="http://localhost:8020"
+    _default_tts="${TTS_SERVICE_URL:-http://localhost:8020}"
     read -r -p "TTS service URL [$_default_tts]: " _input
     TTS_SERVICE_URL="${_input:-$_default_tts}"
+
+    # TTS API key — required by the service since the auth refactor.
+    # Honor TTS_API_KEY from the parent env so users can pre-export it once.
+    echo ""
+    if [ -n "${TTS_API_KEY:-}" ]; then
+        info "Using TTS_API_KEY from environment (\$TTS_API_KEY)"
+    else
+        read -r -s -p "TTS API key (Bearer token, will not echo): " TTS_API_KEY
+        echo ""
+    fi
+    if [ -z "${TTS_API_KEY:-}" ]; then
+        err "TTS API key cannot be empty — set TTS_API_KEY in your env or paste it here"
+        exit 1
+    fi
 
     echo ""
     echo -e "${BOLD}── Ghost Sites ─────────────────────────────────────────────${NC}"
     echo ""
-    read -r -p "Number of Ghost sites to process [1]: " _input
-    SITE_COUNT="${_input:-1}"
+    # Default site count from .env: 2 if SITE2 vars are set, else 1.
+    if [ -n "${GHOST_SITE2_URL:-}" ] || [ -n "${GHOST_KEY_SITE2:-}" ]; then
+        _default_count=2
+    else
+        _default_count=1
+    fi
+    read -r -p "Number of Ghost sites to process [$_default_count]: " _input
+    SITE_COUNT="${_input:-$_default_count}"
 
     if ! [[ "$SITE_COUNT" =~ ^[1-9][0-9]*$ ]]; then
         err "Invalid site count: ${SITE_COUNT}"
@@ -210,10 +470,29 @@ if [ "${1:-}" != "--config" ]; then
     for i in $(seq 1 "$SITE_COUNT"); do
         echo ""
         echo -e "${BOLD}  Site ${i}${NC}"
-        read -r -p "    Ghost URL (e.g. https://ghost.your-site.com): " ghost_url
+
+        # Prefill from .env: GHOST_SITE${i}_URL and GHOST_KEY_SITE${i}.
+        url_var="GHOST_SITE${i}_URL"
+        key_var="GHOST_KEY_SITE${i}"
+        _default_url="${!url_var:-}"
+        _default_key="${!key_var:-}"
+
+        if [ -n "$_default_url" ]; then
+            read -r -p "    Ghost URL [$_default_url]: " ghost_url
+            ghost_url="${ghost_url:-$_default_url}"
+        else
+            read -r -p "    Ghost URL (e.g. https://ghost.your-site.com): " ghost_url
+        fi
         if [ -z "$ghost_url" ]; then err "Ghost URL cannot be empty"; exit 1; fi
-        read -r -p "    Content API key: " ghost_key
+
+        if [ -n "$_default_key" ]; then
+            read -r -p "    Content API key [from .env]: " ghost_key
+            ghost_key="${ghost_key:-$_default_key}"
+        else
+            read -r -p "    Content API key: " ghost_key
+        fi
         if [ -z "$ghost_key" ]; then err "Content API key cannot be empty"; exit 1; fi
+
         GHOST_URLS+=("${ghost_url%/}")
         GHOST_KEYS+=("$ghost_key")
     done
@@ -251,6 +530,7 @@ if [ "$BACKGROUND" = true ]; then
     {
         echo "BACKFILL_N8N_WEBHOOK=$(printf '%q' "$N8N_WEBHOOK")"
         echo "BACKFILL_TTS_SERVICE_URL=$(printf '%q' "$TTS_SERVICE_URL")"
+        echo "BACKFILL_TTS_API_KEY=$(printf '%q' "$TTS_API_KEY")"
         echo "BACKFILL_SITE_COUNT=$SITE_COUNT"
         echo "BACKFILL_DRY_RUN=$(printf '%q' "$DRY_RUN")"
         for i in "${!GHOST_URLS[@]}"; do
@@ -346,7 +626,17 @@ poll_tts_job() {
         http_code=$(curl -s -o $POLL_TMP \
             -w "%{http_code}" \
             --max-time 10 \
+            -H "Authorization: Bearer ${TTS_API_KEY}" \
             "${TTS_SERVICE_URL}/tts/status/${job_id}" 2>/dev/null) || http_code="000"
+
+        # Auth failures are operator errors, not transient ones — bail with a
+        # clear message instead of polling 401/403 forever.
+        if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+            echo ""
+            err "TTS service rejected the API key (HTTP ${http_code}). Check TTS_API_KEY matches the running service."
+            rm -f $POLL_TMP
+            return 1
+        fi
 
         if [ "$http_code" = "404" ]; then
             if [ $elapsed -ge $N8N_TIMEOUT ]; then
@@ -422,11 +712,11 @@ GRAND_ERRORS=0
 for site_idx in "${!GHOST_URLS[@]}"; do
     GHOST_URL="${GHOST_URLS[$site_idx]}"
     GHOST_KEY="${GHOST_KEYS[$site_idx]}"
+    # Hostname-with-dashes slug used in JOB_ID and (downstream) the GCS upload
+    # path. The n8n callback workflow reverse-resolves this to GHOST_SITE{1,2}_*
+    # env vars by matching against parseHostname(GHOST_SITE{1,2}_URL).
+    SITE_SLUG=$(url_to_slug "$GHOST_URL")
     SITE_NUM=$((site_idx + 1))
-
-    # Derive site slug from URL hostname (dots → hyphens)
-    SITE_HOSTNAME=$(echo "$GHOST_URL" | sed 's|https\?://||' | sed 's|/.*||')
-    SITE_SLUG=$(echo "$SITE_HOSTNAME" | tr '.' '-')
 
     echo ""
     echo -e "${BOLD}── Site ${SITE_NUM}: ${GHOST_URL} ──${NC}"
@@ -446,30 +736,109 @@ for site_idx in "${!GHOST_URLS[@]}"; do
     success "Found ${TOTAL} published posts"
     [ "$TOTAL" -eq 0 ] && continue
 
-    # ── Split into has-audio / needs-audio ────────────────────────────────────
+    # ── Stage 1: posts with no <audio> tag in HTML at all ─────────────────────
     NEEDS_FILE=$(mktemp)
     _CLEANUP_FILES+=("$NEEDS_FILE")
     jq '[.[] | select(
         .html != null and
         (.html | test("<audio[^>]*>"; "i") | not)
     )]' "$ALL_POSTS_FILE" > "$NEEDS_FILE"
+    NO_TAG_COUNT=$(jq 'length' "$NEEDS_FILE")
 
-    HAS_COUNT=$(jq '[.[] | select(
+    # ── Stage 2: posts WITH an <audio> tag whose gn-audio-embed source 404s ───
+    # The HTML-tag-presence check above is structural; this is a liveness check
+    # that catches posts whose embed points at a deleted/missing GCS file. This
+    # is the dominant failure mode for sites that have been backfilled before.
+    WITH_TAG_FILE=$(mktemp); _CLEANUP_FILES+=("$WITH_TAG_FILE")
+    jq '[.[] | select(
         .html != null and
         (.html | test("<audio[^>]*>"; "i"))
-    )] | length' "$ALL_POSTS_FILE")
+    )]' "$ALL_POSTS_FILE" > "$WITH_TAG_FILE"
+
+    BROKEN_FILE=$(mktemp); _CLEANUP_FILES+=("$BROKEN_FILE")
+    echo "[]" > "$BROKEN_FILE"
+    # NDJSON sidecar: one broken post per line. We accumulate here instead of
+    # repeatedly `jq --argjson p "$post"`-ing into a JSON array, because the
+    # full post object can be hundreds of KB for long-form essays and exceeds
+    # ARG_MAX on the command line ("jq: Argument list too long"). Writing each
+    # already-serialized line to disk avoids passing post data via argv at all.
+    BROKEN_LINES=$(mktemp); _CLEANUP_FILES+=("$BROKEN_LINES")
+    : > "$BROKEN_LINES"
+
+    WITH_TAG_TOTAL=$(jq 'length' "$WITH_TAG_FILE")
+    if [ "$WITH_TAG_TOTAL" -gt 0 ]; then
+        info "Verifying ${WITH_TAG_TOTAL} existing audio embed(s)..."
+        idx=0
+        while IFS= read -r post; do
+            idx=$((idx + 1))
+            printf "\r  Checking embed: %d / %d   " "$idx" "$WITH_TAG_TOTAL"
+
+            # Extract the first <source src="..."> URL from the gn-audio-embed
+            # block. The embed has a nested player UI (button + progress bar +
+            # speed control) BEFORE the <audio>/<source>, so we cannot match
+            # `gn-audio-embed` immediately followed by <source>. Instead:
+            #   1. tr collapses the html to a single line.
+            #   2. sed slices from the last `id="gn-audio-embed"` to EOL.
+            #   3. head -c bounds the scan to 20 KB after the anchor so we
+            #      don't reach into unrelated downstream content.
+            #   4. grep extracts the first <source src="..."> in that window.
+            # `|| true` on each pipeline swallows grep's exit-1 on no-match so
+            # `set -e -o pipefail` doesn't abort the whole script mid-loop.
+            html=$(echo "$post" | jq -r '.html')
+            # Inject n8n always writes double-quoted id="gn-audio-embed"
+            # (see Prepend Audio Player node in ghost-audio-callback.json),
+            # so we don't need to handle single-quoted variants.
+            block=$(echo "$html" \
+                | tr -d '\n' \
+                | sed -n 's/.*\(id="gn-audio-embed".*\)/\1/p' \
+                | head -c 20000 \
+                || true)
+            src=$(echo "$block" \
+                | grep -oE '<source[^>]*src="[^"]+"' \
+                | head -1 \
+                | sed -E 's/.*src="([^"]+)".*/\1/' \
+                || true)
+
+            if [ -z "$src" ]; then
+                printf '%s\n' "$post" >> "$BROKEN_LINES"
+                continue
+            fi
+
+            code=$(curl -s -o /dev/null -w "%{http_code}" \
+                --max-time 5 -I "$src" 2>/dev/null) || code="000"
+            if [ "$code" != "200" ]; then
+                printf '%s\n' "$post" >> "$BROKEN_LINES"
+            fi
+        done < <(jq -c '.[]' "$WITH_TAG_FILE")
+        echo ""
+    fi
+
+    # Slurp NDJSON sidecar into the broken-posts array.
+    if [ -s "$BROKEN_LINES" ]; then
+        jq -s '.' "$BROKEN_LINES" > "$BROKEN_FILE"
+    fi
+
+    # Merge no-tag + broken-embed posts into NEEDS_FILE.
+    BROKEN_COUNT=$(jq 'length' "$BROKEN_FILE")
+    if [ "$BROKEN_COUNT" -gt 0 ]; then
+        jq -s '.[0] + .[1]' "$NEEDS_FILE" "$BROKEN_FILE" > "${NEEDS_FILE}.t" \
+            && mv "${NEEDS_FILE}.t" "$NEEDS_FILE"
+    fi
+
+    HAS_COUNT=$((WITH_TAG_TOTAL - BROKEN_COUNT))
     NEEDS_COUNT=$(jq 'length' "$NEEDS_FILE")
 
     GRAND_ALREADY_DONE=$((GRAND_ALREADY_DONE + HAS_COUNT))
-    [ "$HAS_COUNT" -gt 0 ] && success "${HAS_COUNT} posts already have audio — skipping"
+    [ "$HAS_COUNT" -gt 0 ] && success "${HAS_COUNT} posts already have working audio — skipping"
+    [ "$BROKEN_COUNT" -gt 0 ] && warn "${BROKEN_COUNT} posts have broken/missing audio — re-narrating"
+    [ "$NO_TAG_COUNT" -gt 0 ] && warn "${NO_TAG_COUNT} posts have no audio embed — narrating"
 
     if [ "$NEEDS_COUNT" -eq 0 ]; then
-        success "All posts have audio. Nothing to do for this site."
-        rm -f "$ALL_POSTS_FILE" "$NEEDS_FILE"
+        success "All posts have working audio. Nothing to do for this site."
+        rm -f "$ALL_POSTS_FILE" "$NEEDS_FILE" "$WITH_TAG_FILE" "$BROKEN_FILE"
         continue
     fi
 
-    warn "${NEEDS_COUNT} posts need audio narration"
     echo ""
 
     # ── List posts to be processed ────────────────────────────────────────────
@@ -509,10 +878,16 @@ for site_idx in "${!GHOST_URLS[@]}"; do
         SITE_TRIGGERED=$((SITE_TRIGGERED + 1))
         GRAND_TRIGGERED=$((GRAND_TRIGGERED + 1))
 
-        # Construct deterministic job_id using the backfill prefix
-        # Format: backfill-{siteSlug}-pid-{postId}-{slug}
-        # The -pid- separator is required for the n8n callback workflow to extract postId
-        JOB_ID="backfill-${SITE_SLUG}-pid-${POST_ID}-${SLUG}"
+        # Deterministic job_id matching the format n8n's Extract Post Metadata
+        # node would generate for a real Ghost webhook, but with a 'backfill-'
+        # prefix so script-driven runs are visually distinct in the storage tree:
+        #   backfill-{hostname-with-dashes}-pid-{postId}-{slug}-{epoch_ms}
+        # n8n's metadata node honours data.backfill_job_id when present and the
+        # callback strips the 'backfill-' marker before resolving the admin key.
+        TIMESTAMP_MS=$(date +%s%3N)
+        # Some BSD-date variants don't support %3N — fall back to seconds * 1000.
+        [[ "$TIMESTAMP_MS" =~ ^[0-9]{13}$ ]] || TIMESTAMP_MS="$(($(date +%s) * 1000))"
+        JOB_ID="backfill-${SITE_SLUG}-pid-${POST_ID}-${SLUG}-${TIMESTAMP_MS}"
 
         echo ""
         echo -e "${BOLD}[${SITE_TRIGGERED}/${NEEDS_COUNT}] ${TITLE}${NC}"
@@ -525,27 +900,48 @@ for site_idx in "${!GHOST_URLS[@]}"; do
             --arg job_id "$JOB_ID" \
             '{post: {current: .}, backfill_job_id: $job_id}')
 
-        # Trigger n8n webhook
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        # Sign the payload when N8N_GHOST_WEBHOOK_SECRET is set so backfill
+        # passes the n8n HMAC validator that production webhooks use. Without
+        # this, enabling the secret in .env would silently block backfill at
+        # the HMAC node (it throws on missing X-Ghost-Signature). Falls back
+        # to unsigned when the secret is empty (HMAC node passes through).
+        CURL_HEADERS=(-H "Content-Type: application/json")
+        if [ -n "${N8N_GHOST_WEBHOOK_SECRET:-}" ]; then
+            HMAC_HEX=$(printf '%s' "$PAYLOAD" \
+                | openssl dgst -sha256 -hmac "$N8N_GHOST_WEBHOOK_SECRET" -hex 2>/dev/null \
+                | awk '{print $NF}')
+            if [ -n "$HMAC_HEX" ]; then
+                CURL_HEADERS+=(-H "X-Ghost-Signature: sha256=${HMAC_HEX}")
+            else
+                warn "openssl HMAC failed — sending unsigned (will be rejected if HMAC is enforced)"
+            fi
+        fi
+
+        # Trigger n8n webhook. Pipe payload via stdin (--data-binary @-)
+        # rather than -d "$PAYLOAD": long-form posts produce JSON bodies of
+        # 100+ KB which overflow ARG_MAX when passed as a curl argument,
+        # making curl exit non-zero with no HTTP exchange — surfaces as
+        # HTTP 000. Same failure class as the jq --argjson overflow that
+        # was previously fixed in the verification step.
+        HTTP_CODE=$(printf '%s' "$PAYLOAD" | curl -s -o /dev/null -w "%{http_code}" \
             -X POST "$N8N_WEBHOOK" \
-            -H "Content-Type: application/json" \
+            "${CURL_HEADERS[@]}" \
             --max-time 15 \
-            -d "$PAYLOAD" 2>/dev/null) || HTTP_CODE="000"
+            --data-binary @- 2>/dev/null) || HTTP_CODE="000"
 
         if [[ "$HTTP_CODE" =~ ^2 ]]; then
             success "Pipeline triggered (HTTP ${HTTP_CODE})"
         else
-            err "Webhook returned HTTP ${HTTP_CODE} — skipping poll for this post"
+            err "Webhook returned HTTP ${HTTP_CODE} — job not queued"
             GRAND_ERRORS=$((GRAND_ERRORS + 1))
             continue
         fi
 
-        # Poll TTS service until complete
-        if poll_tts_job "$JOB_ID"; then
-            : # success already printed
-        else
-            GRAND_ERRORS=$((GRAND_ERRORS + 1))
-        fi
+        # Small spacing between webhook triggers: n8n's default SQLite backend
+        # serializes workflow-execution log writes, so a tight burst of 25+
+        # triggers can push some responses past curl's --max-time. 50 ms is
+        # enough headroom and adds <2s total for typical batch sizes.
+        sleep 0.05
 
     done < <(jq -c '.[]' "$NEEDS_FILE")
 
@@ -565,11 +961,14 @@ success "Jobs triggered     : ${GRAND_TRIGGERED}"
 echo ""
 
 if [ "$GRAND_TRIGGERED" -gt 0 ]; then
+    echo "Jobs are now queued in the TTS service. They will process one at a"
+    echo "time on the GPU and complete in the background."
+    echo ""
     echo "Monitor:"
-    echo "  n8n executions : ${N8N_WEBHOOK%/webhook/*}"
-    echo "  TTS jobs       : ${TTS_SERVICE_URL}/docs"
+    echo "  Snapshot       : bash $0 --queue"
+    echo "  Live dashboard : bash $0 --watch"
     echo "  TTS logs       : docker logs -f tts-service"
-    echo "  n8n logs       : docker logs -f n8n"
+    echo "  n8n executions : ${N8N_WEBHOOK%/webhook/*}"
     echo ""
     if [ "$GRAND_ERRORS" -gt 0 ]; then
         warn "${GRAND_ERRORS} job(s) failed. Re-run to retry — posts that already have audio are skipped automatically."

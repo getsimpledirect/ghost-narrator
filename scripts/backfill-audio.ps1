@@ -25,17 +25,21 @@
 # Ghost Narrator — Audio Backfill Script (PowerShell)
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# Finds all published Ghost posts that do not yet have an <audio> player
-# embedded and triggers the Ghost Narrator n8n pipeline for each one,
-# polling the TTS service for job completion before proceeding to the next
-# article (no fixed delay).
+# Finds all published Ghost posts that do not yet have a working <audio>
+# player embedded and triggers the Ghost Narrator n8n pipeline for each
+# one. Default mode triggers all jobs, then exits — TTS-side processing
+# continues in the background, and you monitor with -Queue or -Watch
+# (or check the Ghost site once jobs complete).
 #
 # Usage:
-#   .\backfill-audio.ps1                     # Interactive foreground run
-#   .\backfill-audio.ps1 -Background         # Collect config then run in background
-#   .\backfill-audio.ps1 -Status             # Show background run status + last log lines
-#   .\backfill-audio.ps1 -Logs               # Tail background run log (Ctrl+C to stop)
-#   .\backfill-audio.ps1 -Stop               # Stop the background run
+#   .\backfill-audio.ps1                     # discover + trigger all jobs, exit
+#   .\backfill-audio.ps1 -Queue              # job-level status snapshot
+#   .\backfill-audio.ps1 -Queue -All         # include non-backfill jobs
+#   .\backfill-audio.ps1 -Watch              # loop -Queue until terminal
+#   .\backfill-audio.ps1 -Status             # log-level tail + background PID
+#   .\backfill-audio.ps1 -Logs               # tail background run log (Ctrl+C to stop)
+#   .\backfill-audio.ps1 -Stop               # stop a backgrounded run
+#   .\backfill-audio.ps1 -Background         # rarely needed — trigger phase is <10s
 #
 # Requirements:
 #   PowerShell 5.1+ (built into Windows) or PowerShell 7+
@@ -46,6 +50,9 @@ param(
     [switch]$Status,
     [switch]$Logs,
     [switch]$Stop,
+    [switch]$Queue,
+    [switch]$Watch,
+    [switch]$All,
     # Internal: used when re-invoked as a background worker; not user-facing
     [string]$Config = ""
 )
@@ -65,6 +72,55 @@ function Write-Success { param($msg) Write-Host "v $msg" -ForegroundColor Green 
 function Write-Warn    { param($msg) Write-Host "! $msg" -ForegroundColor Yellow }
 function Write-Err     { param($msg) Write-Host "x $msg" -ForegroundColor Red }
 function Write-Header  { param($msg) Write-Host "`n$msg" -ForegroundColor White }
+
+# ─── .env loader ─────────────────────────────────────────────────────────────
+# Loads KEY=VALUE pairs from a .env file into the process environment, but only
+# when KEY isn't already set — so a value pre-exported by the caller wins.
+# Comments and blank lines are skipped; surrounding quotes are stripped.
+function Load-DotEnv {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    foreach ($line in Get-Content $Path) {
+        if ($line -match '^\s*(#|$)') { continue }
+        $stripped = $line -replace '^\s*export\s+', ''
+        if ($stripped -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            $name  = $matches[1]
+            $value = $matches[2]
+            # Trim surrounding single or double quotes.
+            if ($value -match '^"(.*)"$' -or $value -match "^'(.*)'`$") {
+                $value = $matches[1]
+            }
+            # Defer to existing env values.
+            if (-not [Environment]::GetEnvironmentVariable($name, 'Process')) {
+                [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+            }
+        }
+    }
+}
+
+# Locate .env relative to either the script or the current working directory,
+# whichever exists first. Repo root sits one level above scripts/.
+$DotEnvPath = $null
+$_candidates = @(
+    (Join-Path (Get-Location) '.env'),
+    (Join-Path (Split-Path -Parent (Split-Path -Parent $SCRIPT_PATH)) '.env')
+)
+foreach ($_c in $_candidates) {
+    if (Test-Path $_c) { $DotEnvPath = $_c; break }
+}
+if ($DotEnvPath) { Load-DotEnv $DotEnvPath }
+
+# ─── URL-to-slug helper ──────────────────────────────────────────────────────
+# Convert a Ghost URL to a hostname-with-dashes slug used in JOB_ID and
+# storage paths. The n8n callback workflow reverse-resolves this back to
+# GHOST_SITE{1,2}_ADMIN_API_KEY by comparing against the dashed hostname of
+# GHOST_SITE{1,2}_URL — so this function and the callback agree by construction.
+function Get-UrlSlug {
+    param([string]$Url)
+    if (-not $Url) { return '' }
+    $h = $Url -replace '^https?://', '' -replace '/.*$', '' -replace ':\d+$', ''
+    return $h.Replace('.', '-')
+}
 
 # ─── Subcommand: -Status ──────────────────────────────────────────────────────
 if ($Status) {
@@ -130,6 +186,186 @@ if ($Stop) {
     exit 0
 }
 
+# ─── Queue snapshot helpers (shared by -Queue and -Watch) ────────────────────
+# Fetch /tts/jobs as parsed object. Returns $null on transient error so
+# the caller can decide between bailing and retrying.
+# $Query (optional) is appended as a query string (e.g. "prefix=backfill-").
+function Get-TtsJobs {
+    param([string]$Query = "")
+    $base = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
+    $url  = if ($Query) { "$base`?$Query" } else { $base }
+    $key = $env:TTS_API_KEY
+    if (-not $key) {
+        Write-Err "TTS_API_KEY is empty; set it in .env or `$env:TTS_API_KEY before running"
+        return $null
+    }
+    try {
+        return Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 10 -Headers @{ Authorization = "Bearer $key" }
+    } catch {
+        return $null
+    }
+}
+
+# Render a status table from a /tts/jobs response object.
+# $Mode = 'backfill' (filter to backfill-* IDs) or 'all' (no filter).
+function Format-QueueTable {
+    param($Response, [string]$Mode = 'backfill')
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+    if (-not $Response -or -not $Response.jobs) {
+        Write-Host "(no jobs)"
+        return
+    }
+
+    # Convert PSCustomObject "jobs" map (keyed by job_id) into rows
+    $rows = @()
+    foreach ($prop in $Response.jobs.PSObject.Properties) {
+        $id = $prop.Name
+        if ($Mode -eq 'backfill' -and -not $id.StartsWith('backfill-')) { continue }
+        $j = $prop.Value
+        $status = if ($j.status) { [string]$j.status } else { 'unknown' }
+        $startedAt   = if ($j.started_at)   { [double]$j.started_at }   else { $null }
+        $completedAt = if ($j.completed_at) { [double]$j.completed_at } else { $null }
+        $createdAt   = if ($j.created_at)   { [double]$j.created_at }   else { $null }
+        $errorStr    = if ($j.error)        { [string]$j.error }        else { '' }
+
+        # Compute age
+        $age = '-'
+        if ($status -eq 'queued') {
+            $age = '-'
+        } elseif ($completedAt -and $startedAt) {
+            $age = "$([int]($completedAt - $startedAt))s"
+        } elseif ($startedAt) {
+            $age = "$([int]($now - $startedAt))s"
+        } elseif ($createdAt) {
+            $age = "$([int]($now - $createdAt))s"
+        }
+
+        # Display ID: strip 'backfill-{site}-pid-{post_id}-' prefix and '-{timestamp}' suffix
+        $displayId = $id -replace '^backfill-[a-z0-9-]+-pid-[a-f0-9]{24}-', '' -replace '-[0-9]{13}$', ''
+        if ($displayId.Length -gt 60) { $displayId = $displayId.Substring(0, 57) + '...' }
+
+        # Sort priority: failed → active → queued → terminal
+        $sortKey = switch ($status) {
+            'failed'     { 0 }
+            'processing' { 1 }
+            'paused'     { 1 }
+            'queued'     { 2 }
+            default      { 3 }
+        }
+
+        $rows += [PSCustomObject]@{
+            SortKey   = $sortKey
+            DisplayId = $displayId
+            Status    = $status
+            Age       = $age
+            Error     = if ($errorStr) { '(' + ($errorStr.Substring(0, [Math]::Min(60, $errorStr.Length))) + ')' } else { '' }
+        }
+    }
+
+    $label = if ($Mode -eq 'all') { 'All TTS Jobs' } else { 'Backfill Queue' }
+    Write-Host ""
+    Write-Host "─── $label (snapshot at $((Get-Date).ToString('HH:mm:ss'))) ─────────────────────" -ForegroundColor White
+    if ($rows.Count -eq 0) {
+        Write-Host "(no jobs)"
+        Write-Host ""
+        return
+    }
+
+    $sorted = $rows | Sort-Object SortKey, DisplayId
+    "{0,-60}  {1,-11}  {2,-8}  {3}" -f 'ID (slug part)', 'STATUS', 'AGE', 'ERROR'
+    foreach ($r in $sorted) {
+        "{0,-60}  {1,-11}  {2,-8}  {3}" -f $r.DisplayId, $r.Status, $r.Age, $r.Error
+    }
+    Write-Host "──────────────────────────────────────────────────────────────" -ForegroundColor White
+
+    $completed = ($rows | Where-Object { $_.Status -eq 'completed' }).Count
+    $failed    = ($rows | Where-Object { $_.Status -eq 'failed'    }).Count
+    $active    = ($rows | Where-Object { $_.Status -eq 'processing' -or $_.Status -eq 'paused' }).Count
+    $queued    = ($rows | Where-Object { $_.Status -eq 'queued'    }).Count
+    $cancelled = ($rows | Where-Object { $_.Status -eq 'cancelled' -or $_.Status -eq 'deleted' }).Count
+    "Totals:  {0} done · {1} active · {2} queued · {3} failed · {4} cancelled ({5} total)" -f $completed, $active, $queued, $failed, $cancelled, $rows.Count
+    Write-Host ""
+}
+
+# Returns $true if every backfill-* job in the response is in a terminal state.
+function Test-AllTerminal {
+    param($Response)
+    if (-not $Response -or -not $Response.jobs) { return $true }
+    $terminal = @('completed', 'failed', 'cancelled', 'deleted')
+    foreach ($prop in $Response.jobs.PSObject.Properties) {
+        if (-not $prop.Name.StartsWith('backfill-')) { continue }
+        $st = if ($prop.Value.status) { [string]$prop.Value.status } else { '' }
+        if ($terminal -notcontains $st) { return $false }
+    }
+    return $true
+}
+
+function Get-BackfillJobCount {
+    param($Response)
+    if (-not $Response -or -not $Response.jobs) { return 0 }
+    $n = 0
+    foreach ($prop in $Response.jobs.PSObject.Properties) {
+        if ($prop.Name.StartsWith('backfill-')) { $n++ }
+    }
+    return $n
+}
+
+# ─── Subcommand: -Queue ──────────────────────────────────────────────────────
+if ($Queue) {
+    # `limit=10000` overrides the API's default page size (100) so the
+    # script gets the full backfill batch in one fetch — at our deployment
+    # scale (Redis TTL of 24h, tens-to-hundreds of jobs typical) this
+    # never approaches the cap. Larger deployments would need a paginated
+    # render loop.
+    $query = if ($All) { 'limit=10000' } else { 'prefix=backfill-&limit=10000' }
+    $resp = Get-TtsJobs -Query $query
+    if ($null -eq $resp) {
+        $url = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
+        Write-Err "Couldn't reach $url"
+        exit 1
+    }
+    $mode = if ($All) { 'all' } else { 'backfill' }
+    Format-QueueTable -Response $resp -Mode $mode
+    exit 0
+}
+
+# ─── Subcommand: -Watch ──────────────────────────────────────────────────────
+if ($Watch) {
+    $failStreak = 0
+    $firstIter  = $true
+    while ($true) {
+        # See -Queue note above re: limit=10000.
+        $resp = Get-TtsJobs -Query 'prefix=backfill-&limit=10000'
+        if ($null -eq $resp) {
+            $failStreak++
+            if ($failStreak -ge 3) {
+                $url = if ($env:TTS_SERVICE_URL) { "$($env:TTS_SERVICE_URL)/tts/jobs" } else { "http://localhost:8020/tts/jobs" }
+                Write-Err "Couldn't reach $url after 3 attempts"
+                exit 1
+            }
+            Write-Warn "Transient fetch failure (attempt $failStreak/3); retrying in 15s"
+            Start-Sleep -Seconds 15
+            continue
+        }
+        $failStreak = 0
+        Clear-Host
+        Format-QueueTable -Response $resp -Mode 'backfill'
+
+        if ($firstIter -and (Get-BackfillJobCount $resp) -eq 0) {
+            Write-Warn "No backfill-* jobs found in queue. Did the trigger phase run?"
+            exit 0
+        }
+        $firstIter = $false
+
+        if (Test-AllTerminal $resp) {
+            Write-Success "All backfill jobs are in a terminal state."
+            exit 0
+        }
+        Start-Sleep -Seconds 15
+    }
+}
+
 # ─── Subcommand: -Config (background worker mode) ─────────────────────────────
 # This parameter is set internally when the script re-invokes itself via
 # Start-Process. It loads config from a JSON file and skips all prompts.
@@ -142,16 +378,12 @@ if ($Config -ne "") {
     $cfg            = Get-Content $Config -Raw -Encoding UTF8 | ConvertFrom-Json
     $N8N_WEBHOOK    = $cfg.N8N_WEBHOOK
     $TTS_SERVICE_URL = $cfg.TTS_SERVICE_URL
+    $TTS_API_KEY    = $cfg.TTS_API_KEY
     $DRY_RUN        = $cfg.DRY_RUN
     $GhostUrls      = @($cfg.GhostUrls)
     $GhostKeys      = @($cfg.GhostKeys)
     $skipInteractive = $true
 }
-
-# ─── Polling constants ────────────────────────────────────────────────────────
-$POLL_INTERVAL = 15     # seconds between status checks
-$N8N_TIMEOUT   = 600    # seconds before assuming n8n/LLM pipeline stalled
-$MAX_WAIT      = 1800   # absolute maximum wait per job (30 min)
 
 # ─── Banner + interactive prompts ─────────────────────────────────────────────
 if (-not $skipInteractive) {
@@ -161,29 +393,53 @@ if (-not $skipInteractive) {
     Write-Host "=========================================================" -ForegroundColor White
     Write-Host ""
     Write-Host "Scans your Ghost site(s) for published posts that do not yet have"
-    Write-Host "an audio player embedded, then triggers the narration pipeline for"
-    Write-Host "each one, polling until each job completes before starting the next."
+    Write-Host "a working audio player embedded, then triggers the narration pipeline"
+    Write-Host "for each one. Jobs queue in the TTS service and process one at a time"
+    Write-Host "on the GPU. Use -Queue or -Watch to monitor progress."
     Write-Host ""
 
     Write-Host "-- Pipeline -------------------------------------------------" -ForegroundColor White
     Write-Host ""
-    $defaultWebhook = "http://localhost:5678/webhook/ghost-published"
+    if ($DotEnvPath) {
+        Write-Info "Loaded defaults from $DotEnvPath"
+        Write-Host ""
+    }
+
+    $defaultWebhook = if ($env:N8N_WEBHOOK_URL) { $env:N8N_WEBHOOK_URL } else { "http://localhost:5678/webhook/ghost-published" }
     $inputWebhook   = Read-Host "n8n webhook URL [$defaultWebhook]"
     $N8N_WEBHOOK    = if ($inputWebhook) { $inputWebhook } else { $defaultWebhook }
 
-    $defaultTts      = "http://localhost:8020"
+    $defaultTts      = if ($env:TTS_SERVICE_URL) { $env:TTS_SERVICE_URL } else { "http://localhost:8020" }
     $inputTts        = Read-Host "TTS service URL [$defaultTts]"
     $TTS_SERVICE_URL = if ($inputTts) { $inputTts.TrimEnd("/") } else { $defaultTts }
+
+    # TTS API key — required by the service since the auth refactor.
+    # Honor $env:TTS_API_KEY so users can pre-export it once per shell session.
+    if ($env:TTS_API_KEY) {
+        $TTS_API_KEY = $env:TTS_API_KEY
+        Write-Info "Using TTS_API_KEY from environment (`$env:TTS_API_KEY)"
+    } else {
+        $secureKey  = Read-Host "TTS API key (Bearer token, will not echo)" -AsSecureString
+        $bstr       = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
+        $TTS_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) | Out-Null
+    }
+    if (-not $TTS_API_KEY) {
+        Write-Err "TTS API key cannot be empty — set `$env:TTS_API_KEY or paste it here"
+        exit 1
+    }
 
     Write-Host ""
     Write-Host "-- Ghost Sites ----------------------------------------------" -ForegroundColor White
     Write-Host ""
 
-    $inputCount = Read-Host "Number of Ghost sites to process [1]"
+    # Default count from .env: 2 if SITE2 vars are set, else 1.
+    $defaultCount = if ($env:GHOST_SITE2_URL -or $env:GHOST_KEY_SITE2) { 2 } else { 1 }
+    $inputCount = Read-Host "Number of Ghost sites to process [$defaultCount]"
     $SITE_COUNT = if ($inputCount) {
         try { [int]$inputCount }
         catch { Write-Err "Invalid number: '$inputCount' — must be a whole number"; exit 1 }
-    } else { 1 }
+    } else { $defaultCount }
 
     if ($SITE_COUNT -lt 1) {
         Write-Err "Site count must be at least 1"
@@ -196,16 +452,33 @@ if (-not $skipInteractive) {
     for ($i = 1; $i -le $SITE_COUNT; $i++) {
         Write-Host ""
         Write-Host "  Site $i" -ForegroundColor White
-        $ghostUrl = Read-Host "    Ghost URL (e.g. https://ghost.your-site.com)"
+
+        # Prefill from .env: GHOST_SITE${i}_URL and GHOST_KEY_SITE${i}.
+        $defaultUrl = [Environment]::GetEnvironmentVariable("GHOST_SITE${i}_URL", 'Process')
+        $defaultKey = [Environment]::GetEnvironmentVariable("GHOST_KEY_SITE${i}", 'Process')
+
+        if ($defaultUrl) {
+            $ghostUrl = Read-Host "    Ghost URL [$defaultUrl]"
+            if (-not $ghostUrl) { $ghostUrl = $defaultUrl }
+        } else {
+            $ghostUrl = Read-Host "    Ghost URL (e.g. https://ghost.your-site.com)"
+        }
         if (-not $ghostUrl) {
             Write-Err "Ghost URL cannot be empty"
             exit 1
         }
-        $ghostKey = Read-Host "    Content API key"
+
+        if ($defaultKey) {
+            $ghostKey = Read-Host "    Content API key [from .env]"
+            if (-not $ghostKey) { $ghostKey = $defaultKey }
+        } else {
+            $ghostKey = Read-Host "    Content API key"
+        }
         if (-not $ghostKey) {
             Write-Err "Content API key cannot be empty"
             exit 1
         }
+
         $GhostUrls += $ghostUrl.TrimEnd("/")
         $GhostKeys += $ghostKey
     }
@@ -236,6 +509,7 @@ if ($Background) {
     @{
         N8N_WEBHOOK     = $N8N_WEBHOOK
         TTS_SERVICE_URL = $TTS_SERVICE_URL
+        TTS_API_KEY     = $TTS_API_KEY
         DRY_RUN         = $DRY_RUN
         GhostUrls       = $GhostUrls
         GhostKeys       = $GhostKeys
@@ -306,114 +580,10 @@ function Get-AllPosts {
     return $allPosts
 }
 
-# ─── Helper: poll TTS service until job completes ─────────────────────────────
-# Returns $true on success, $false on failure/timeout.
-#
-# Phase logic:
-#   HTTP 404 → n8n is still running the LLM step; job not yet submitted to TTS
-#   status=queued/processing → TTS synthesis is running
-#   status=completed → success
-#   status=failed    → failure
-#   elapsed > N8N_TIMEOUT while still 404 → n8n pipeline stalled
-#   elapsed > MAX_WAIT → give up
-function Wait-ForJob {
-    param(
-        [string]$JobId,
-        [string]$TtsUrl,
-        [int]$PollInterval,
-        [int]$N8nTimeout,
-        [int]$MaxWait
-    )
-
-    $elapsed        = 0
-    $n8nLogged      = $false
-    $ttsLogged      = $false
-
-    while ($elapsed -lt $MaxWait) {
-        Start-Sleep -Seconds $PollInterval
-        $elapsed += $PollInterval
-
-        $statusUrl = "$TtsUrl/tts/status/$JobId"
-        $httpCode  = 0
-        $body      = $null
-
-        try {
-            $wr   = Invoke-WebRequest -Uri $statusUrl -Method Get -TimeoutSec 10 -UseBasicParsing
-            $body = $wr.Content | ConvertFrom-Json
-            $httpCode = [int]$wr.StatusCode
-        } catch {
-            # Determine HTTP status code from exception (works on both PS5.1 and PS7)
-            if ($null -ne $_.Exception.Response) {
-                $httpCode = [int]$_.Exception.Response.StatusCode
-            } else {
-                $httpCode = 0
-            }
-        }
-
-        # 404 = n8n LLM phase (job not yet registered in TTS)
-        if ($httpCode -eq 404) {
-            if (-not $n8nLogged) {
-                Write-Host ""
-                Write-Info "  n8n pipeline processing (LLM narration phase)..."
-                $n8nLogged = $true
-            }
-            if ($elapsed -ge $N8nTimeout) {
-                Write-Host ""
-                Write-Err "  n8n did not submit TTS job after ${N8nTimeout}s — pipeline may have stalled"
-                Write-Host "  Check n8n execution logs for errors"
-                return $false
-            }
-            Write-Host "`r  LLM phase: ${elapsed}s / ${N8nTimeout}s max  " -NoNewline
-            continue
-        }
-
-        # Non-404 error or connection failure
-        if ($null -eq $body -or $httpCode -eq 0) {
-            Write-Host "`r  TTS poll error (HTTP $httpCode, ${elapsed}s elapsed)  " -NoNewline
-            continue
-        }
-
-        $jobStatus = $body.status
-
-        switch ($jobStatus) {
-            "queued" {
-                if (-not $ttsLogged) {
-                    Write-Host ""
-                    Write-Info "  TTS job queued — waiting for synthesis to start..."
-                    $ttsLogged = $true
-                }
-                Write-Host "`r  Status: queued     — ${elapsed}s elapsed  " -NoNewline
-            }
-            "processing" {
-                Write-Host "`r  Status: processing — ${elapsed}s elapsed  " -NoNewline
-            }
-            "completed" {
-                Write-Host ""
-                Write-Success "  TTS job completed in ${elapsed}s"
-                return $true
-            }
-            "failed" {
-                Write-Host ""
-                $errMsg = if ($null -ne $body.error -and $body.error -ne "") { $body.error } else { "unknown error" }
-                Write-Err "  TTS job failed: $errMsg"
-                return $false
-            }
-            default {
-                Write-Host "`r  Status: $jobStatus — ${elapsed}s elapsed  " -NoNewline
-            }
-        }
-    }
-
-    Write-Host ""
-    Write-Err "  Timed out after ${MaxWait}s waiting for job $JobId"
-    return $false
-}
-
 # ─── Counters ─────────────────────────────────────────────────────────────────
 $grandTriggered   = 0
 $grandAlreadyDone = 0
 $grandSkipped     = 0
-$grandCompleted   = 0
 $grandErrors      = 0
 
 if (-not $skipInteractive) {
@@ -448,26 +618,78 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
 
     if ($allPosts.Count -eq 0) { continue }
 
-    # ── Split into has-audio / needs-audio ────────────────────────────────────
-    $needsAudio = @($allPosts | Where-Object {
+    # ── Stage 1: posts with no <audio> tag in HTML at all ─────────────────────
+    $noTag = @($allPosts | Where-Object {
         $_.html -ne $null -and $_.html -notmatch '<audio[^>]*>'
     })
-    $hasAudio = @($allPosts | Where-Object {
+    $withTag = @($allPosts | Where-Object {
         $_.html -ne $null -and $_.html -match '<audio[^>]*>'
     })
 
-    $grandAlreadyDone += $hasAudio.Count
+    # ── Stage 2: posts WITH a tag whose gn-audio-embed source 404s ────────────
+    # The HTML-tag-presence check is structural; this is a liveness check that
+    # catches posts whose embed points at a deleted/missing GCS file. This is
+    # the dominant failure mode for sites that have been backfilled before.
+    $broken = @()
+    if ($withTag.Count -gt 0) {
+        Write-Info "Verifying $($withTag.Count) existing audio embed(s)..."
+        $idx = 0
+        foreach ($post in $withTag) {
+            $idx++
+            Write-Host "`r  Checking embed: $idx / $($withTag.Count)   " -NoNewline
 
-    if ($hasAudio.Count -gt 0) {
-        Write-Success "$($hasAudio.Count) posts already have audio — skipping"
+            # Extract the first <source src="..."> URL from the gn-audio-embed
+            # block. The embed has a nested player UI (button + progress bar +
+            # speed control) BEFORE <audio>/<source>, so we cannot match
+            # `gn-audio-embed` immediately followed by <source>. Two-step:
+            #   1. anchor at `id="gn-audio-embed"` and slice forward 20 KB to
+            #      bound the search window (prevents picking a later embed's
+            #      source URL).
+            #   2. extract the first <source src="..."> within that window.
+            # If the embed marker is absent, treat as needing narration.
+            $html  = ($post.html -as [string]) -replace "`n", ' '
+            $anchor = [regex]::Match($html, 'id="gn-audio-embed"', 'IgnoreCase')
+            $src = ''
+            if ($anchor.Success) {
+                $start = $anchor.Index
+                $len   = [Math]::Min(20000, $html.Length - $start)
+                $block = $html.Substring($start, $len)
+                $srcMatch = [regex]::Match(
+                    $block,
+                    '<source[^>]*src="([^"]+)"',
+                    'IgnoreCase'
+                )
+                if ($srcMatch.Success) { $src = $srcMatch.Groups[1].Value }
+            }
+
+            if (-not $src) { $broken += $post; continue }
+
+            try {
+                $r = Invoke-WebRequest -Method Head -Uri $src `
+                                       -TimeoutSec 5 -UseBasicParsing `
+                                       -ErrorAction Stop
+                if ([int]$r.StatusCode -ne 200) { $broken += $post }
+            } catch {
+                $broken += $post
+            }
+        }
+        Write-Host ""
     }
 
+    $needsAudio = @($noTag) + @($broken)
+    $hasWorking = $withTag.Count - $broken.Count
+
+    $grandAlreadyDone += $hasWorking
+
+    if ($hasWorking -gt 0)   { Write-Success "$hasWorking posts already have working audio — skipping" }
+    if ($broken.Count -gt 0) { Write-Warn    "$($broken.Count) posts have broken/missing audio — re-narrating" }
+    if ($noTag.Count -gt 0)  { Write-Warn    "$($noTag.Count) posts have no audio embed — narrating" }
+
     if ($needsAudio.Count -eq 0) {
-        Write-Success "All posts have audio. Nothing to do for this site."
+        Write-Success "All posts have working audio. Nothing to do for this site."
         continue
     }
 
-    Write-Warn "$($needsAudio.Count) posts need audio narration"
     Write-Host ""
 
     # ── List posts to be processed ────────────────────────────────────────────
@@ -496,9 +718,10 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
         }
     }
 
-    # ── Derive site slug for deterministic job IDs ────────────────────────────
-    $siteHostname = $ghostUrl -replace 'https?://', '' -replace '/.*', ''
-    $siteSlug     = $siteHostname -replace '\.', '-'
+    # ── Hostname-derived slug used in JOB_ID and (downstream) the GCS path ────
+    # The n8n callback workflow reverse-resolves this to GHOST_SITE{1,2}_*
+    # env vars by matching against parseHostname(GHOST_SITE{1,2}_URL).
+    $siteSlug = Get-UrlSlug $ghostUrl
 
     # ── Trigger each post ─────────────────────────────────────────────────────
     $siteTriggered = 0
@@ -513,9 +736,14 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
         Write-Host "  ID   : $($post.id)"
         Write-Host "  URL  : $($post.url)"
 
-        # Deterministic job ID — matches the backfill-{siteSlug}-pid-{id}-{slug} scheme
-        # Compatible with n8n callback's -pid- parser
-        $jobId = "backfill-${siteSlug}-pid-$($post.id)-$($post.slug)"
+        # Deterministic job ID — same shape n8n's Extract Post Metadata node
+        # would generate for a real Ghost webhook, with a 'backfill-' prefix
+        # so script-driven runs are visually distinct in the storage tree:
+        #   backfill-{hostname-with-dashes}-pid-{postId}-{slug}-{epoch_ms}
+        # n8n honours data.backfill_job_id when present and the callback
+        # strips the 'backfill-' marker before resolving the admin key.
+        $epochMs = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+        $jobId   = "backfill-$siteSlug-pid-$($post.id)-$($post.slug)-$epochMs"
 
         # Build the webhook payload — same shape Ghost sends, plus backfill_job_id hint
         # so n8n uses our deterministic ID instead of generating a timestamp-based one
@@ -526,12 +754,37 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
             backfill_job_id = $jobId
         } | ConvertTo-Json -Depth 10 -Compress
 
+        # Sign the payload when N8N_GHOST_WEBHOOK_SECRET is set so backfill passes
+        # the n8n HMAC validator that production webhooks use. Without this,
+        # enabling the secret in .env would silently block backfill at the HMAC
+        # node (it throws on missing X-Ghost-Signature). Falls back to unsigned
+        # when the secret is empty (HMAC node passes through in dev).
+        $headers = @{}
+        $secret = $env:N8N_GHOST_WEBHOOK_SECRET
+        if ($secret) {
+            $hmac = $null
+            try {
+                $hmac = [System.Security.Cryptography.HMACSHA256]::new()
+                $hmac.Key = [System.Text.Encoding]::UTF8.GetBytes($secret)
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+                $hashBytes = $hmac.ComputeHash($bytes)
+                $hex = -join ($hashBytes | ForEach-Object { '{0:x2}' -f $_ })
+                $headers['X-Ghost-Signature'] = "sha256=$hex"
+            } catch {
+                Write-Warn "HMAC signing failed — sending unsigned (will be rejected if HMAC is enforced)"
+                Write-Host "  $($_.Exception.Message)"
+            } finally {
+                if ($hmac) { $hmac.Dispose() }
+            }
+        }
+
         try {
             $wr = Invoke-WebRequest `
                 -Uri $N8N_WEBHOOK `
                 -Method Post `
                 -ContentType "application/json" `
                 -Body $payload `
+                -Headers $headers `
                 -TimeoutSec 15 `
                 -UseBasicParsing
 
@@ -541,27 +794,17 @@ for ($siteIdx = 0; $siteIdx -lt $GhostUrls.Count; $siteIdx++) {
             $statusCode = if ($null -ne $_.Exception.Response) {
                 [int]$_.Exception.Response.StatusCode
             } else { 0 }
-            Write-Err "Webhook returned HTTP $statusCode — job may not have been queued"
+            Write-Err "Webhook returned HTTP $statusCode — job not queued"
             Write-Host "  $($_.Exception.Message)"
             $grandErrors++
             continue
         }
 
-        # Poll until this job completes before moving to the next article
-        Write-Info "  Polling TTS service for job completion..."
-        $ok = Wait-ForJob `
-            -JobId       $jobId `
-            -TtsUrl      $TTS_SERVICE_URL `
-            -PollInterval $POLL_INTERVAL `
-            -N8nTimeout  $N8N_TIMEOUT `
-            -MaxWait     $MAX_WAIT
-
-        if ($ok) {
-            $grandCompleted++
-        } else {
-            $grandErrors++
-            Write-Warn "  Continuing to next article — check logs for: $jobId"
-        }
+        # Small spacing between webhook triggers: n8n's default SQLite backend
+        # serializes workflow-execution log writes, so a tight burst of 25+
+        # triggers can push some responses past the 15s timeout. 50 ms of
+        # spacing is enough headroom and adds <2s total for typical batches.
+        Start-Sleep -Milliseconds 50
     }
 }
 
@@ -573,19 +816,23 @@ Write-Host "=========================================================" -Foregrou
 Write-Host ""
 Write-Success "Already had audio  : $grandAlreadyDone"
 Write-Success "Jobs triggered     : $grandTriggered"
-Write-Success "Jobs completed     : $grandCompleted"
-if ($grandErrors  -gt 0) { Write-Err  "Errors             : $grandErrors" }
+if ($grandErrors  -gt 0) { Write-Err  "Trigger errors     : $grandErrors" }
 if ($grandSkipped -gt 0) { Write-Warn "Skipped (dry run)  : $grandSkipped" }
 Write-Host ""
 
 if ($grandTriggered -gt 0) {
+    Write-Host "Jobs are now queued in the TTS service. They will process one at a"
+    Write-Host "time on the GPU and complete in the background."
+    Write-Host ""
     $n8nBase = $N8N_WEBHOOK -replace '/webhook.*', ''
-    Write-Host "Monitor progress:" -ForegroundColor White
+    Write-Host "Monitor:" -ForegroundColor White
+    Write-Host "  Snapshot       : .\scripts\backfill-audio.ps1 -Queue"
+    Write-Host "  Live dashboard : .\scripts\backfill-audio.ps1 -Watch"
+    Write-Host "  TTS logs       : docker logs -f tts-service"
     Write-Host "  n8n executions : $n8nBase"
-    Write-Host "  TTS jobs       : $TTS_SERVICE_URL/docs"
     Write-Host ""
     if ($grandErrors -gt 0) {
-        Write-Warn "$grandErrors job(s) encountered errors."
+        Write-Warn "$grandErrors webhook trigger(s) failed."
         Write-Host "  Re-run this script to retry — posts that already have audio are skipped automatically."
         Write-Host ""
     }
