@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Final, List, Optional
@@ -47,20 +46,34 @@ logger = logging.getLogger(__name__)
 DEFAULT_BITRATE: Final[str] = MP3_BITRATE
 STREAMING_THRESHOLD: Final[int] = STREAMING_THRESHOLD_MS
 CROSSFADE_MS: Final[int] = 300  # Increased for smoother transitions (studio quality)
-SILENCE_THRESHOLD_DB: Final[int] = -50  # was -35; more aggressive trailing trim
+# -60 dBFS approximates the actual noise floor of TTS output. -50 was tuned by
+# visual amplitude inspection but cut the natural acoustic decay of word
+# endings (which drops smoothly through -30 → -50 → -60 over ~100-300 ms);
+# the listener heard those decays as "the segment got cut off mid-word."
+# At -60 the trim only catches genuine silence, preserving the audible tail.
+SILENCE_THRESHOLD_DB: Final[int] = -60
 MIN_SILENCE_MS: Final[int] = 100
+# Fade-out applied at the trim point so the cut itself is smooth rather than
+# an abrupt cliff. Even at -60 dBFS the cut sample isn't truly zero, so an
+# instantaneous transition can produce a click; a 10 ms ramp eliminates it
+# without being audible as a fade.
+TRIM_FADE_MS: Final[int] = 10
 
 
 def _trim_silence(segment: AudioSegment) -> AudioSegment:
-    """Trim leading and trailing silence at -50 dBFS.
+    """Trim leading and trailing silence at SILENCE_THRESHOLD_DB.
 
-    Non-destructive: only silence below SILENCE_THRESHOLD_DB is removed,
-    and only when more than MIN_SILENCE_MS of it is present at an edge.
-    Speech audio is never replaced or cut. The previous "soft-cap"
-    branch destructively replaced the last 200 ms of every segment with
-    hard silence regardless of content; for the last segment of a
-    concatenated file, mastering's silenceremove then stripped that
-    hard silence, ending the audio mid-decay with no fade.
+    Non-destructive: only silence below the threshold is removed, and only
+    when more than MIN_SILENCE_MS of it is present at an edge. Speech audio
+    is never replaced or cut. A short fade-out is applied at the trim point
+    so the cut transitions smoothly rather than as an audible cliff —
+    relevant when downstream code concatenates segments without further
+    crossfading at the trim boundary.
+
+    The previous "soft-cap" branch destructively replaced the last 200 ms
+    of every segment with hard silence regardless of content; for the last
+    segment of a concatenated file, mastering's silenceremove then stripped
+    that hard silence, ending the audio mid-decay with no fade.
     """
     leading = 0
     chunk_size = 10
@@ -87,6 +100,11 @@ def _trim_silence(segment: AudioSegment) -> AudioSegment:
         segment = segment[leading:]
     if len(segment) - trailing > MIN_SILENCE_MS:
         segment = segment[:trailing]
+        # Smooth the trim cliff so the transition is clean even before the
+        # downstream crossfade. pydub's fade_out applies a linear ramp over
+        # the trailing N ms of the segment.
+        if len(segment) > TRIM_FADE_MS:
+            segment = segment.fade_out(TRIM_FADE_MS)
     return segment
 
 
@@ -171,95 +189,6 @@ def _crossfade_append(
     )
 
     return combined[:-n] + xfade_segment + segment[n:]
-
-
-def concatenate_audio_with_overlap(
-    wav_paths: list[str],
-    output_path: str,
-    overlap_ms: int = 500,
-    silence_threshold_db: int = -50,
-) -> str:
-    """
-    Concatenate audio files using overlap crossfade for seamless transitions.
-
-    This is used for joining single-shot segments. The overlap region is
-    crossfaded to eliminate any boundary artifacts.
-
-    Args:
-        wav_paths: List of WAV file paths to concatenate.
-        output_path: Path for the output WAV file.
-        overlap_ms: Overlap duration in milliseconds for crossfade.
-        silence_threshold_db: Silence detection threshold in dBFS.
-
-    Returns:
-        Path to the concatenated WAV file.
-
-    Raises:
-        AudioProcessingError: If concatenation fails.
-    """
-    if not wav_paths:
-        raise AudioProcessingError('No WAV files provided for concatenation')
-
-    if len(wav_paths) == 1:
-        shutil.copy2(wav_paths[0], output_path)
-        return output_path
-
-    segments = []
-    for path_str in wav_paths:
-        path = Path(path_str)
-        if not path.exists():
-            raise AudioProcessingError(f'WAV file not found: {path_str}')
-        if path.stat().st_size == 0:
-            raise AudioProcessingError(f'WAV file is empty: {path_str}')
-        seg = AudioSegment.from_wav(path_str)
-        seg = seg.set_frame_rate(48000).set_channels(2).set_sample_width(2)
-        seg = _trim_silence(seg)
-        segments.append(seg)
-
-    combined = segments[0]
-    for i, segment in enumerate(segments[1:], start=1):
-        if len(combined) < overlap_ms:
-            combined += segment
-            continue
-
-        combined_overlap = combined[-overlap_ms:]
-        segment_overlap = segment[:overlap_ms]
-
-        combined_tail = np.array(combined_overlap.get_array_of_samples(), dtype=np.float32)
-        segment_head = np.array(segment_overlap.get_array_of_samples(), dtype=np.float32)
-
-        min_len = min(len(combined_tail), len(segment_head))
-        combined_tail = combined_tail[:min_len]
-        segment_head = segment_head[:min_len]
-
-        t = np.linspace(0, np.pi / 2, min_len)
-        fade_out = np.cos(t)  # 1→0
-        fade_in = np.sin(t)  # 0→1
-
-        faded = combined_tail * fade_out + segment_head * fade_in
-        faded = np.clip(faded, -32768, 32767).astype(np.int16)
-
-        if combined.channels == 2:
-            faded_audio = AudioSegment(
-                faded.reshape(-1, 2).tobytes(),
-                frame_rate=combined.frame_rate,
-                sample_width=2,
-                channels=2,
-            )
-        else:
-            faded_audio = AudioSegment(
-                faded.tobytes(),
-                frame_rate=combined.frame_rate,
-                sample_width=2,
-                channels=1,
-            )
-
-        pre_overlap = combined[:-overlap_ms]
-        post_overlap = segment[overlap_ms:]
-        combined = pre_overlap + faded_audio + post_overlap
-
-    combined.export(output_path, format='wav')
-    return output_path
 
 
 def _validate_wav_files(wav_paths: List[str]) -> None:

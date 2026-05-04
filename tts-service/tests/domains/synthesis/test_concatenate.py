@@ -22,9 +22,6 @@
 
 """Tests for audio concatenation - smoke tests."""
 
-import tempfile
-from pathlib import Path
-
 import numpy as np
 from pydub import AudioSegment
 
@@ -74,6 +71,41 @@ def test_trim_silence_preserves_speech_with_no_trailing_silence():
     last_200ms = trimmed[-200:]
     assert last_200ms.dBFS > -40, (
         f'Last 200ms should still contain speech, got dBFS={last_200ms.dBFS} (silence ≈ -inf)'
+    )
+
+
+def test_trim_preserves_audio_above_noise_floor():
+    """Regression: speech-tail audio in the -50 to -60 dBFS range is the
+    *natural acoustic decay* of word endings, not silence. The trim must
+    NOT cut it. With the previous SILENCE_THRESHOLD_DB=-50, the trim was
+    chopping mid-decay and producing audible "cut-off" segment endings.
+    With -60, only true noise floor is trimmed.
+    """
+    from app.domains.synthesis.concatenate import _trim_silence
+
+    # 800ms of audible content: 600ms full-amplitude sine + 200ms decaying
+    # sine that ends around -55 dBFS (well above the new -60 threshold but
+    # below the old -50 threshold — the "danger zone" the bug lived in).
+    sample_rate = 24000
+    full = _make_sine_wav(600, sample_rate)
+    # Build a 200ms decaying sine: amplitude ramps linearly from 1.0 to ~0.0017
+    # so the dBFS at the end is ~-55, decay region average ~-30 dBFS.
+    decay_samples = int(sample_rate * 200 / 1000)
+    t = np.linspace(0, 200 / 1000, decay_samples, endpoint=False)
+    envelope = np.linspace(1.0, 0.0017, decay_samples)  # peak → -55 dBFS
+    decay_wave = (np.sin(2 * np.pi * 440 * t) * envelope * 32767).astype(np.int16)
+    decay = AudioSegment(decay_wave.tobytes(), frame_rate=sample_rate, sample_width=2, channels=1)
+    silence_tail = AudioSegment.silent(duration=300)  # true silence
+    segment = full + decay + silence_tail  # 600 + 200 + 300 = 1100ms total
+
+    trimmed = _trim_silence(segment)
+
+    # The 300ms of true silence should be trimmed, but the 800ms of audible
+    # content (full sine + decay) should survive. Allow a small tolerance
+    # for the chunk-aligned trim boundary (~10 ms granularity).
+    assert 790 <= len(trimmed) <= 820, (
+        f'Expected ~800ms (full + decay preserved), got {len(trimmed)}ms — '
+        'trim may be cutting the natural decay region again'
     )
 
 
@@ -142,72 +174,3 @@ class TestConcatenateImports:
         from app.domains.synthesis.concatenate import concatenate_audio_auto
 
         assert callable(concatenate_audio_auto)
-
-
-class TestOverlapCrossfade:
-    """Tests for overlap crossfade functionality."""
-
-    def test_concatenate_audio_with_overlap_importable(self):
-        """Overlap crossfade function should be importable."""
-        from app.domains.synthesis.concatenate import concatenate_audio_with_overlap
-
-        assert callable(concatenate_audio_with_overlap)
-
-    def test_concatenate_audio_with_overlap_single_file(self):
-        """Single file should just be copied."""
-        from app.domains.synthesis.concatenate import (
-            concatenate_audio_with_overlap,
-        )
-
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            test_wav = f.name
-
-        try:
-            samples = np.random.randint(-1000, 1000, 24000, dtype=np.int16)
-            seg = AudioSegment(samples.tobytes(), frame_rate=48000, sample_width=2, channels=1)
-            seg.export(test_wav, format='wav')
-
-            output = tempfile.mktemp(suffix='.wav')
-            result = concatenate_audio_with_overlap([test_wav], output)
-
-            assert Path(result).exists()
-            assert Path(result).stat().st_size > 0
-        finally:
-            Path(test_wav).unlink(missing_ok=True)
-            if 'output' in locals():
-                Path(output).unlink(missing_ok=True)
-
-    def test_concatenate_audio_with_overlap_two_files(self):
-        """Two files should be crossfaded with overlap."""
-        from app.domains.synthesis.concatenate import (
-            concatenate_audio_with_overlap,
-        )
-
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            test_wav1 = f.name
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            test_wav2 = f.name
-
-        try:
-            samples1 = (np.sin(np.linspace(0, 2 * np.pi, 48000)) * 16000).astype(np.int16)
-            seg1 = AudioSegment(samples1.tobytes(), frame_rate=48000, sample_width=2, channels=1)
-            samples2 = (np.sin(np.linspace(0, 4 * np.pi, 48000)) * 16000).astype(np.int16)
-            seg2 = AudioSegment(samples2.tobytes(), frame_rate=48000, sample_width=2, channels=1)
-            seg1.export(test_wav1, format='wav')
-            seg2.export(test_wav2, format='wav')
-
-            output = tempfile.mktemp(suffix='.wav')
-            result = concatenate_audio_with_overlap(
-                [test_wav1, test_wav2],
-                output,
-                overlap_ms=500,
-            )
-
-            assert Path(result).exists()
-            result_seg = AudioSegment.from_wav(result)
-            assert result_seg.duration_seconds >= 1.0
-        finally:
-            Path(test_wav1).unlink(missing_ok=True)
-            Path(test_wav2).unlink(missing_ok=True)
-            if 'output' in locals():
-                Path(output).unlink(missing_ok=True)

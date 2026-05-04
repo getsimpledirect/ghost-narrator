@@ -91,10 +91,6 @@ MP3_BITRATE: Final[str] = os.environ.get('MP3_BITRATE') or _ec.mp3_bitrate
 AUDIO_SAMPLE_RATE: Final[int] = int(os.environ.get('AUDIO_SAMPLE_RATE') or str(_ec.sample_rate))
 TARGET_LUFS: Final[float] = float(os.environ.get('TARGET_LUFS') or str(_ec.target_lufs))
 
-# Segment crossfade overlap, in milliseconds. Applied between concatenated
-# studio segments by concatenate_audio_with_overlap().
-SINGLE_SHOT_OVERLAP_MS: Final[int] = int(os.environ.get('SINGLE_SHOT_OVERLAP_MS', '500'))
-
 # Webhook settings
 N8N_CALLBACK_URL: Final[str] = os.environ.get('N8N_CALLBACK_URL', '')
 
