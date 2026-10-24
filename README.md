@@ -37,11 +37,13 @@ Local inference is supported. Optional external LLM, cloud storage and CMS integ
 
 ## What You Need
 
-Ghost Narrator is a standalone project. It needs:
+The Ghost CMS quick start below needs:
 
 1. **A [Ghost](https://ghost.org/) blog** — the open-source publishing platform ([GitHub](https://github.com/TryGhost/Ghost))
 2. **Docker** — with Docker Compose V2
 3. **A voice sample** — 5-120 seconds WAV recording of your voice
+
+Direct TTS REST API use does not require Ghost or n8n. See the [TTS Service Docs](tts-service/README.md) for standalone setup.
 
 That's it. The bundled LLM handles narration rewriting — Ollama (CPU/low-VRAM) or vLLM (GPU). Qwen3-TTS handles voice synthesis. No external APIs required.
 
@@ -93,7 +95,7 @@ flowchart TD
 - Docker with Docker Compose V2
 - Git
 
-**You also need:**
+**For the Ghost CMS quick start:**
 - A [Ghost](https://ghost.org/) blog ([open source](https://github.com/TryGhost/Ghost))
 - A 5-120 second WAV recording of your voice (45+ seconds recommended)
 
@@ -142,6 +144,8 @@ Publish an article. Ghost Narrator handles the rest.
 ## Configuration
 
 ### Required
+
+These settings apply to the Ghost CMS/n8n integration.
 
 | Variable | Description |
 |----------|-------------|
