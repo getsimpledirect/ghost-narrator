@@ -4,7 +4,7 @@
 
 # Ghost Narrator
 
-Self-hosted AI narration for your blog. Replaces ElevenLabs (~$330/month) with a local stack that costs you electricity.
+Self-hosted narration for Ghost CMS and arbitrary text, with voice profiles, local or cloud audio storage, and a REST API. The code is MIT licensed; model artifacts retain their separate licenses.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
@@ -29,33 +29,21 @@ Ghost CMS (publish) → n8n (trigger) → TTS Service (narrate + synthesize) →
 
 **Static / arbitrary text:** Send any plain text to the TTS service directly via its REST API or the bundled `static-content-audio-pipeline.json` n8n workflow — no Ghost required. Use for books, series content, landing pages, or any text you want narrated.
 
-No cloud TTS APIs. No per-character billing. Your voice, your hardware, your data.
+Local inference is supported. Optional external LLM, cloud storage and CMS integrations have their own data paths; choose them deliberately for your content and voice recordings.
 
 > **Read the full story:** [You Cannot Buy What Can Only Be Built](https://founderreality.com/blog/you-cannot-buy-what-can-only-be-built) — why we built this and how it works.
 
 ---
 
-## Cost Comparison
-
-| | ElevenLabs Scale | Ghost Narrator |
-|---|---|---|
-| Monthly cost | ~$330 | $0 (self-hosted) |
-| Per-character billing | Yes | No |
-| Voice cloning | Yes | Yes (5-120s voice sample) |
-| Data privacy | Cloud | 100% local |
-| Latency | Fast | ~5-30 min (GPU) / longer on CPU |
-| Quality | Excellent | Good to excellent (depends on tier) |
-| Effort to set up | Sign up | ~1 hour |
-
----
-
 ## What You Need
 
-Ghost Narrator is a standalone project. It needs:
+The Ghost CMS quick start below needs:
 
 1. **A [Ghost](https://ghost.org/) blog** — the open-source publishing platform ([GitHub](https://github.com/TryGhost/Ghost))
 2. **Docker** — with Docker Compose V2
 3. **A voice sample** — 5-120 seconds WAV recording of your voice
+
+Direct TTS REST API use does not require Ghost or n8n. See the [TTS Service Docs](tts-service/README.md) for standalone setup.
 
 That's it. The bundled LLM handles narration rewriting — Ollama (CPU/low-VRAM) or vLLM (GPU). Qwen3-TTS handles voice synthesis. No external APIs required.
 
@@ -107,7 +95,7 @@ flowchart TD
 - Docker with Docker Compose V2
 - Git
 
-**You also need:**
+**For the Ghost CMS quick start:**
 - A [Ghost](https://ghost.org/) blog ([open source](https://github.com/TryGhost/Ghost))
 - A 5-120 second WAV recording of your voice (45+ seconds recommended)
 
@@ -156,6 +144,8 @@ Publish an article. Ghost Narrator handles the rest.
 ## Configuration
 
 ### Required
+
+These settings apply to the Ghost CMS/n8n integration.
 
 | Variable | Description |
 |----------|-------------|
@@ -312,7 +302,7 @@ curl http://localhost:8000/health       # vLLM (mid/high VRAM)
 
 ## Licensing
 
-Ghost Narrator's code is MIT licensed — do whatever you want with it.
+Ghost Narrator's code is [MIT licensed](LICENSE). Preserve the copyright and permission notices, and comply separately with the model and dependency licenses.
 
 **Qwen3-TTS (default TTS model)**
 - Licensed under [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
@@ -323,7 +313,7 @@ Ghost Narrator's code is MIT licensed — do whatever you want with it.
 - Licensed under [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
 - Fully permissive — commercial use allowed
 
-**Target state:** MIT code + Apache 2.0 models = fully permissive end-to-end. No licensing asterisks.
+The code license does not grant rights to third-party models, voice recordings or narrated content. Check the license of each exact artifact and obtain the necessary voice/content permissions.
 
 You are responsible for complying with the licenses of the underlying models you choose to use.
 
