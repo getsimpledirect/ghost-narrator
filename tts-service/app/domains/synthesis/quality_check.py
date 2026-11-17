@@ -630,6 +630,7 @@ async def _quality_check_and_resynthesize(
                 executor,
                 generation_kwargs,
                 reference_f0,
+                required_wer_threshold=wer_threshold if require_wer_pass else None,
             )
             resynth_count += 1
 
@@ -644,9 +645,7 @@ async def _quality_check_and_resynthesize(
                 and chunk_texts[i].strip()
                 and duration_ms <= _MAX_WER_DURATION_MS
             ):
-                transcript = await loop.run_in_executor(
-                    executor, _transcribe_wav, candidate_path
-                )
+                transcript = await loop.run_in_executor(executor, _transcribe_wav, candidate_path)
                 if transcript is not None:
                     wer = _word_error_rate(chunk_texts[i], transcript)
                     if wer > wer_threshold:
@@ -667,6 +666,7 @@ async def _quality_check_and_resynthesize(
                             executor,
                             generation_kwargs,
                             reference_f0,
+                            required_wer_threshold=(wer_threshold if require_wer_pass else None),
                         )
                         checked_paths[i] = replacement_path
                         resynth_count += 1
@@ -679,9 +679,7 @@ async def _quality_check_and_resynthesize(
                                     'Required transcript check unavailable after retry',
                                     chunk_idx=i,
                                 )
-                            retry_wer = _word_error_rate(
-                                chunk_texts[i], retry_transcript
-                            )
+                            retry_wer = _word_error_rate(chunk_texts[i], retry_transcript)
                             if retry_wer > wer_threshold:
                                 raise ChunkExhaustedError(
                                     'Replacement failed required transcript gate '
@@ -689,9 +687,7 @@ async def _quality_check_and_resynthesize(
                                     chunk_idx=i,
                                 )
                 elif require_wer_pass:
-                    raise ChunkExhaustedError(
-                        'Required transcript check unavailable', chunk_idx=i
-                    )
+                    raise ChunkExhaustedError('Required transcript check unavailable', chunk_idx=i)
             elif require_wer_pass:
                 raise ChunkExhaustedError(
                     'Required transcript check skipped because segment is empty or too long',
@@ -722,6 +718,8 @@ async def _check_segment_consistency(
     generation_kwargs: dict | None = None,
     loudness_tolerance_db: float = 3.0,
     reference_f0: float | None = None,
+    require_wer_pass: bool = False,
+    wer_threshold: float = 0.10,
 ) -> list[str]:
     """Re-synthesize segments whose loudness deviates > tolerance_db from the median.
 
@@ -778,6 +776,7 @@ async def _check_segment_consistency(
                 executor,
                 generation_kwargs,
                 reference_f0=reference_f0,
+                required_wer_threshold=wer_threshold if require_wer_pass else None,
             )
             resynth_count += 1
 
@@ -888,10 +887,12 @@ async def _segment_response_ladder(
     executor,
     generation_kwargs: dict | None = None,
     reference_f0: float | None = None,
+    required_wer_threshold: float | None = None,
 ) -> str:
-    """Graduated response when a segment fails the acoustic gate.
+    """Graduated response when a segment fails an acoustic or required WER gate.
 
-    Steps, applied in order, stop at the first one whose output passes the gate:
+    Steps, applied in order, stop at the first output that passes the acoustic
+    gate and, when ``required_wer_threshold`` is set, its transcript gate:
         1. heal — crossfade out 1-3 detected drops in place (cheap, cosmetic).
         2. seed-sweep — synthesize best-of-N with fresh seeds; AR variance often
                         resolves to a clean sample.
@@ -933,13 +934,39 @@ async def _segment_response_ladder(
             best_path = candidate_path
             best_total = t
 
+    async def _passes_required_wer(candidate_path: str, strategy: str) -> bool:
+        """Require a fresh transcript before a strict ladder candidate can win."""
+        if required_wer_threshold is None:
+            return True
+        transcript = await loop.run_in_executor(executor, _transcribe_wav, candidate_path)
+        if transcript is None:
+            logger.warning(
+                '[%s] Chunk %d %s candidate has no transcript — continuing ladder',
+                job_id,
+                chunk_idx,
+                strategy,
+            )
+            return False
+        candidate_wer = _word_error_rate(original_text, transcript)
+        if candidate_wer > required_wer_threshold:
+            logger.warning(
+                '[%s] Chunk %d %s candidate WER=%.0f%% exceeds %.0f%% — continuing ladder',
+                job_id,
+                chunk_idx,
+                strategy,
+                candidate_wer * 100,
+                required_wer_threshold * 100,
+            )
+            return False
+        return True
+
     # ─── Step 1: heal drops in place ─────────────────────────────────────────
     drop_regions = _detect_mid_phrase_drops(wav_path)
     if 1 <= len(drop_regions) <= 3:
         try:
             await loop.run_in_executor(executor, heal_drops, wav_path, drop_regions)
             passed, _reason = _chunk_passes_acoustic_gate(wav_path, word_count, reference_f0)
-            if passed:
+            if passed and await _passes_required_wer(wav_path, 'heal'):
                 logger.info(
                     '[%s] Chunk %d passed after heal (%d drop(s) crossfaded)',
                     job_id,
@@ -970,7 +997,7 @@ async def _segment_response_ladder(
         )
         _track_if_better(candidate_path, score)
         passed, _reason = _chunk_passes_acoustic_gate(candidate_path, word_count, reference_f0)
-        if passed:
+        if passed and await _passes_required_wer(candidate_path, 'seed-sweep'):
             logger.info(
                 '[%s] Chunk %d passed after seed-sweep (score=%.3f)',
                 job_id,
@@ -998,7 +1025,7 @@ async def _segment_response_ladder(
             except Exception:
                 combined_score = {'total': 1.0}
             passed, _reason = _chunk_passes_acoustic_gate(combined_path, word_count, reference_f0)
-            if passed:
+            if passed and await _passes_required_wer(combined_path, 'split'):
                 logger.info(
                     '[%s] Chunk %d passed after split (score=%.3f)',
                     job_id,
@@ -1019,6 +1046,11 @@ async def _segment_response_ladder(
 
     if best_path != wav_path:
         _shutil.copy2(best_path, wav_path)
+    if required_wer_threshold is not None and not await _passes_required_wer(wav_path, 'best-seen'):
+        raise ChunkExhaustedError(
+            'No response-ladder candidate passed the required transcript gate',
+            chunk_idx=chunk_idx,
+        )
     logger.warning(
         '[%s] Chunk %d: gate still failing after heal+sweep+split — '
         'shipping best variant (score=%.3f), flagged for review',

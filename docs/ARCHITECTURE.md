@@ -597,7 +597,7 @@ Regional checks (run after soft checks; only reached by chunks that passed all a
 - **Mid-phrase drop detection**: rejects if the number of 0.6–2.0 s drops (RMS < 10% of the rolling 2 s local median) exceeds `max(3, duration_s / 20)` — scales with chunk length so natural sentence-boundary pauses in long narration don't accumulate into a false positive
 
 Optional checks (skip if unavailable):
-- **WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, the response ladder runs (catches hallucinated/skipped/repeated words that acoustic checks cannot detect)
+- **WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, the response ladder runs (catches hallucinated/skipped/repeated words that acoustic checks cannot detect). In source-preserving mode, an acoustically valid candidate must also pass WER before the ladder stops; later loudness replacements use the same fail-closed rule.
 - **Loudness consistency (all tiers)**: any segment deviating > ±3 dB from the median dBFS across all segments triggers the response ladder; prevents volume drift between segments
 
 **Response ladder** — when a segment fails any gate above, escalation is graduated:
