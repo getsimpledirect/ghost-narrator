@@ -57,3 +57,17 @@ class TestRateLimiter:
         from app.api.rate_limit_middleware.rate_limit import RateLimitMiddleware
 
         assert RateLimitMiddleware is not None
+
+
+class TestGenerateRequest:
+    """Test source-preserving request semantics."""
+
+    def test_source_preserving_mode_is_explicit_and_defaults_off(self):
+        from app.models.schemas import GenerateRequest
+
+        assert GenerateRequest(text='Article text').preserve_source_wording is False
+        request = GenerateRequest(
+            text='Approved spoken script',
+            preserve_source_wording=True,
+        )
+        assert request.preserve_source_wording is True

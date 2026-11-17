@@ -118,6 +118,7 @@ async def run_tts_job(
     text: str,
     gcs_object_path: str,
     site_slug: str = 'site',
+    preserve_source_wording: bool = False,
 ) -> None:
     """
     Execute the complete TTS pipeline with parallel processing and optimizations.
@@ -135,6 +136,7 @@ async def run_tts_job(
         text: The raw article text content to be narrated and synthesized.
         gcs_object_path: The target destination path in the GCS bucket.
         site_slug: Site identifier for storage path organization.
+        preserve_source_wording: Bypass LLM rewriting and synthesize the input exactly.
 
     Raises:
         JobDeletedError: If the job is removed by a user during processing.
@@ -294,11 +296,15 @@ async def run_tts_job(
                     # single-shot, causing 5-10× redundant GPU work per job.
                     await _check_status()
                     logger.info(f'[{job_id}] Phase 1: narration...')
-                    try:
-                        narration = get_narration_strategy()
-                    except Exception as exc:
-                        logger.warning(f'[{job_id}] Narration strategy init failed: {exc}')
+                    if preserve_source_wording:
+                        logger.info(f'[{job_id}] Source-preserving mode requested; skipping LLM')
                         narration = None
+                    else:
+                        try:
+                            narration = get_narration_strategy()
+                        except Exception as exc:
+                            logger.warning(f'[{job_id}] Narration strategy init failed: {exc}')
+                            narration = None
 
                     chunk_wav_paths: list[str] = []
                     all_chunks: list[str] = []
@@ -327,9 +333,13 @@ async def run_tts_job(
                                 narrated_segments = [normalize_for_narration(text)]
                                 narration_skipped = True
                         else:
-                            from app.utils.normalize import normalize_for_narration
+                            if preserve_source_wording:
+                                narrated_segments = [text.strip()]
+                                narration_skipped = True
+                            else:
+                                from app.utils.normalize import normalize_for_narration
 
-                            narrated_segments = [normalize_for_narration(text)]
+                                narrated_segments = [normalize_for_narration(text)]
 
                     full_narrated_text = '\n\n'.join(narrated_segments)
                     if not full_narrated_text.strip():
@@ -471,6 +481,7 @@ async def run_tts_job(
                                     executor,
                                     generation_kwargs,
                                     reference_f0=_reference_f0,
+                                    require_wer_pass=preserve_source_wording,
                                 )
                             except ChunkExhaustedError as exc:
                                 raise RuntimeError(
@@ -544,6 +555,7 @@ async def run_tts_job(
                                 executor,
                                 generation_kwargs,
                                 reference_f0=_reference_f0,
+                                require_wer_pass=preserve_source_wording,
                             )
                         except ChunkExhaustedError as exc:
                             raise RuntimeError(
@@ -669,7 +681,6 @@ async def run_tts_job(
         # Step 7: Upload to storage backend
         await _check_status()
         audio_uri: Optional[str] = None
-        upload_failed = False
         try:
             with _span('tts.storage_upload'):
                 backend = get_storage_backend()
@@ -680,9 +691,9 @@ async def run_tts_job(
                     storage_path=gcs_object_path,
                 )
         except Exception as exc:
-            logger.error(f'[{job_id}] Storage upload failed (non-fatal): {exc}')
-            audio_uri = None
-            upload_failed = True
+            raise StorageUploadError(f'Storage upload failed: {exc}') from exc
+        if not audio_uri:
+            raise StorageUploadError('Storage backend returned no playable audio URI')
 
         # Step 8: Cleanup chunk directory and temp files
         cleanup_chunk_files(job_dir, job_id)
@@ -701,14 +712,14 @@ async def run_tts_job(
             'completed_at': time.time(),
             'duration_seconds': total_duration,
         }
-        if narration_skipped:
+        if narration_skipped and preserve_source_wording:
+            completed_data['narration_mode'] = 'source_preserved'
+        elif narration_skipped:
             completed_data['narration_skipped'] = (
                 'Narration failed; raw article text was synthesized'
             )
         if mastering_used_fallback:
             completed_data['mastering_warning'] = 'Audio mastering failed; raw export used'
-        if upload_failed:
-            completed_data['upload_warning'] = 'Storage upload failed; audio available locally only'
         await job_store.update(job_id, completed_data)
 
         # Record metrics for job completion

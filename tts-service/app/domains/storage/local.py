@@ -63,10 +63,12 @@ class LocalStorageBackend(StorageBackend):
         else:
             dest = self._output_dir / f'{job_id}.mp3'
 
+        dest.parent.mkdir(parents=True, exist_ok=True)
         if local_path != dest:
             shutil.copy2(local_path, dest)
-        return f'local://{dest.name}'
+        relative_path = dest.relative_to(self._output_dir).as_posix()
+        return f'local://{relative_path}'
 
     def make_public_url(self, audio_uri: str) -> str:
-        job_id = audio_uri.removeprefix('local://').removesuffix('.mp3')
+        job_id = Path(audio_uri.removeprefix('local://')).stem
         return f'http://{self._server_ip}:{self._port}/tts/download/{job_id}'

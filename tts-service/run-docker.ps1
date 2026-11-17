@@ -190,17 +190,17 @@ if ($isStopped) {
 }
 
 
-if (-not (Test-Path ".\voices")) {
-    Write-Info "Creating voices directory..."
-    New-Item -ItemType Directory -Path ".\voices" | Out-Null
+if (-not (Test-Path ".\voices\default")) {
+    Write-Info "Creating default voice directory..."
+    New-Item -ItemType Directory -Path ".\voices\default" -Force | Out-Null
 }
 
 
-if (-not (Test-Path ".\voices\reference.wav")) {
+if (-not (Test-Path ".\voices\default\reference.wav")) {
     Write-Warning "WARNING: Reference voice file not found!"
     Write-Host ""
     Write-Host "Please add your reference voice WAV file to:"
-    Write-Host "  .\voices\reference.wav"
+    Write-Host "  .\voices\default\reference.wav"
     Write-Host ""
     Write-Host "Requirements:"
     Write-Host "  - Format: WAV, 22.05 kHz, mono"
@@ -208,7 +208,7 @@ if (-not (Test-Path ".\voices\reference.wav")) {
     Write-Host "  - Quality: Clear speech, no background noise"
     Write-Host ""
     Write-Host "To convert audio:"
-    Write-Host "  ffmpeg -i input.mp3 -ar 22050 -ac 1 .\voices\reference.wav"
+    Write-Host "  ffmpeg -i input.mp3 -ar 22050 -ac 1 .\voices\default\reference.wav"
     Write-Host ""
     Write-Error "Cannot continue without reference voice file."
     exit 1
@@ -248,7 +248,7 @@ $SINGLE_SHOT_SEGMENT_WORDS = if ($env:SINGLE_SHOT_SEGMENT_WORDS) { $env:SINGLE_S
 $SINGLE_SHOT_OVERLAP_MS = if ($env:SINGLE_SHOT_OVERLAP_MS) { $env:SINGLE_SHOT_OVERLAP_MS } else { '500' }
 
 $envVars = @(
-    "-e", "VOICE_SAMPLE_PATH=/app/voices/reference.wav",
+    "-e", "VOICE_SAMPLE_PATH=/app/voices/default/reference.wav",
     "-e", "TTS_LANGUAGE=$TTS_LANG",
     "-e", "MAX_CHUNK_WORDS=$MAX_WORDS",
     "-e", "DEVICE=$DEVICE_TYPE",

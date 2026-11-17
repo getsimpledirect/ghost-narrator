@@ -41,6 +41,7 @@ async def run_tts_job(
     text: str,
     gcs_object_path: str,
     site_slug: str = 'site',
+    preserve_source_wording: bool = False,
 ) -> None:
     """
     Execute the complete TTS pipeline.
@@ -53,9 +54,16 @@ async def run_tts_job(
         text: The raw article text content to be narrated and synthesized.
         gcs_object_path: The target destination path in the GCS bucket.
         site_slug: Site identifier for storage path organization.
+        preserve_source_wording: Bypass LLM rewriting and synthesize the input exactly.
 
     Raises:
         JobDeletedError: If the job is removed by a user during processing.
         RuntimeError: For fatal pipeline initialization or processing failures.
     """
-    await _run_tts_job(job_id, text, gcs_object_path, site_slug)
+    await _run_tts_job(
+        job_id,
+        text,
+        gcs_object_path,
+        site_slug,
+        preserve_source_wording,
+    )

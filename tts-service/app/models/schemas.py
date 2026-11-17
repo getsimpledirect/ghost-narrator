@@ -63,6 +63,14 @@ class GenerateRequest(BaseModel):
         max_length=100,
         description="Name of voice profile to use for cloning. Defaults to 'default'.",
     )
+    preserve_source_wording: bool = Field(
+        default=False,
+        description=(
+            'Skip the LLM narration rewrite and synthesize the narration-ready input '
+            'exactly. The caller remains responsible for converting tables and other '
+            'non-spoken structures before submission.'
+        ),
+    )
 
     @field_validator('text')
     @classmethod

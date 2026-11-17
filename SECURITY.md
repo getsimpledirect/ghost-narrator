@@ -44,6 +44,20 @@ When deploying Ghost Narrator:
 5. **Keep dependencies updated** - Use Dependabot to receive security updates
 6. **Monitor logs** - Review Docker and application logs for suspicious activity
 
+## Automation readiness
+
+Treat the bundled n8n workflows as templates, not as an authorization to expose them publicly. The current static-content webhook and TTS callback workflow do not establish request authentication themselves. The Ghost webhook verifier also permits requests when `N8N_GHOST_WEBHOOK_SECRET` is unset. Keep automatic publish/backfill disabled until all of the following are implemented and exercised:
+
+- fail-closed authentication for every inbound trigger and callback;
+- deterministic, revision-bound job IDs and duplicate suppression on retry;
+- rejection of callbacks for an older article revision or superseded job;
+- explicit publication/status/tag exclusions;
+- verification that the final storage object exists, is non-empty and is playable before a job is called complete;
+- fail-closed transcript validation for source-preserving narration, including a second ASR check after any retry;
+- least-privilege storage and Ghost credentials, private TTS/Redis ports, TLS and log redaction.
+
+Starting paid compute, changing firewall/security settings, uploading a personal voice sample, writing to Ghost and enabling automation are separate approvals. A one-article preview should use local storage on an ephemeral worker and should not start n8n.
+
 ## Architecture Security Model
 
 Ghost Narrator uses a **defense-in-depth** approach with multiple security layers:

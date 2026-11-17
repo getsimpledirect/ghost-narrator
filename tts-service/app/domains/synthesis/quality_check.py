@@ -584,6 +584,7 @@ async def _quality_check_and_resynthesize(
     generation_kwargs: dict | None = None,
     wer_threshold: float = 0.10,
     reference_f0: float | None = None,
+    require_wer_pass: bool = False,
 ) -> list[str]:
     """Check each chunk through the acoustic gate; re-synthesize failures.
 
@@ -591,8 +592,15 @@ async def _quality_check_and_resynthesize(
     1. _chunk_passes_acoustic_gate — duration ratio, onset rate, spectral flatness, F0
     2. WER via Whisper (optional, skipped if unavailable or chunk > 2 min)
 
-    Raises ChunkExhaustedError if any chunk fails all 3 retry strategies.
+    When ``require_wer_pass`` is true, every segment must have an available
+    transcript at or below ``wer_threshold``. A retry is transcribed again;
+    acoustic success alone cannot mark source-preserving narration as safe.
+
+    Raises ChunkExhaustedError if any chunk fails all retry strategies or a
+    required post-retry transcript gate.
     """
+    from app.core.exceptions import ChunkExhaustedError
+
     checked_paths = list(chunk_wav_paths)
     resynth_count = 0
 
@@ -624,19 +632,21 @@ async def _quality_check_and_resynthesize(
                 reference_f0,
             )
             resynth_count += 1
-            continue
 
         # WER check (optional, only for short segments)
         try:
             from pydub import AudioSegment as _AS
 
-            duration_ms = len(_AS.from_wav(wav_path))
+            candidate_path = checked_paths[i]
+            duration_ms = len(_AS.from_wav(candidate_path))
             if (
                 i < len(chunk_texts)
                 and chunk_texts[i].strip()
                 and duration_ms <= _MAX_WER_DURATION_MS
             ):
-                transcript = await loop.run_in_executor(executor, _transcribe_wav, wav_path)
+                transcript = await loop.run_in_executor(
+                    executor, _transcribe_wav, candidate_path
+                )
                 if transcript is not None:
                     wer = _word_error_rate(chunk_texts[i], transcript)
                     if wer > wer_threshold:
@@ -647,9 +657,9 @@ async def _quality_check_and_resynthesize(
                             wer * 100,
                             wer_threshold * 100,
                         )
-                        checked_paths[i] = await _segment_response_ladder(
+                        replacement_path = await _segment_response_ladder(
                             i,
-                            wav_path,
+                            candidate_path,
                             chunk_texts,
                             job_id,
                             engine,
@@ -658,9 +668,43 @@ async def _quality_check_and_resynthesize(
                             generation_kwargs,
                             reference_f0,
                         )
+                        checked_paths[i] = replacement_path
                         resynth_count += 1
+                        if require_wer_pass:
+                            retry_transcript = await loop.run_in_executor(
+                                executor, _transcribe_wav, replacement_path
+                            )
+                            if retry_transcript is None:
+                                raise ChunkExhaustedError(
+                                    'Required transcript check unavailable after retry',
+                                    chunk_idx=i,
+                                )
+                            retry_wer = _word_error_rate(
+                                chunk_texts[i], retry_transcript
+                            )
+                            if retry_wer > wer_threshold:
+                                raise ChunkExhaustedError(
+                                    'Replacement failed required transcript gate '
+                                    f'(WER {retry_wer:.0%} > {wer_threshold:.0%})',
+                                    chunk_idx=i,
+                                )
+                elif require_wer_pass:
+                    raise ChunkExhaustedError(
+                        'Required transcript check unavailable', chunk_idx=i
+                    )
+            elif require_wer_pass:
+                raise ChunkExhaustedError(
+                    'Required transcript check skipped because segment is empty or too long',
+                    chunk_idx=i,
+                )
+        except ChunkExhaustedError:
+            raise
         except Exception as exc:
             logger.debug('[%s] WER check for chunk %d skipped: %s', job_id, i, exc)
+            if require_wer_pass:
+                raise ChunkExhaustedError(
+                    f'Required transcript check failed: {exc}', chunk_idx=i
+                ) from exc
 
     if resynth_count > 0:
         logger.info('[%s] Re-synthesized %d/%d chunks', job_id, resynth_count, len(chunk_wav_paths))

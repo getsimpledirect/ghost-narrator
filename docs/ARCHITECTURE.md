@@ -148,7 +148,7 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 
 | Tier | VRAM | TTS Model | LLM | Output Quality | Features |
 |---|---|---|---|---|---|
-| CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Parallel workers, any machine |
+| CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b | 192kbps, 48kHz | Application tier; requires a compatible image and benchmark |
 | Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
 | Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | RTX 3080 12GB+ / A10G, 70-word studio segments, best-of-3 per segment, response ladder, DeepFilterNet enhancement |
 | **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **60-word studio segments, best-of-3 per segment, response ladder, DeepFilterNet enhancement, loudness consistency, LLM completeness, voice pre-caching** |
@@ -212,7 +212,7 @@ The TTS service uses a **modern uv-based Dockerfile** for deterministic and ligh
 
 **Minimum for Build:**
 - **RAM**: 8GB allocated to Docker Desktop
-- **Disk Space**: 20GB free (includes base images, layers, models)
+- **Disk Space**: 100GB worker disk recommended for a clean CUDA build; the November 2026 L4 trial used about 61GB after image build and model setup
 - **Network**: Stable connection (~3GB download for models + packages)
 - **Time**: 2-5 minutes first build, model download can add 2-3 minutes
 
@@ -280,7 +280,7 @@ docker system prune -a --volumes
 # Check disk usage
 docker system df
 
-# Ensure 20GB+ free space
+# For a clean CUDA build, use a 100GB worker disk with roughly 65GB free
 df -h
 ```
 
@@ -333,7 +333,7 @@ Before deploying to production:
 - [ ] Environment variables configured in `.env`
 - [ ] Voice reference file prepared (`tts-service/voices/default/reference.wav`)
 - [ ] Docker Desktop allocated 8GB+ RAM
-- [ ] 20GB+ free disk space available
+- [ ] 100GB worker disk available for a clean CUDA build
 - [ ] Stable internet connection for initial build
 - [ ] Firewall allows ports: 5678 (n8n), 8020 (TTS), 6379 (Redis), 11434 (Ollama, cpu/low VRAM) or 8000 (vLLM, mid/high VRAM)
 - [ ] Ghost webhook URLs configured in Ghost admin
@@ -491,7 +491,7 @@ The narration prompt instructs the LLM to:
 - Begin directly with the first sentence of the source — no introductory framing
 - Insert [PAUSE] and [LONG_PAUSE] markers for natural pacing
 
-**What happens before the LLM?** `normalize_for_narration` deterministically strips URLs, email addresses, Markdown syntax, image captions, and HTML before the text reaches the LLM. This keeps the model focused on content conversion rather than mechanical cleanup.
+**What happens before the LLM?** In the default mode, `normalize_for_narration` deterministically strips URLs, email addresses, Markdown syntax, image captions, and HTML before the text reaches the LLM. With `preserve_source_wording: true`, the LLM and this normalizer are bypassed: the caller's narration-ready plain text is synthesized exactly. The caller must therefore convert tables and remove non-spoken markup first.
 
 **Why does this matter?** Articles are written to be read visually. If you feed raw article text to TTS, you get things like "Click here to read more" or "See Figure 3" being read aloud. The preprocessing + LLM rewrite pipeline transforms the text into something that sounds natural as speech.
 
@@ -1096,7 +1096,7 @@ Listens for `POST /webhook/tts-callback` from the TTS service.
 
 ### Node 2: Check Status & Parse Job ID (Code)
 
-Verifies the status is `completed`, extracts the generated `storage_uri`, converts it to a public URL, and parses the Ghost Post ID out of the job_id.
+Verifies the status is `completed`, extracts the generated `gcs_uri`, confirms the referenced object is playable, converts it to a public URL, and parses the Ghost Post ID out of the job ID. Automation must reject a missing URI or stale revision before writing to Ghost.
 
 ### Node 3: Should Embed Audio? (IF)
 

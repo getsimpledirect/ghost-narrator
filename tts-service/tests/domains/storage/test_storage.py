@@ -90,6 +90,28 @@ async def test_local_storage_upload(tmp_path):
     assert (output_dir / 'job123.mp3').exists()
 
 
+@pytest.mark.asyncio
+async def test_local_storage_upload_creates_nested_storage_path(tmp_path):
+    """A validated nested storage path is created before copying the MP3."""
+    from app.domains.storage import LocalStorageBackend
+
+    audio_file = tmp_path / 'test.mp3'
+    audio_file.write_bytes(b'fake-audio')
+    output_dir = tmp_path / 'output'
+
+    backend = LocalStorageBackend(output_dir=output_dir, server_ip='localhost', port=8020)
+    uri = await backend.upload(
+        audio_file,
+        job_id='job123',
+        site_slug='site1',
+        storage_path='previews/cohere.mp3',
+    )
+
+    assert uri == 'local://previews/cohere.mp3'
+    assert (output_dir / 'previews' / 'cohere.mp3').read_bytes() == b'fake-audio'
+    assert backend.make_public_url(uri) == 'http://localhost:8020/tts/download/cohere'
+
+
 def test_local_storage_make_public_url():
     """Test LocalStorageBackend generates correct public URL."""
     from app.domains.storage import LocalStorageBackend
