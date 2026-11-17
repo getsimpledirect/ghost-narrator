@@ -248,9 +248,7 @@ class TestQualityCheckBoundary:
         assert 'job_id' in params
 
     @pytest.mark.asyncio
-    async def test_required_wer_gate_rechecks_retry_and_rejects_persistent_mismatch(
-        self, tmp_path
-    ):
+    async def test_required_wer_gate_rechecks_retry_and_rejects_persistent_mismatch(self, tmp_path):
         from app.core.exceptions import ChunkExhaustedError
         from app.domains.synthesis.quality_check import _quality_check_and_resynthesize
 
@@ -610,6 +608,55 @@ class TestResponseLadder:
         src = inspect.getsource(_segment_response_ladder)
         assert 'flagged for review' in src
         assert 'best_path' in src
+
+    @pytest.mark.asyncio
+    async def test_strict_ladder_continues_to_split_after_seed_sweep_wer_failure(self, tmp_path):
+        from app.domains.synthesis.quality_check import _segment_response_ladder
+
+        wav_path = str(tmp_path / 'segment.wav')
+        _write_wav(wav_path, _make_speech_like(word_rate=2.0, duration_s=4.0))
+        source = 'one two three four five six seven eight nine ten'
+
+        with (
+            patch(
+                'app.domains.synthesis.quality_check._detect_mid_phrase_drops',
+                return_value=[],
+            ),
+            patch(
+                'app.domains.synthesis.quality_check._chunk_passes_acoustic_gate',
+                return_value=(True, ''),
+            ),
+            patch(
+                'app.domains.synthesis.quality_check._transcribe_wav',
+                side_effect=['unrelated seed transcript', source],
+            ) as transcribe,
+            patch(
+                'app.domains.synthesis.scorer.compute_composite_score',
+                return_value={'total': 0.1},
+            ),
+            patch(
+                'app.domains.synthesis.service.synthesize_best_of_n',
+                return_value=(wav_path, {'total': 0.1}),
+            ),
+            patch(
+                'app.domains.synthesis.quality_check._split_and_concat_halves',
+                new=AsyncMock(return_value=wav_path),
+            ) as split,
+        ):
+            result = await _segment_response_ladder(
+                0,
+                wav_path,
+                [source],
+                'strict-job',
+                None,
+                asyncio.get_running_loop(),
+                None,
+                required_wer_threshold=0.10,
+            )
+
+        assert result == wav_path
+        split.assert_awaited_once()
+        assert transcribe.call_count == 2
 
 
 class TestRetrySeeds:

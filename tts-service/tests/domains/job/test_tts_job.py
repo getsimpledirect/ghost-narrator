@@ -472,8 +472,9 @@ def test_quality_check_covers_all_tiers():
     assert 'await _check_segment_consistency(' in src, (
         '_check_segment_consistency not called — HIGH_VRAM tier loses loudness consistency check'
     )
-    assert 'require_wer_pass=preserve_source_wording' in src, (
-        'source-preserving jobs must fail closed on missing or inaccurate retry transcripts'
+    assert src.count('require_wer_pass=preserve_source_wording') >= 2, (
+        'source-preserving jobs must fail closed both during the main quality pass '
+        'and after loudness-consistency replacements'
     )
 
 
