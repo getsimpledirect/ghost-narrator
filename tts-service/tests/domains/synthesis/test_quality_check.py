@@ -20,8 +20,12 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import asyncio
 import wave
+from unittest.mock import AsyncMock, patch
+
 import numpy as np
+import pytest
 
 
 def _write_wav(path: str, data: np.ndarray, sr: int = 22050) -> None:
@@ -242,6 +246,79 @@ class TestQualityCheckBoundary:
         assert 'chunk_wav_paths' in params
         assert 'chunk_texts' in params
         assert 'job_id' in params
+
+    @pytest.mark.asyncio
+    async def test_required_wer_gate_rechecks_retry_and_rejects_persistent_mismatch(
+        self, tmp_path
+    ):
+        from app.core.exceptions import ChunkExhaustedError
+        from app.domains.synthesis.quality_check import _quality_check_and_resynthesize
+
+        wav_path = str(tmp_path / 'segment.wav')
+        _write_wav(wav_path, _make_speech_like(word_rate=2.0, duration_s=4.0))
+        source = 'one two three four five six seven eight nine ten'
+
+        with (
+            patch(
+                'app.domains.synthesis.quality_check._chunk_passes_acoustic_gate',
+                return_value=(True, ''),
+            ),
+            patch(
+                'app.domains.synthesis.quality_check._transcribe_wav',
+                side_effect=['unrelated first transcript', 'still unrelated'],
+            ) as transcribe,
+            patch(
+                'app.domains.synthesis.quality_check._segment_response_ladder',
+                new=AsyncMock(return_value=wav_path),
+            ),
+            pytest.raises(ChunkExhaustedError, match='transcript gate'),
+        ):
+            await _quality_check_and_resynthesize(
+                [wav_path],
+                [source],
+                'strict-job',
+                None,
+                asyncio.get_running_loop(),
+                None,
+                require_wer_pass=True,
+            )
+
+        assert transcribe.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_required_wer_gate_accepts_retranscribed_retry(self, tmp_path):
+        from app.domains.synthesis.quality_check import _quality_check_and_resynthesize
+
+        wav_path = str(tmp_path / 'segment.wav')
+        _write_wav(wav_path, _make_speech_like(word_rate=2.0, duration_s=4.0))
+        source = 'one two three four five six seven eight nine ten'
+
+        with (
+            patch(
+                'app.domains.synthesis.quality_check._chunk_passes_acoustic_gate',
+                return_value=(True, ''),
+            ),
+            patch(
+                'app.domains.synthesis.quality_check._transcribe_wav',
+                side_effect=['unrelated first transcript', source],
+            ) as transcribe,
+            patch(
+                'app.domains.synthesis.quality_check._segment_response_ladder',
+                new=AsyncMock(return_value=wav_path),
+            ),
+        ):
+            result = await _quality_check_and_resynthesize(
+                [wav_path],
+                [source],
+                'strict-job',
+                None,
+                asyncio.get_running_loop(),
+                None,
+                require_wer_pass=True,
+            )
+
+        assert result == [wav_path]
+        assert transcribe.call_count == 2
 
 
 class TestDurationRatioCheck:

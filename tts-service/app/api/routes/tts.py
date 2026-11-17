@@ -205,6 +205,7 @@ async def generate(
         'text': request.text,
         'gcs_object_path': gcs_object_path,
         'site_slug': request.site_slug or 'site',
+        'preserve_source_wording': request.preserve_source_wording,
         'resume_count': 0,
     }
 
@@ -231,6 +232,7 @@ async def generate(
         request.text,
         gcs_object_path,
         request.site_slug or 'site',
+        request.preserve_source_wording,
     )
 
     logger.info(f'TTS job queued: {job_id}')
@@ -516,7 +518,12 @@ _ALLOWED_SORT_FIELDS: frozenset[str] = frozenset(
 # needed by API consumers, so they are stripped from /tts/jobs responses.
 # StatusResponse already drops them via Pydantic `extra='ignore'`; the list
 # response uses `dict[str, Any]` which doesn't filter, so we strip explicitly.
-_DURABLE_INPUT_FIELDS: tuple[str, ...] = ('text', 'gcs_object_path', 'site_slug')
+_DURABLE_INPUT_FIELDS: tuple[str, ...] = (
+    'text',
+    'gcs_object_path',
+    'site_slug',
+    'preserve_source_wording',
+)
 
 
 def _filter_sort_paginate_jobs(

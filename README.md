@@ -4,16 +4,26 @@
 
 # Ghost Narrator
 
-Self-hosted AI narration for your blog. Replaces ElevenLabs (~$330/month) with a local stack that costs you electricity.
+Self-hosted AI narration for your blog, using Qwen3-TTS voice cloning and an optional narration LLM.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://github.com/getsimpledirect/ghost-narrator/stargazers"><img src="https://img.shields.io/github/stars/getsimpledirect/ghost-narrator?style=flat" alt="GitHub Stars"></a>
   <a href="https://github.com/getsimpledirect/ghost-narrator/issues"><img src="https://img.shields.io/github/issues/getsimpledirect/ghost-narrator" alt="GitHub Issues"></a>
   <a href="https://github.com/getsimpledirect/ghost-narrator/commits/main"><img src="https://img.shields.io/github/last-commit/getsimpledirect/ghost-narrator" alt="Last Commit"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12"></a>
   <a href="https://docs.docker.com/compose/"><img src="https://img.shields.io/badge/docker-compose%20v2-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
 </p>
+
+---
+
+## Current operational status
+
+This repository is source code, not evidence that a narrator host is currently deployed. Verify the VM, containers, volumes, model cache, storage objects and recent logs before relying on an old installation. The supported Docker image is CUDA/Linux based. CPU execution exists in the application and tier configuration, but the current Dockerfile is not a turnkey macOS/Apple-Silicon image and CPU speed must be measured on the intended machine.
+
+For a reviewed one-article preview, call `/tts/generate` with `preserve_source_wording: true`. This skips the LLM rewrite and synthesizes the exact plain-text script supplied by the caller. Convert Markdown tables and links before submission, review the script and MP3, and publish separately. Source-preserving jobs require Whisper transcript checks and recheck every replacement after the response ladder; missing ASR or a replacement still above the WER threshold fails the job. A private voice reference belongs at `tts-service/voices/default/reference.wav`; it is ignored by Git and must not be baked into an image.
+
+Automatic Ghost/n8n publication is not trial-safe merely because the workflows import successfully. Keep it disabled until inbound webhooks and callbacks are authenticated, retries are idempotent, jobs are tied to an article revision, stale callbacks are rejected, exclusions are enforced, and `completed` requires a playable output. See [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -21,7 +31,7 @@ Self-hosted AI narration for your blog. Replaces ElevenLabs (~$330/month) with a
 
 Ghost Narrator has two modes:
 
-**Auto-narration (Ghost CMS):** Publish an article → Ghost Narrator automatically generates a voice-narrated audio version using your cloned voice and embeds the player in your post.
+**Auto-narration (Ghost CMS):** The included n8n workflows can turn a publish webhook into narration and a Ghost embed after the production-safety gates above are implemented and verified.
 
 ```
 Ghost CMS (publish) → n8n (trigger) → TTS Service (narrate + synthesize) → Storage (MP3) → Ghost (embed player)
@@ -29,7 +39,7 @@ Ghost CMS (publish) → n8n (trigger) → TTS Service (narrate + synthesize) →
 
 **Static / arbitrary text:** Send any plain text to the TTS service directly via its REST API or the bundled `static-content-audio-pipeline.json` n8n workflow — no Ghost required. Use for books, series content, landing pages, or any text you want narrated.
 
-No cloud TTS APIs. No per-character billing. Your voice, your hardware, your data.
+No cloud TTS API or per-character billing is required. Self-hosted compute, storage and networking can still incur hourly or monthly charges.
 
 > **Read the full story:** [You Cannot Buy What Can Only Be Built](https://founderreality.com/blog/you-cannot-buy-what-can-only-be-built) — why we built this and how it works.
 
@@ -39,11 +49,11 @@ No cloud TTS APIs. No per-character billing. Your voice, your hardware, your dat
 
 | | ElevenLabs Scale | Ghost Narrator |
 |---|---|---|
-| Monthly cost | ~$330 | $0 (self-hosted) |
+| Monthly cost | ~$330 | Hardware/electricity or hourly cloud compute |
 | Per-character billing | Yes | No |
 | Voice cloning | Yes | Yes (5-120s voice sample) |
-| Data privacy | Cloud | 100% local |
-| Latency | Fast | ~5-30 min (GPU) / longer on CPU |
+| Data privacy | Cloud | Controlled by your selected host and storage |
+| Latency | Fast | Measure on the selected host; the 2,717-word November 2026 L4 trial took about 2h10m for the job |
 | Quality | Excellent | Good to excellent (depends on tier) |
 | Effort to set up | Sign up | ~1 hour |
 
@@ -57,7 +67,7 @@ Ghost Narrator is a standalone project. It needs:
 2. **Docker** — with Docker Compose V2
 3. **A voice sample** — 5-120 seconds WAV recording of your voice
 
-That's it. The bundled LLM handles narration rewriting — Ollama (CPU/low-VRAM) or vLLM (GPU). Qwen3-TTS handles voice synthesis. No external APIs required.
+The bundled LLM can handle narration rewriting — Ollama (CPU/low-VRAM) or vLLM (GPU). Qwen3-TTS handles voice synthesis. Source-preserving requests do not need the narration LLM.
 
 ---
 
@@ -67,7 +77,7 @@ Ghost Narrator auto-detects your hardware and selects the right models:
 
 | Tier | VRAM | TTS Model | LLM Model | Output Quality | Key Features |
 |---|---|---|---|---|---|
-| CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b (Ollama) | 192kbps, 48kHz | Parallel workers, any machine |
+| CPU only | None | Qwen3-TTS-0.6B | qwen3.5:2b (Ollama) | 192kbps, 48kHz | Application tier exists; build and benchmark a compatible image first |
 | Low | <12 GB | Qwen3-TTS-0.6B (fp32) | qwen3.5:4b (Ollama) | 192kbps, 48kHz | Compatible with all CUDA GPUs incl. older hardware |
 | Mid | 12–18 GB | Qwen3-TTS-1.7B (fp16) | Qwen3.5-4B (vLLM fp8, 8K ctx) | 256kbps, 48kHz | Studio-segment pipeline (70w), best-of-3 per segment, neural enhancement |
 | **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz** | **Studio-segment pipeline (60w), best-of-3 per segment, DeepFilterNet enhancement, response ladder, voice caching, LLM completeness** |
@@ -99,9 +109,10 @@ flowchart TD
 ## Prerequisites
 
 **Hardware:**
-- Any machine — CPU-only works, GPU recommended for speed
+- NVIDIA/CUDA Linux is the current turnkey Docker path; an L4 falls in the high-VRAM tier
+- CPU mode exists but requires a compatible image/runtime and a measured speed check
 - 8GB+ RAM
-- 50GB+ SSD
+- 100GB SSD recommended for a clean CUDA build, model layers and temporary audio (the November 2026 L4 trial used about 61GB after its first build)
 
 **Software:**
 - Docker with Docker Compose V2
@@ -123,7 +134,7 @@ cd ghost-narrator
 ./install.sh
 ```
 
-**GPU users:** `install.sh` auto-detects your GPU and uses `docker-compose.gpu.yml`. To start manually with GPU: `docker compose -f docker-compose.gpu.yml up -d`
+**GPU users:** `install.sh` auto-detects your GPU and uses `docker-compose.gpu.yml`. To start manually with GPU: `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`
 
 After startup, import the n8n workflows:
 1. Open `http://YOUR_VM_IP:5678` → log in
@@ -141,7 +152,20 @@ curl http://localhost:8020/health/ready   # TTS engine ready
 curl http://localhost:5678/healthz        # n8n healthy
 ```
 
-Publish an article. Ghost Narrator handles the rest.
+Do not publish a first test automatically. Submit a private preview, verify the output file and review the full audio before enabling any Ghost write-back.
+
+### Source-preserving preview
+
+The caller must supply narration-ready plain text. The flag bypasses summarization and paraphrasing; it does not convert tables into spoken prose.
+
+```json
+{
+  "text": "The exact approved spoken script.",
+  "job_id": "article-slug-body-checksum",
+  "site_slug": "founder-reality",
+  "preserve_source_wording": true
+}
+```
 
 ### Storage Options
 

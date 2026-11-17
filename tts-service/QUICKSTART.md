@@ -6,6 +6,8 @@ This service uses **Qwen3-TTS** for professional, studio-quality narration of yo
 
 **Feature**: High-fidelity zero-shot voice cloning with natural prosody and breathing.
 
+The maintained container path is Linux with NVIDIA/CUDA. The application has a CPU tier, but the current Dockerfile is not a turnkey macOS/Apple-Silicon build. Build a compatible image and benchmark it before planning around CPU performance. A clean CUDA worker should have a 100GB disk.
+
 ---
 
 ## Quick Start (3 Steps)
@@ -34,8 +36,10 @@ ffmpeg -i your-voice.mp3 -ar 22050 -ac 1 -c:a pcm_s16le voices/default/reference
 
 ```bash
 # From the ghost-narrator directory
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ```
+
+For a source-preserving private preview, only the hardware probe, Redis and TTS service are required. Do not start n8n or an LLM unless the workflow being tested actually needs them.
 
 ---
 
@@ -49,8 +53,7 @@ docker ps
 # You should see containers:
 # - tts-service
 # - redis
-# - ollama
-# - n8n
+# - hardware-probe (completed after writing the tier config)
 ```
 
 Once running, the service is available at: **http://localhost:8020**
@@ -98,25 +101,29 @@ Open in your browser: http://localhost:8020/docs
 
 ```bash
 curl -X POST "http://localhost:8020/tts/generate" \
+  -H "Authorization: Bearer $TTS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "text": "This is a test of the voice cloning system.",
-    "job_id": "test-001"
+    "job_id": "test-001",
+    "preserve_source_wording": true
   }'
-# Note: First run triggers one-time reference voice calibration (~30-60 seconds).
-# Subsequent requests use the calibrated voice immediately.
 ```
+
+`preserve_source_wording` bypasses the narration LLM. Supply already-reviewed, narration-ready plain text; table conversion and pronunciation changes must be shown to the reviewer before synthesis.
 
 ### Check Job Status
 
 ```bash
-curl "http://localhost:8020/tts/status/test-001"
+curl -H "Authorization: Bearer $TTS_API_KEY" \
+  "http://localhost:8020/tts/status/test-001"
 ```
 
 ### Download Generated Audio
 
 ```bash
-curl "http://localhost:8020/tts/download/test-001" -o output.mp3
+curl -H "Authorization: Bearer $TTS_API_KEY" \
+  "http://localhost:8020/tts/download/test-001" -o output.mp3
 ```
 
 ---
@@ -205,22 +212,11 @@ Another service is using port 8020. Stop it or change the port in `docker-compos
 
 ### Slow generation
 
-This is normal for CPU mode with default settings. For faster generation:
+Long-form quality mode intentionally synthesizes multiple candidates and may re-run segments after acoustic and transcript checks. Measure end-to-end time on the exact host, model, voice and article; do not estimate it from raw model inference benchmarks. The November 2026 Founder Reality trial took about 2 hours 10 minutes for a 2,717-word job on one L4; its full disposable-VM lifetime was about 2 hours 57 minutes.
 
-1. **Enable parallel processing** (recommended):
-   ```bash
-   export MAX_WORKERS="4"
-   ```
-   With 4 workers: ~50-60 seconds per 2000 words (vs 3-5 minutes sequential)
+### First run model load
 
-2. Use GPU mode (requires NVIDIA GPU with 4GB+ VRAM):
-   ```bash
-   export HARDWARE_TIER="low_vram"   # <12 GB VRAM
-   ```
-
-### First run calibration
-
-The first synthesis request triggers a one-time reference voice calibration (~30-60 seconds). This happens only once at startup. Subsequent requests use the calibrated voice immediately.
+Startup loads the selected model and caches the voice prompt. Time varies with the model cache, disk and network; check readiness and logs instead of assuming a fixed 30–60 second calibration.
 
 ### Jobs lost after restart
 
@@ -239,21 +235,16 @@ docker logs -f tts-service
 
 ## Performance
 
-| Mode | Device | Speed | Memory | Notes |
-|------|--------|-------|--------|-------|
-| CPU (Sequential) | Any | ~3-5 min/2000 words | 800MB RAM | 1 worker |
-| CPU (Parallel 4x) | Quad-core+ | ~50-60 sec/2000 words | 1GB RAM | **Recommended default** |
-| CPU (Parallel 8x) | Octa-core+ | ~30-40 sec/2000 words | 1.2GB RAM | High performance |
-| GPU | NVIDIA L4/T4 | ~20-30 sec/2000 words | 3GB VRAM + 6GB RAM | Requires GPU config |
+No universal words-per-minute figure is documented. Runtime depends on hardware tier, model size, best-of-N count, segment count, transcript checks, retries and mastering. Record the article word count, model, GPU, build/startup time, synthesis time and total worker lifetime for every bounded trial.
 
 ---
 
 ## Next Steps
 
 1. **Test with your voice**: Generate a short test audio
-2. **Optimize performance**: Set `MAX_WORKERS` to match your CPU cores
-3. **Integrate with n8n**: Set up the callback webhook
-4. **Configure storage**: Enable GCS or S3 if needed
-5. **Production deployment**: Review security and scaling
+2. **Verify output**: Decode the full MP3 and review it against the exact script
+3. **Keep it private**: Do not expose port 8020 or publish the preview
+4. **Review security**: Complete the gates in `../SECURITY.md` before n8n or callbacks
+5. **Publish separately**: Upload only an explicitly approved MP3, then verify playback and seeking
 
 For detailed documentation, see [README.md](./README.md)

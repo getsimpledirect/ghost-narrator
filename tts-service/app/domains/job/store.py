@@ -529,6 +529,7 @@ async def _scheduled_resume(
     text: str,
     gcs_object_path: str,
     site_slug: str,
+    preserve_source_wording: bool,
     ready_event: asyncio.Event,
 ) -> None:
     """Wait for the TTS engine to be ready, then run the resumed job.
@@ -543,7 +544,13 @@ async def _scheduled_resume(
     from app.domains.job.runner import run_tts_job
 
     await ready_event.wait()
-    await run_tts_job(job_id, text, gcs_object_path, site_slug)
+    await run_tts_job(
+        job_id,
+        text,
+        gcs_object_path,
+        site_slug,
+        preserve_source_wording,
+    )
 
 
 async def reap_orphaned_jobs(job_store: JobStore) -> dict[str, int]:
@@ -590,6 +597,7 @@ async def reap_orphaned_jobs(job_store: JobStore) -> dict[str, int]:
             text = job_data.get('text')
             gcs_path = job_data.get('gcs_object_path')
             site_slug = job_data.get('site_slug', 'site')
+            preserve_source_wording = bool(job_data.get('preserve_source_wording', False))
             resume_count = int(job_data.get('resume_count', 0) or 0)
 
             if not text or not gcs_path:
@@ -633,7 +641,14 @@ async def reap_orphaned_jobs(job_store: JobStore) -> dict[str, int]:
                 ready_event = get_engine_ready_event()
 
             asyncio.create_task(
-                _scheduled_resume(job_id, text, gcs_path, site_slug, ready_event),
+                _scheduled_resume(
+                    job_id,
+                    text,
+                    gcs_path,
+                    site_slug,
+                    preserve_source_wording,
+                    ready_event,
+                ),
                 name=f'resume-{job_id}',
             )
             counts['resumed'] += 1

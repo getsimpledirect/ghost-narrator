@@ -8,13 +8,13 @@ This service requires **Python 3.12**. Use Docker (recommended) which handles th
 
 ## Build Information
 
-**First build time**: 2-5 minutes (downloads ~3GB of models)
+**First build time**: depends heavily on network and image cache; the November 2026 L4 trial took about 8 minutes
 **Cached rebuild**: 1-3 minutes
-**Docker resources required**: 8GB RAM, 20GB disk space
+**Docker resources required**: 8GB RAM; use a 100GB worker disk for a clean CUDA build (the trial worker used about 61GB after image build and model setup)
 
 **Runtime Resources:**
-- **CPU Mode (Default)**: ~1GB RAM, configurable parallel workers
-- **GPU Mode**: ~3GB VRAM + ~6GB RAM
+- **CPU Mode**: supported by the application, but the repository's current Dockerfile is CUDA/Linux based
+- **GPU Mode**: the maintained container path; actual memory depends on the selected 0.6B/1.7B model and quality tier
 
 The Dockerfile uses **uv** (by Astral) for blazingly fast and deterministic dependency resolution, completely replacing legacy pip installations.
 
@@ -55,7 +55,7 @@ no space left on device
 **Solution:**
 ```bash
 docker system prune -a --volumes
-# Ensure at least 20GB free disk space
+# For a clean CUDA build, use a 100GB worker disk with roughly 65GB free
 ```
 
 #### 3. Network Timeout
@@ -114,7 +114,7 @@ N8N_CALLBACK_URL=http://localhost:5678/webhook/tts-callback
 
 1. **POST /tts/generate** - Submit text for TTS generation
 2. Background processing:
-   - Automatically transcribes reference audio if needed (Whisper tiny)
+   - Uses x-vector cloning when reference text is empty, or ICL cloning when `VOICE_SAMPLE_REF_TEXT` contains an exact transcript
    - Generates semantic tokens using Qwen3-TTS model
    - Decodes high-fidelity audio
    - Concatenates chunks into single MP3 file
@@ -143,10 +143,13 @@ Content-Type: application/json
 {
   "text": "Your long article text here...",
   "job_id": "optional-custom-id",
-  "article_slug": "my-article",
-  "callback_url": "https://your-webhook.com/callback"
+  "site_slug": "my-site",
+  "storage_path": "audio/articles/my-site/optional-custom-id.mp3",
+  "preserve_source_wording": true
 }
 ```
+
+`preserve_source_wording` defaults to `false`. When true, the service bypasses the narration LLM and sends the supplied plain text directly to synthesis. Use it only after the caller has made tables, links and other non-spoken structures narration-ready. This mode also fails closed when Whisper ASR is unavailable or when a replacement segment still exceeds the transcript WER threshold after quality retries; an acoustic-only retry is not enough.
 
 ### Check Status
 
@@ -157,7 +160,7 @@ Response:
 {
   "job_id": "abc123",
   "status": "processing|completed|failed",
-  "storage_uri": "audio/articles/abc123.mp3",
+  "gcs_uri": "/app/output/abc123.mp3",
   "error": null
 }
 ```
@@ -273,7 +276,7 @@ ffprobe -v quiet -show_entries stream=codec_name,sample_rate,channels \
 
 ### Performance Tuning
 
-#### CPU Mode (Default)
+#### CPU mode (application support; custom compatible image/runtime required)
 - Safe for all systems
 - **Parallel Processing**: Synthesizes multiple chunks simultaneously
 - Generation time:

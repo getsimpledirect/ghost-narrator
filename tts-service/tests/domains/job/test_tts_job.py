@@ -244,8 +244,8 @@ async def test_run_tts_job_synthesis_failure(mock_job_store, mock_tts_engine):
 
 
 @pytest.mark.asyncio
-async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_tts_engine):
-    """Storage upload failure is non-fatal — job should still be marked completed."""
+async def test_run_tts_job_storage_failure_does_not_complete(mock_job_store, mock_tts_engine):
+    """A job cannot be complete when its storage output is not playable."""
     mock_job_store.get.return_value = {'status': 'processing'}
 
     job_id = 'test-job-storage-fail'
@@ -290,6 +290,7 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
         patch('app.domains.job.tts_job.validate_audio_quality', return_value=None),
         patch('app.domains.job.tts_job.get_storage_backend', return_value=failing_backend),
         patch('app.domains.job.tts_job.notify_job_completed', new_callable=AsyncMock),
+        patch('app.domains.job.tts_job.notify_job_failed', new_callable=AsyncMock),
         patch('app.domains.job.tts_job.get_executor', return_value=_make_mock_executor()),
         patch('app.domains.job.tts_job.cleanup_chunk_files'),
         patch('app.domains.job.tts_job._AudioSegment') as mock_audio_segment,
@@ -308,21 +309,13 @@ async def test_run_tts_job_storage_failure_still_completes(mock_job_store, mock_
 
         await run_tts_job(job_id, text, storage_path)
 
-        # Job completes even when storage fails
         statuses = [
             call.args[1].get('status')
             for call in mock_job_store.update.call_args_list
             if isinstance(call.args[1], dict)
         ]
-        assert 'completed' in statuses
-
-        # The completed payload should include an upload warning
-        completed_updates = [
-            call.args[1]
-            for call in mock_job_store.update.call_args_list
-            if isinstance(call.args[1], dict) and call.args[1].get('status') == 'completed'
-        ]
-        assert any('upload_warning' in u for u in completed_updates)
+        assert 'failed' in statuses
+        assert 'completed' not in statuses
 
 
 @pytest.mark.asyncio
@@ -478,6 +471,9 @@ def test_quality_check_covers_all_tiers():
     )
     assert 'await _check_segment_consistency(' in src, (
         '_check_segment_consistency not called — HIGH_VRAM tier loses loudness consistency check'
+    )
+    assert 'require_wer_pass=preserve_source_wording' in src, (
+        'source-preserving jobs must fail closed on missing or inaccurate retry transcripts'
     )
 
 
