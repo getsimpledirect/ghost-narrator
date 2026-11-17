@@ -177,6 +177,16 @@ class TestTrailingShortSegmentMerge:
         if len(segs) > 1:
             assert len(segs[-1].split()) >= 40
 
+    def test_trailing_short_segment_rebalanced_without_recreating_oversized_segment(self):
+        counts = [12, 19, 5, 16, 26]
+        sentences = ['Word ' + _words(count - 1) + '.' for count in counts]
+        text = ' '.join(sentences)
+
+        segs = split_into_large_segments(text, target_words=60)
+
+        assert [len(segment.split()) for segment in segs] == [36, 42]
+        assert ' '.join(segment.replace('\n\n', ' ') for segment in segs) == text
+
 
 class TestRealWorldNarrationStructure:
     """Integration: simulate narration text with varying paragraph sizes."""

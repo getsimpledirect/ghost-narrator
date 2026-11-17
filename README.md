@@ -23,6 +23,8 @@ This repository is source code, not evidence that a narrator host is currently d
 
 For a reviewed one-article preview, call `/tts/generate` with `preserve_source_wording: true`. This skips the LLM rewrite and synthesizes the exact plain-text script supplied by the caller. Convert Markdown tables and links before submission, review the script and MP3, and publish separately. Source-preserving jobs require Whisper transcript checks. If a retry is acoustically acceptable but still exceeds the WER threshold, recovery continues through the remaining response-ladder strategies; missing ASR or exhaustion without a transcript-safe candidate fails the job. Loudness-consistency replacements use the same transcript gate. A private voice reference belongs at `tts-service/voices/default/reference.wav`; it is ignored by Git and must not be baked into an image.
 
+Quality-gated generation is not a real-time path. A November 2026 L4 trial showed that best-of-three candidates and WER recovery can take minutes for one names-and-numbers segment. It also exposed two fixed edge cases: a short-tail merge could recombine a 78-word paragraph after splitting it, and Whisper needs long-form timestamps for audio beyond 30 seconds. Estimate from measured jobs on the intended image; do not use the old sub-minute examples as a budget.
+
 Automatic Ghost/n8n publication is not trial-safe merely because the workflows import successfully. Keep it disabled until inbound webhooks and callbacks are authenticated, retries are idempotent, jobs are tied to an article revision, stale callbacks are rejected, exclusions are enforced, and `completed` requires a playable output. See [SECURITY.md](SECURITY.md).
 
 ---
@@ -166,6 +168,19 @@ The caller must supply narration-ready plain text. The flag bypasses summarizati
   "preserve_source_wording": true
 }
 ```
+
+### Bounded cloud trial
+
+For a paid preview, keep the blast radius smaller than the article:
+
+1. Pin the repository commit and verify the current CUDA image, voice file, model cache and free disk before submitting a job.
+2. Use a Spot worker with a hard runtime limit, no service account/scopes, a localhost-only API and only Redis/TTS running. Keep n8n, callbacks, publication and backfill off.
+3. Use `STOP` on preemption and a persistent disk while the trial is active. Save each accepted exact-text part outside the container volume, then verify it with `ffprobe` and a full decode before reuse.
+4. Keep the high-tier 60-word segmentation policy. Oversized paragraphs may split at existing sentence boundaries, but a very short sentence should remain grouped when the combined unit is still safe.
+5. A status is not success. Require the final non-empty MP3, a clean full decode, a recorded checksum and human review before publication.
+6. Copy the evidence off the worker and delete the VM, disk and temporary snapshots. `STOP` is for preemption recovery, not recurring storage.
+
+Never upload a private voice sample to a public audio bucket. If direct recovery is slow, mount the stopped disk read-only on a short-lived CPU rescue VM instead of restarting the GPU.
 
 ### Storage Options
 

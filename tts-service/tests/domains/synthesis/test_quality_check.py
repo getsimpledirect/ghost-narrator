@@ -22,7 +22,7 @@
 
 import asyncio
 import wave
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import numpy as np
 import pytest
@@ -282,6 +282,38 @@ class TestQualityCheckBoundary:
             )
 
         assert transcribe.call_count == 2
+
+    def test_transcription_retries_one_transient_pipeline_failure(self):
+        from app.domains.synthesis.quality_check import _transcribe_wav
+
+        pipeline = Mock(side_effect=[RuntimeError('transient decoder failure'), {'text': 'exact'}])
+        with patch(
+            'app.domains.synthesis.quality_check._get_asr_pipeline',
+            return_value=pipeline,
+        ):
+            assert _transcribe_wav('/tmp/segment.wav') == 'exact'
+
+        assert pipeline.call_count == 2
+
+    def test_transcription_enables_timestamps_for_long_form_retry(self):
+        from app.domains.synthesis.quality_check import _transcribe_wav
+
+        pipeline = Mock(
+            side_effect=[
+                RuntimeError('long-form generation requires return_timestamps=True'),
+                {'text': 'exact long transcript'},
+            ]
+        )
+        with patch(
+            'app.domains.synthesis.quality_check._get_asr_pipeline',
+            return_value=pipeline,
+        ):
+            assert _transcribe_wav('/tmp/long-segment.wav') == 'exact long transcript'
+
+        assert pipeline.call_args_list[1] == (
+            ('/tmp/long-segment.wav',),
+            {'return_timestamps': True},
+        )
 
     @pytest.mark.asyncio
     async def test_required_wer_gate_accepts_retranscribed_retry(self, tmp_path):

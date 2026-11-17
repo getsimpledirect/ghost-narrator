@@ -154,7 +154,7 @@ Ghost Narrator auto-detects your hardware at startup and selects the optimal TTS
 | **High** | **18+ GB** | **Qwen3-TTS-1.7B (bf16)** | **Qwen/Qwen3.5-9B (vLLM fp8, 64K ctx)** | **320kbps, 48kHz, −14 LUFS** | **60-word studio segments, best-of-3 per segment, response ladder, DeepFilterNet enhancement, loudness consistency, LLM completeness, voice pre-caching** |
 
 **Studio-quality pipeline (all tiers, tuned per-tier):**
-- **Short studio segments** — every segment stays inside the model's competent AR horizon (CPU 100w, LOW 80w, MID 70w, HIGH 60w). Long-form narration is synthesized as many short calls rather than a few long ones; per-segment AR drift is bounded and cannot propagate.
+- **Short studio segments** — every segment stays inside the model's competent AR horizon (CPU 100w, LOW 80w, MID 70w, HIGH 60w). Long-form narration is synthesized as many short calls rather than a few long ones; per-segment AR drift is bounded and cannot propagate. When the final segment is too short, complete sentences are rebalanced from the preceding segment before any merge; the short-tail safeguard may not recreate an oversized segment.
 - **Consistent reference conditioning** — every segment conditions on the same clean voice reference (`VOICE_SAMPLE_PATH`), not the tail of the previous segment. Voice identity anchors globally; the tiny prosodic reset at segment joins is masked by a crossfade.
 - **Best-of-N per segment** — each segment is synthesized N times with distinct seeds (CPU 1, LOW 2, MID 3, HIGH 3) and scored on a composite of F0 drift, WER, mid-phrase drop density, and spectral flatness. The lowest-scoring variant is kept; oversampling converts per-sample variance into a statistically-bounded quality floor.
 - **Composite scoring** — weights default to F0 0.40, WER 0.30, drops 0.20, flatness 0.10. Tunable via `COMPOSITE_SCORE_W_F0` / `_WER` / `_DROPS` / `_FLATNESS` env vars for calibration runs.
@@ -459,15 +459,13 @@ The TTS service uses a `JobStore` abstraction layer that automatically falls bac
 6. Thread-safe with synthesis lock (`_synthesis_lock`) for GPU memory management; `_cancelled_jobs` set enables mid-job cancellation
 
 **Performance Characteristics:**
-- **Initialization**: 30-60 seconds (one-time reference encoding + transcription)
-- **Synthesis Time (CPU, 4 workers)**: ~50-60 seconds per 2000-word article
-- **Synthesis Time (CPU, 8 workers)**: ~30-40 seconds per 2000-word article
-- **Synthesis Time (GPU)**: ~20-30 seconds per 2000-word article
-- **Memory Usage**: ~1GB RAM (CPU mode with streaming), ~6GB RAM (GPU mode)
-- **VRAM Usage**: 0GB (CPU mode), 2-3GB (GPU mode)
+- **Initialization**: measure on the selected image; model load, reference encoding and first-use compilation can take at least a minute
+- **Synthesis time**: content- and gate-dependent. Best-of-N plus the response ladder can take minutes for one segment; a November 2026 source-preserving L4 trial spent 22-25 minutes on failed 327-word part attempts, while corrected 36- and 42-word units completed in about 158 and 45 seconds
+- **CPU mode**: the application tier exists, but the CUDA Dockerfile is not a turnkey Apple-Silicon image and no current production-speed CPU benchmark is claimed
+- **Memory / VRAM**: measure the complete selected tier and model set on the actual host; do not size from TTS weights alone
 - **Thread Safety**: Single synthesis lock prevents concurrent GPU conflicts
 
-For a typical article synthesis: ~50-60 seconds total on CPU (4 workers). Reference encoding happens once at startup.
+Reference encoding happens once at startup. Budget trials from observed end-to-end jobs, including candidate retries, ASR, mastering, preemption and artifact transfer—not raw model inference alone.
 
 ---
 
@@ -597,7 +595,7 @@ Regional checks (run after soft checks; only reached by chunks that passed all a
 - **Mid-phrase drop detection**: rejects if the number of 0.6–2.0 s drops (RMS < 10% of the rolling 2 s local median) exceeds `max(3, duration_s / 20)` — scales with chunk length so natural sentence-boundary pauses in long narration don't accumulate into a false positive
 
 Optional checks (skip if unavailable):
-- **WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, the response ladder runs (catches hallucinated/skipped/repeated words that acoustic checks cannot detect). In source-preserving mode, an acoustically valid candidate must also pass WER before the ladder stops; later loudness replacements use the same fail-closed rule.
+- **WER re-synthesis**: Whisper base transcribes each segment; if word error rate > 10%, the response ladder runs (catches hallucinated/skipped/repeated words that acoustic checks cannot detect). In source-preserving mode, an acoustically valid candidate must also pass WER before the ladder stops; later loudness replacements use the same fail-closed rule. If Whisper requests long-form timestamps for audio beyond 30 seconds, transcription retries once with `return_timestamps=True`; a second failure is still treated as unavailable.
 - **Loudness consistency (all tiers)**: any segment deviating > ±3 dB from the median dBFS across all segments triggers the response ladder; prevents volume drift between segments
 
 **Response ladder** — when a segment fails any gate above, escalation is graduated:
@@ -605,7 +603,7 @@ Optional checks (skip if unavailable):
 1. **Heal** — if 1–3 drops are detected, crossfade each out in place (40 ms ramp on each side of the drop). The listener hears a brief breath-like pause instead of a vocoded dropout. No regeneration cost.
 2. **Seed-sweep** — synthesize 5 fresh variants with distinct seeds (`base_seed + n × 7919 mod 2³¹`), score each with the composite scorer, keep the best. Often resolves stochastic AR failures that aren't reproducible at a different seed.
 3. **Split** — halve the segment at the nearest punctuation, synthesize each half with best-of-3, concatenate. Shorter contexts sit further below the drift horizon.
-4. **Flag** — if all above still fail the gate, ship the lowest-scoring variant seen across the ladder with a warning in the logs. Only when every synthesis attempt raises (no variant produced at all) does the job abort with `ChunkExhaustedError`.
+4. **Flag or fail closed** — non-strict jobs may ship the lowest-scoring synthesized variant with a warning. Source-preserving jobs must also pass the transcript gate; if no candidate does, the job aborts with `ChunkExhaustedError` instead of shipping mismatched wording. A job also aborts when every synthesis attempt raises.
 
 **Stage 5: Dynamic Gap Insertion + Crossfade**
 - Analyzes segment endings to determine appropriate pause duration

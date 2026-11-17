@@ -149,7 +149,7 @@ Content-Type: application/json
 }
 ```
 
-`preserve_source_wording` defaults to `false`. When true, the service bypasses the narration LLM and sends the supplied plain text directly to synthesis. Use it only after the caller has made tables, links and other non-spoken structures narration-ready. This mode also fails closed when Whisper ASR is unavailable. A retry that passes acoustic checks but still exceeds the transcript WER threshold continues through the remaining response-ladder strategies; the job fails if none is transcript-safe. Loudness-consistency replacements are rechecked the same way, so an acoustic-only retry is never enough.
+`preserve_source_wording` defaults to `false`. When true, the service bypasses the narration LLM and sends the supplied plain text directly to synthesis. Use it only after the caller has made tables, links and other non-spoken structures narration-ready. This mode also fails closed when Whisper ASR is unavailable. A retry that passes acoustic checks but still exceeds the transcript WER threshold continues through the remaining response-ladder strategies; the job fails if none is transcript-safe. Loudness-consistency replacements are rechecked the same way, so an acoustic-only retry is never enough. Whisper long-form audio is retried with timestamp generation enabled; a second ASR failure remains unavailable and therefore fails a strict job.
 
 ### Check Status
 
