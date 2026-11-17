@@ -534,16 +534,35 @@ def _get_asr_pipeline():
 
 
 def _transcribe_wav(wav_path: str) -> str | None:
-    """Transcribe a WAV file with Whisper. Returns None if ASR unavailable."""
+    """Transcribe a WAV file with Whisper. Returns None if ASR is unavailable twice."""
     pipe = _get_asr_pipeline()
     if pipe is None:
         return None
-    try:
-        result = pipe(wav_path)
-        return result.get('text', '') if isinstance(result, dict) else None
-    except Exception as exc:
-        logger.debug('ASR transcription failed for %s: %s', wav_path, exc)
-        return None
+    needs_timestamps = False
+    for attempt in range(2):
+        try:
+            result = pipe(
+                wav_path,
+                **({'return_timestamps': True} if attempt and needs_timestamps else {}),
+            )
+            return result.get('text', '') if isinstance(result, dict) else None
+        except Exception as exc:
+            if attempt == 0:
+                needs_timestamps = 'return_timestamps=True' in str(exc)
+                if needs_timestamps:
+                    logger.warning(
+                        'ASR transcription for %s requires long-form timestamps; '
+                        'retrying with return_timestamps=True: %s',
+                        wav_path,
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        'ASR transcription failed for %s; retrying once: %s', wav_path, exc
+                    )
+            else:
+                logger.warning('ASR transcription failed twice for %s: %s', wav_path, exc)
+    return None
 
 
 def _normalize_for_wer(text: str) -> str:

@@ -378,12 +378,31 @@ def split_into_large_segments(text: str, target_words: int) -> list[str]:
     if current:
         segments.append('\n\n'.join(current))
 
-    # Merge trailing short segments — Qwen3-TTS clips mid-decode on very
-    # short inputs (too few tokens to close the codec cleanly).
+    # Rebalance a trailing short segment before considering a merge. Blindly
+    # merging can recreate the oversized segment that Stage 2 just split
+    # (for example 52 + 26 words at a 60-word target). Move complete trailing
+    # sentences from the previous segment when that can make the tail viable.
     _MIN_SEGMENT_WORDS = 40
     if len(segments) >= 2 and len(segments[-1].split()) < _MIN_SEGMENT_WORDS:
-        segments[-2] = segments[-2] + '\n\n' + segments[-1]
-        segments.pop()
+        previous_sentences = [
+            sentence.strip()
+            for sentence in _SENTENCE_BOUNDARY_RE.split(segments[-2])
+            if sentence.strip()
+        ]
+        while len(previous_sentences) > 1 and len(segments[-1].split()) < _MIN_SEGMENT_WORDS:
+            moved = previous_sentences.pop()
+            segments[-1] = moved + '\n\n' + segments[-1]
+        segments[-2] = ' '.join(previous_sentences)
+
+        # Qwen3-TTS can clip on a genuinely tiny final input. Merge only when
+        # the result still respects the paragraph cap; otherwise keep the
+        # short segment instead of trading a known size risk for a long-form
+        # drift/ASR failure.
+        if len(segments[-1].split()) < _MIN_SEGMENT_WORDS:
+            combined = segments[-2] + '\n\n' + segments[-1]
+            if len(combined.split()) <= max_para_words:
+                segments[-2] = combined
+                segments.pop()
 
     # Safety log: warn if any segment still exceeds the hard cap.
     max_final = int(target_words * 1.3)
